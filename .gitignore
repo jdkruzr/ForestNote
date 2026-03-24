@@ -1,0 +1,23 @@
+# Build outputs
+app/build/
+build/
+.gradle/
+
+# IDE
+.idea/
+*.iml
+local.properties
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Decompiled sources (kept separately in ~/viwoods_re/)
+viwoods_re/
+
+# Crash/debug output from device
+einkpoc_*.txt
+
+# Screenshots and pulled APKs
+*.png
+einkpoc.apk
