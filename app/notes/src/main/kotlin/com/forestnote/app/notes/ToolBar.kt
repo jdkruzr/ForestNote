@@ -1,6 +1,7 @@
 package com.forestnote.app.notes
 
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.view.View
 import android.widget.ImageButton
 import com.forestnote.core.ink.Tool
@@ -63,13 +64,22 @@ class ToolBar(
 
     /**
      * Update visual state of all buttons based on active tool.
-     * Active tool gets a gray background; inactive tools have no background.
+     * On e-ink: active tool gets 1dp black border for high contrast.
+     * On non-e-ink: active tool gets light gray background.
      */
     private fun updateButtonAppearance() {
         for ((button, tool) in buttonMap) {
             if (tool == activeTool) {
-                // Active: light gray background for high contrast on e-ink
-                button.setBackgroundColor(Color.parseColor("#FFE0E0E0"))
+                if (isEInk) {
+                    // E-ink: 1dp black border on white background for high contrast
+                    val border = GradientDrawable()
+                    border.setColor(Color.WHITE)
+                    border.setStroke(1, Color.BLACK)
+                    button.background = border
+                } else {
+                    // Non-e-ink: light gray background for visual feedback
+                    button.setBackgroundColor(Color.parseColor("#FFE0E0E0"))
+                }
             } else {
                 // Inactive: transparent background
                 button.setBackgroundColor(Color.TRANSPARENT)
