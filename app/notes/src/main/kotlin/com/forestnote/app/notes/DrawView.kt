@@ -129,6 +129,17 @@ class DrawView(context: Context) : View(context) {
         bitmapProvided = false
     }
 
+    /**
+     * Clear all strokes from the page: erases the bitmap and removes all strokes from memory.
+     * Does NOT persist to the database — caller must handle database deletion.
+     */
+    fun clearAll() {
+        completedStrokes.clear()
+        currentStroke = null
+        writingBitmap?.eraseColor(Color.TRANSPARENT)
+        invalidate()
+    }
+
     // ========== Bitmap Management ==========
 
     /**
