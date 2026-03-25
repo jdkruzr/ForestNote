@@ -1,0 +1,47 @@
+-- Page table: each notebook has one or more pages
+CREATE TABLE page (
+    id INTEGER PRIMARY KEY NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+-- Stroke table: vector strokes on a page
+-- points is a compact IntArray BLOB encoded by StrokeSerializer
+CREATE TABLE stroke (
+    id INTEGER PRIMARY KEY NOT NULL,
+    page_id INTEGER NOT NULL REFERENCES page(id) ON DELETE CASCADE,
+    color INTEGER NOT NULL DEFAULT -16777216,
+    pen_width_min INTEGER NOT NULL DEFAULT 7,
+    pen_width_max INTEGER NOT NULL DEFAULT 35,
+    points BLOB NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX stroke_page_id ON stroke(page_id);
+
+-- V1 queries --
+
+getPage:
+SELECT * FROM page WHERE id = ?;
+
+getFirstPage:
+SELECT * FROM page ORDER BY sort_order ASC LIMIT 1;
+
+insertPage:
+INSERT INTO page(sort_order, created_at) VALUES (?, ?);
+
+lastInsertRowId:
+SELECT last_insert_rowid();
+
+getStrokesForPage:
+SELECT * FROM stroke WHERE page_id = ? ORDER BY id ASC;
+
+insertStroke:
+INSERT INTO stroke(page_id, color, pen_width_min, pen_width_max, points, created_at)
+VALUES (?, ?, ?, ?, ?, ?);
+
+deleteStroke:
+DELETE FROM stroke WHERE id = ?;
+
+deleteStrokesForPage:
+DELETE FROM stroke WHERE page_id = ?;
