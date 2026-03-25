@@ -1,6 +1,8 @@
+# Claude IDE
+.claude/
+
 # Build outputs
-app/build/
-build/
+**/build/
 .gradle/
 
 # IDE
