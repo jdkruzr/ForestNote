@@ -8,7 +8,7 @@ import com.forestnote.core.ink.Tool
 
 /**
  * ToolBar helper class that manages tool selection state.
- * Wires up button click listeners and tracks which tool is active.
+ * Wires up button click listeners and delegates to ToolSelectionLogic for state management.
  * Highlights the active tool button with a background tint for visual feedback.
  *
  * @param root The root toolbar view containing button children
@@ -20,7 +20,6 @@ class ToolBar(
     private val isEInk: Boolean,
     private val onToolSelected: (Tool) -> Unit
 ) {
-    private var activeTool: Tool = Tool.Pen
     private var activeClearCallback: (() -> Unit)? = null
 
     private val btnPen: ImageButton = root.findViewById(R.id.btn_pen)
@@ -34,12 +33,23 @@ class ToolBar(
         btnPixelEraser to Tool.PixelEraser
     )
 
+    // Delegate tool selection logic to ToolSelectionLogic
+    private val logic = ToolSelectionLogic(
+        onToolSelected = { tool ->
+            updateButtonAppearance()
+            onToolSelected(tool)
+        },
+        onClear = {
+            activeClearCallback?.invoke()
+        }
+    )
+
     init {
         // Wire up click listeners for tool buttons
-        btnPen.setOnClickListener { selectTool(Tool.Pen) }
-        btnStrokeEraser.setOnClickListener { selectTool(Tool.StrokeEraser) }
-        btnPixelEraser.setOnClickListener { selectTool(Tool.PixelEraser) }
-        btnClear.setOnClickListener { activeClearCallback?.invoke() }
+        btnPen.setOnClickListener { logic.selectTool(Tool.Pen) }
+        btnStrokeEraser.setOnClickListener { logic.selectTool(Tool.StrokeEraser) }
+        btnPixelEraser.setOnClickListener { logic.selectTool(Tool.PixelEraser) }
+        btnClear.setOnClickListener { logic.triggerClear() }
 
         // On e-ink, remove ripple background to prevent ghosting
         if (isEInk) {
@@ -54,20 +64,12 @@ class ToolBar(
     }
 
     /**
-     * Select a tool and notify the callback.
-     */
-    fun selectTool(tool: Tool) {
-        activeTool = tool
-        updateButtonAppearance()
-        onToolSelected(tool)
-    }
-
-    /**
      * Update visual state of all buttons based on active tool.
      * On e-ink: active tool gets 1dp black border for high contrast.
      * On non-e-ink: active tool gets light gray background.
      */
     private fun updateButtonAppearance() {
+        val activeTool = logic.getActiveTool()
         for ((button, tool) in buttonMap) {
             if (tool == activeTool) {
                 if (isEInk) {
@@ -81,8 +83,12 @@ class ToolBar(
                     button.setBackgroundColor(Color.parseColor("#FFE0E0E0"))
                 }
             } else {
-                // Inactive: transparent background
-                button.setBackgroundColor(Color.TRANSPARENT)
+                // Inactive: remove background
+                if (isEInk) {
+                    button.background = null
+                } else {
+                    button.setBackgroundColor(Color.TRANSPARENT)
+                }
             }
         }
     }
@@ -97,5 +103,5 @@ class ToolBar(
     /**
      * Get the currently active tool.
      */
-    fun getActiveTool(): Tool = activeTool
+    fun getActiveTool(): Tool = logic.getActiveTool()
 }
