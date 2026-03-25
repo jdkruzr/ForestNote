@@ -1,0 +1,182 @@
+> Task :build-logic:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :build-logic:generateExternalPluginSpecBuilders UP-TO-DATE
+> Task :build-logic:extractPrecompiledScriptPluginPlugins UP-TO-DATE
+> Task :build-logic:compilePluginsBlocks UP-TO-DATE
+> Task :build-logic:generatePrecompiledScriptPluginAccessors UP-TO-DATE
+> Task :build-logic:generateScriptPluginAdapters UP-TO-DATE
+> Task :build-logic:compileKotlin UP-TO-DATE
+> Task :build-logic:compileJava NO-SOURCE
+> Task :build-logic:pluginDescriptors UP-TO-DATE
+> Task :build-logic:processResources UP-TO-DATE
+> Task :build-logic:classes UP-TO-DATE
+> Task :build-logic:jar UP-TO-DATE
+> Task :app:notes:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:notes:preBuild UP-TO-DATE
+> Task :app:notes:preDebugBuild UP-TO-DATE
+> Task :core:format:preBuild UP-TO-DATE
+> Task :core:format:preDebugBuild UP-TO-DATE
+> Task :core:format:writeDebugAarMetadata UP-TO-DATE
+> Task :core:ink:preBuild UP-TO-DATE
+> Task :core:ink:preDebugBuild UP-TO-DATE
+> Task :core:ink:writeDebugAarMetadata UP-TO-DATE
+> Task :app:notes:checkDebugAarMetadata UP-TO-DATE
+> Task :app:notes:generateDebugResValues UP-TO-DATE
+> Task :core:format:generateDebugResValues UP-TO-DATE
+> Task :core:format:generateDebugResources UP-TO-DATE
+> Task :core:format:packageDebugResources UP-TO-DATE
+> Task :core:ink:generateDebugResValues UP-TO-DATE
+> Task :core:ink:generateDebugResources UP-TO-DATE
+> Task :core:ink:packageDebugResources UP-TO-DATE
+> Task :app:notes:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:notes:generateDebugResources UP-TO-DATE
+> Task :app:notes:mergeDebugResources UP-TO-DATE
+> Task :app:notes:packageDebugResources UP-TO-DATE
+> Task :app:notes:parseDebugLocalResources UP-TO-DATE
+> Task :app:notes:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:notes:extractDeepLinksDebug UP-TO-DATE
+> Task :core:format:extractDeepLinksDebug UP-TO-DATE
+> Task :core:format:processDebugManifest UP-TO-DATE
+> Task :core:ink:extractDeepLinksDebug UP-TO-DATE
+> Task :core:ink:processDebugManifest UP-TO-DATE
+> Task :app:notes:processDebugMainManifest UP-TO-DATE
+> Task :app:notes:processDebugManifest UP-TO-DATE
+> Task :app:notes:processDebugManifestForPackage UP-TO-DATE
+> Task :core:format:compileDebugLibraryResources UP-TO-DATE
+> Task :core:format:parseDebugLocalResources UP-TO-DATE
+> Task :core:format:generateDebugRFile UP-TO-DATE
+> Task :core:ink:compileDebugLibraryResources UP-TO-DATE
+> Task :core:ink:parseDebugLocalResources UP-TO-DATE
+> Task :core:ink:generateDebugRFile UP-TO-DATE
+> Task :app:notes:processDebugResources UP-TO-DATE
+> Task :core:format:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:format:generateDebugNotebookDatabaseInterface UP-TO-DATE
+> Task :core:ink:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:ink:compileDebugKotlin UP-TO-DATE
+> Task :core:ink:javaPreCompileDebug UP-TO-DATE
+> Task :core:ink:compileDebugJavaWithJavac NO-SOURCE
+> Task :core:ink:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :core:format:compileDebugKotlin UP-TO-DATE
+> Task :core:format:javaPreCompileDebug UP-TO-DATE
+> Task :core:format:compileDebugJavaWithJavac NO-SOURCE
+> Task :core:format:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :app:notes:compileDebugKotlin UP-TO-DATE
+> Task :app:notes:javaPreCompileDebug UP-TO-DATE
+> Task :app:notes:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:notes:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:notes:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :app:notes:processDebugJavaRes UP-TO-DATE
+> Task :core:format:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :core:format:processDebugJavaRes UP-TO-DATE
+> Task :app:notes:bundleDebugClassesToRuntimeJar
+> Task :core:ink:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :app:notes:bundleDebugClassesToCompileJar
+> Task :core:ink:processDebugJavaRes UP-TO-DATE
+> Task :app:notes:buildKotlinToolingMetadata UP-TO-DATE
+> Task :app:notes:preReleaseBuild UP-TO-DATE
+> Task :core:format:preReleaseBuild UP-TO-DATE
+> Task :core:format:writeReleaseAarMetadata UP-TO-DATE
+> Task :core:ink:preReleaseBuild UP-TO-DATE
+> Task :core:ink:writeReleaseAarMetadata UP-TO-DATE
+> Task :app:notes:checkReleaseAarMetadata UP-TO-DATE
+> Task :app:notes:generateReleaseResValues UP-TO-DATE
+> Task :core:format:generateReleaseResValues UP-TO-DATE
+> Task :core:format:generateReleaseResources UP-TO-DATE
+> Task :core:format:packageReleaseResources UP-TO-DATE
+> Task :core:ink:generateReleaseResValues UP-TO-DATE
+> Task :core:ink:generateReleaseResources UP-TO-DATE
+> Task :core:ink:packageReleaseResources UP-TO-DATE
+> Task :app:notes:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :app:notes:generateReleaseResources UP-TO-DATE
+> Task :app:notes:mergeReleaseResources UP-TO-DATE
+> Task :app:notes:packageReleaseResources UP-TO-DATE
+> Task :app:notes:parseReleaseLocalResources UP-TO-DATE
+> Task :app:notes:createReleaseCompatibleScreenManifests UP-TO-DATE
+> Task :app:notes:extractDeepLinksRelease UP-TO-DATE
+> Task :core:format:extractDeepLinksRelease UP-TO-DATE
+> Task :core:format:processReleaseManifest UP-TO-DATE
+> Task :core:ink:extractDeepLinksRelease UP-TO-DATE
+> Task :core:ink:processReleaseManifest UP-TO-DATE
+> Task :app:notes:processReleaseMainManifest UP-TO-DATE
+> Task :app:notes:processReleaseManifest UP-TO-DATE
+> Task :app:notes:processReleaseManifestForPackage UP-TO-DATE
+> Task :core:format:compileReleaseLibraryResources UP-TO-DATE
+> Task :core:format:parseReleaseLocalResources UP-TO-DATE
+> Task :core:format:generateReleaseRFile UP-TO-DATE
+> Task :core:ink:compileReleaseLibraryResources UP-TO-DATE
+> Task :core:ink:parseReleaseLocalResources UP-TO-DATE
+> Task :core:ink:generateReleaseRFile UP-TO-DATE
+> Task :app:notes:processReleaseResources UP-TO-DATE
+> Task :core:format:generateReleaseNotebookDatabaseInterface UP-TO-DATE
+> Task :core:ink:compileReleaseKotlin UP-TO-DATE
+> Task :core:ink:javaPreCompileRelease UP-TO-DATE
+> Task :app:notes:compileDebugUnitTestKotlin
+> Task :core:ink:compileReleaseJavaWithJavac NO-SOURCE
+> Task :app:notes:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:notes:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :app:notes:testDebugUnitTest
+> Task :core:ink:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :core:format:compileReleaseKotlin UP-TO-DATE
+> Task :core:format:javaPreCompileRelease UP-TO-DATE
+> Task :core:format:compileReleaseJavaWithJavac NO-SOURCE
+> Task :core:format:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :app:notes:javaPreCompileRelease UP-TO-DATE
+> Task :app:notes:preReleaseUnitTestBuild UP-TO-DATE
+> Task :app:notes:javaPreCompileReleaseUnitTest UP-TO-DATE
+> Task :core:format:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :core:format:processReleaseJavaRes UP-TO-DATE
+> Task :core:ink:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :core:ink:processReleaseJavaRes UP-TO-DATE
+> Task :core:format:preDebugUnitTestBuild UP-TO-DATE
+> Task :core:format:generateDebugUnitTestStubRFile UP-TO-DATE
+> Task :core:format:compileDebugUnitTestKotlin UP-TO-DATE
+> Task :core:format:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :core:format:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :core:format:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :core:format:testDebugUnitTest UP-TO-DATE
+> Task :core:format:preReleaseUnitTestBuild UP-TO-DATE
+> Task :core:format:generateReleaseUnitTestStubRFile UP-TO-DATE
+> Task :core:format:compileReleaseUnitTestKotlin UP-TO-DATE
+> Task :core:format:javaPreCompileReleaseUnitTest UP-TO-DATE
+> Task :core:format:compileReleaseUnitTestJavaWithJavac NO-SOURCE
+> Task :core:format:processReleaseUnitTestJavaRes UP-TO-DATE
+> Task :core:format:testReleaseUnitTest UP-TO-DATE
+> Task :core:format:test UP-TO-DATE
+> Task :core:ink:preDebugUnitTestBuild UP-TO-DATE
+> Task :core:ink:preReleaseUnitTestBuild UP-TO-DATE
+> Task :core:ink:javaPreCompileDebugUnitTest
+> Task :core:ink:generateDebugUnitTestStubRFile
+> Task :core:ink:javaPreCompileReleaseUnitTest
+> Task :core:ink:generateReleaseUnitTestStubRFile
+> Task :app:notes:compileReleaseKotlin
+> Task :app:notes:compileReleaseJavaWithJavac NO-SOURCE
+> Task :app:notes:processReleaseJavaRes UP-TO-DATE
+> Task :app:notes:bundleReleaseClassesToRuntimeJar
+> Task :app:notes:bundleReleaseClassesToCompileJar
+> Task :app:notes:compileReleaseUnitTestKotlin
+> Task :app:notes:compileReleaseUnitTestJavaWithJavac NO-SOURCE
+> Task :app:notes:processReleaseUnitTestJavaRes UP-TO-DATE
+> Task :core:ink:compileReleaseUnitTestKotlin
+> Task :core:ink:compileDebugUnitTestKotlin
+> Task :app:notes:testReleaseUnitTest
+> Task :app:notes:test
+> Task :core:ink:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :core:ink:processDebugUnitTestJavaRes
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+> Task :core:ink:testDebugUnitTest
+> Task :core:ink:compileReleaseUnitTestJavaWithJavac NO-SOURCE
+> Task :core:ink:processReleaseUnitTestJavaRes
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+> Task :core:ink:testReleaseUnitTest
+> Task :core:ink:test
+
+[Incubating] Problems report is available at: file:///home/jtd/ForestNote/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.1.0/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 3s
+132 actionable tasks: 19 executed, 113 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.1.0/userguide/configuration_cache_enabling.html
