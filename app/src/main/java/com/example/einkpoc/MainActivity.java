@@ -5,7 +5,6 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.Handler;
@@ -23,7 +22,7 @@ public class MainActivity extends Activity {
     private ENoteBridge bridge;
     private TextView statusText;
     private DrawView drawView;
-    private boolean autoDrawActive = false;
+    private boolean fastInkActive = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -46,20 +45,6 @@ public class MainActivity extends Activity {
             if (defaultHandler != null) defaultHandler.uncaughtException(t, e);
             else System.exit(1);
         });
-
-        // Pre-set MobileSheets write type so FocusMonitor activates WriteHelp on focus
-        try {
-            android.provider.Settings.Global.putInt(getContentResolver(), "mobilesheets_write_type", 1);
-            android.provider.Settings.Global.putString(getContentResolver(), "mobilesheets_last_stop_package", "com.zubersoft.mobilesheetspro");
-        } catch (Throwable e) {
-            // Log but don't crash
-            try {
-                java.io.FileWriter fw = new java.io.FileWriter("/sdcard/Download/einkpoc_settings.txt");
-                fw.write("Settings.Global.putInt failed: " + e.getClass().getSimpleName() + ": " + e.getMessage() + "\n");
-                e.printStackTrace(new java.io.PrintWriter(fw));
-                fw.close();
-            } catch (Throwable ignored) {}
-        }
 
         bridge = new ENoteBridge();
         boolean ok = bridge.init(this);
@@ -94,7 +79,7 @@ public class MainActivity extends Activity {
         statusText.setTextColor(Color.BLACK);
 
         // Drawing canvas
-        drawView = new DrawView(this);
+        drawView = new DrawView(this, bridge);
         drawView.setBackgroundColor(Color.WHITE);
 
         root.addView(row1, wrapLp());
@@ -105,7 +90,7 @@ public class MainActivity extends Activity {
 
         setContentView(root);
 
-        statusText.setText(ok ? "Ready. Tap 'Fast Ink ON' to enable accelerated drawing."
+        statusText.setText(ok ? "Ready. Tap 'Fast Ink ON' to enable WritingSurface."
                 : "FAILED to connect to ENoteSetting!");
     }
 
@@ -128,16 +113,6 @@ public class MainActivity extends Activity {
         parent.addView(btn, lp);
     }
 
-    private void probeNative() {
-        statusText.setText("Running native probe... (may crash if lib fails to init)");
-        // Run in a thread so if it hangs we don't ANR
-        new Thread(() -> {
-            NativeProbe probe = new NativeProbe();
-            String result = probe.run();
-            runOnUiThread(() -> statusText.setText(result));
-        }).start();
-    }
-
     private void refreshInfo() {
         String info = bridge.getInfo();
         statusText.setText(info);
@@ -145,88 +120,44 @@ public class MainActivity extends Activity {
     }
 
     private void enableFastInk() {
-        // Pre-set MobileSheets write type so FocusMonitor activates WriteHelp
+        StringBuilder sb = new StringBuilder();
+        sb.append("=== Enabling Fast Ink (WritingSurface path) ===\n");
+
+        // Step 1: Set application context (required before any writing calls)
         try {
-            android.provider.Settings.Global.putInt(getContentResolver(), "mobilesheets_write_type", 1);
+            java.lang.reflect.Method setCtx = bridge.getEnote().getClass()
+                    .getMethod("setApplicationContext", android.content.Context.class);
+            setCtx.invoke(bridge.getEnote(), getApplicationContext());
+            sb.append("setApplicationContext: OK\n");
         } catch (Throwable e) {
-            // May fail without WRITE_SETTINGS permission, that's OK
+            sb.append("setApplicationContext: FAIL: ").append(e.getMessage()).append("\n");
         }
 
-        DisplayMetrics dm = getResources().getDisplayMetrics();
-        int w = dm.widthPixels;
-        int h = dm.heightPixels;
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("=== Enabling Fast Ink ===\n");
-
-        // Call initWriting to load libpaintworker.so in our process
-        // (requires SELinux rules added via magiskpolicy)
-        // Note: WritingSurface::init will fail but auto-draw rects might still work
+        // Step 2: Initialize writing system (loads libpaintworker.so native state)
         sb.append("initWriting: ").append(bridge.initWriting()).append("\n");
 
-        // Now try to set auto-draw rects directly via ENoteWriting native methods
-        // These are in libpaintworker.so which is now loaded in our process
-        sb.append("setNativeAutoDrawRects: ").append(bridge.setNativeAutoDrawRects(w, h)).append("\n");
-
-        // Set display to FAST mode
+        // Step 3: Set display to FAST mode
         sb.append("setPictureMode(FAST): ").append(bridge.setPictureMode(4)).append("\n");
 
-        // Enable AutoDraw via service calls
-        sb.append("setT1000AutoDrawEnable(true): ").append(bridge.setAutoDrawEnabled(true)).append("\n");
-        sb.append("setAllRegionUnAutoDraw(false): ").append(bridge.setAllRegionUnAutoDraw(false)).append("\n");
-        sb.append("setAutoDrawToolType(2/pen): ").append(bridge.setAutoDrawToolType(2)).append("\n");
-        sb.append("setAutoDrawPenWidthRange(").append(penMin).append(",").append(penMax).append("): ")
-                .append(bridge.setAutoDrawPenWidthRange(penMin, penMax)).append("\n");
-        // Get the DrawView's actual screen position
-        int[] loc = new int[2];
-        drawView.getLocationOnScreen(loc);
-        int dvLeft = loc[0];
-        int dvTop = loc[1];
-        int dvRight = dvLeft + drawView.getWidth();
-        int dvBottom = dvTop + drawView.getHeight();
+        // Step 4: Set render delay to 0 for immediate rendering
+        sb.append("setRenderWritingDelayCount(0): ").append(bridge.setRenderWritingDelayCount(0)).append("\n");
 
-        sb.append("Screen: ").append(w).append("x").append(h).append("\n");
-        sb.append("DrawView on screen: (").append(dvLeft).append(",").append(dvTop)
-                .append(")-(").append(dvRight).append(",").append(dvBottom).append(")\n");
+        // Step 5: Enable writing — this inits WritingSurface and connects to WritingBufferQueue
+        sb.append("setWritingEnabled(true): ").append(bridge.setWritingEnabled(true)).append("\n");
 
-        // Try multiple coordinate spaces to find what works
-        // Android coords (portrait)
-        sb.append("addAutoDrawRect(android 0,0,").append(w).append(",").append(h).append("): ")
-                .append(bridge.addAutoDrawRect(new Rect(0, 0, w, h))).append("\n");
-        // Physical coords (landscape, pre-rotation: 1920x1440)
-        sb.append("addAutoDrawRect(physical 0,0,1920,1440): ")
-                .append(bridge.addAutoDrawRect(new Rect(0, 0, 1920, 1440))).append("\n");
-        // Oversized rect to cover everything regardless of coord space
-        sb.append("addAutoDrawRect(oversized 0,0,2000,2000): ")
-                .append(bridge.addAutoDrawRect(new Rect(0, 0, 2000, 2000))).append("\n");
+        fastInkActive = true;
+        drawView.setFastInkActive(true);
 
-        // T1000 direct commands — try setting handwriting range on the chip itself
-        // T1000_CMD_SET_HANDWRITING_ENABLE = 17 (enable=1)
-        sb.append("T1000 SET_HANDWRITING_ENABLE(1): ")
-                .append(bridge.callT1000Cmd(17, new int[]{1})).append("\n");
-        // T1000_CMD_SEND_HANDWRITING_RANGE = 14 (left, top, right, bottom)
-        // Try Android coords
-        sb.append("T1000 SEND_HANDWRITING_RANGE(0,0,").append(w).append(",").append(h).append("): ")
-                .append(bridge.callT1000Cmd(14, new int[]{0, 0, w, h})).append("\n");
-        // Try physical coords
-        sb.append("T1000 SEND_HANDWRITING_RANGE(0,0,1920,1440): ")
-                .append(bridge.callT1000Cmd(14, new int[]{0, 0, 1920, 1440})).append("\n");
-
-        autoDrawActive = true;
-        drawView.setAutoDrawActive(true);
-
-        sb.append("\nFast ink enabled! Draw with the stylus.\n");
+        sb.append("\nWritingSurface enabled! Draw with the stylus.\n");
         statusText.setText(sb.toString());
         dumpToFile("einkpoc_fastink.txt", sb.toString());
     }
 
     private void disableFastInk() {
-        bridge.setAutoDrawEnabled(false);
-        bridge.setAllRegionUnAutoDraw(true);
-        bridge.stopHandwriteInterceptMipi();
+        bridge.setWritingEnabled(false);
         bridge.setPictureMode(3); // GL16
-        autoDrawActive = false;
-        drawView.setAutoDrawActive(false);
+        fastInkActive = false;
+        drawView.setFastInkActive(false);
         statusText.setText("Fast ink disabled. Mode set to GL16.");
     }
 
@@ -234,54 +165,6 @@ public class MainActivity extends Activity {
         String result = bridge.setPictureMode(mode);
         int current = bridge.getPictureMode();
         statusText.setText("setPictureMode(" + mode + "): " + result + "\nCurrent: " + current);
-    }
-
-    private int penMin = 1;
-    private int penMax = 3;
-
-    private void showPenWidthDialog() {
-        android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(this);
-        builder.setTitle("AutoDraw Pen Width");
-
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(40, 20, 40, 20);
-
-        TextView minLabel = new TextView(this);
-        minLabel.setText("Min width (current: " + penMin + "):");
-        minLabel.setTextColor(Color.BLACK);
-        layout.addView(minLabel);
-
-        android.widget.EditText minInput = new android.widget.EditText(this);
-        minInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-        minInput.setText(String.valueOf(penMin));
-        minInput.setTextColor(Color.BLACK);
-        layout.addView(minInput);
-
-        TextView maxLabel = new TextView(this);
-        maxLabel.setText("Max width (current: " + penMax + "):");
-        maxLabel.setTextColor(Color.BLACK);
-        layout.addView(maxLabel);
-
-        android.widget.EditText maxInput = new android.widget.EditText(this);
-        maxInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-        maxInput.setText(String.valueOf(penMax));
-        maxInput.setTextColor(Color.BLACK);
-        layout.addView(maxInput);
-
-        builder.setView(layout);
-        builder.setPositiveButton("Apply", (dialog, which) -> {
-            try {
-                penMin = Integer.parseInt(minInput.getText().toString());
-                penMax = Integer.parseInt(maxInput.getText().toString());
-                String result = bridge.setAutoDrawPenWidthRange(penMin, penMax);
-                statusText.setText("Pen width set to " + penMin + "-" + penMax + ": " + result);
-            } catch (Throwable e) {
-                statusText.setText("Invalid input: " + e.getMessage());
-            }
-        });
-        builder.setNegativeButton("Cancel", null);
-        builder.show();
     }
 
     private void dumpToFile(String filename, String content) {
@@ -295,31 +178,46 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (autoDrawActive) {
+        if (fastInkActive) {
             disableFastInk();
         }
     }
 
     /**
-     * Drawing view that coordinates with the T1000 AutoDraw overlay.
+     * Drawing view using the WritingSurface fast ink path.
      *
-     * When AutoDraw is active:
-     * - During pen movement: don't invalidate (let the overlay render)
-     * - After pen-up: wait for overlay to clear, then render final strokes
+     * How it works:
+     * - We maintain an offscreen Bitmap that we draw strokes into
+     * - On pen down: call onWritingStart(), provide bitmap via setWritingJavaBitmap()
+     * - On each move: draw stroke segment into bitmap, call renderWriting(dirtyRect)
+     *   to push the dirty region to the WritingSurface overlay via SurfaceFlinger
+     * - On pen up: call onWritingEnd() to trigger quality redraw
      *
-     * Strokes use pressure sensitivity to match the overlay's rendering.
+     * The WritingSurface is a separate compositor layer that SurfaceFlinger blends
+     * on top of our app's normal window. renderWriting() tells libpaintworker.so
+     * to blit the dirty rect from our bitmap to that overlay surface.
      */
     static class DrawView extends View {
-        private static final long REDRAW_DELAY_MS = 900; // slightly after overlay's 800ms clear
+        private static final double LOG4 = Math.log(4.0);
 
+        private final ENoteBridge bridge;
         private final java.util.List<StrokeData> completedStrokes = new java.util.ArrayList<>();
         private StrokeData currentStroke = null;
-        private boolean autoDrawActive = false;
-        private final Handler handler = new Handler(Looper.getMainLooper());
+        private boolean fastInkActive = false;
         private final Paint strokePaint;
 
-        public DrawView(android.content.Context context) {
+        // Pen width params
+        private float penWidthMin = 1.0f;
+        private float penWidthMax = 5.0f;
+
+        // Offscreen bitmap for WritingSurface rendering
+        private Bitmap writingBitmap;
+        private Canvas writingCanvas;
+        private boolean bitmapProvided = false;
+
+        public DrawView(android.content.Context context, ENoteBridge bridge) {
             super(context);
+            this.bridge = bridge;
             strokePaint = new Paint();
             strokePaint.setColor(Color.BLACK);
             strokePaint.setStyle(Paint.Style.STROKE);
@@ -328,19 +226,157 @@ public class MainActivity extends Activity {
             strokePaint.setStrokeJoin(Paint.Join.ROUND);
         }
 
-        public void setAutoDrawActive(boolean active) {
-            this.autoDrawActive = active;
+        public void setFastInkActive(boolean active) {
+            this.fastInkActive = active;
+            if (active) {
+                ensureBitmap();
+            }
+        }
+
+        public void setPenWidthParams(float min, float max) {
+            this.penWidthMin = min;
+            this.penWidthMax = max;
+        }
+
+        private float pressureToWidth(float pressure) {
+            float range = penWidthMax - penWidthMin;
+            return penWidthMin + (float)(range * Math.log(3.0 * pressure + 1.0) / LOG4);
+        }
+
+        private void ensureBitmap() {
+            int w = getWidth();
+            int h = getHeight();
+            if (w <= 0 || h <= 0) {
+                // View not laid out yet — defer
+                post(() -> ensureBitmap());
+                return;
+            }
+            if (writingBitmap == null || writingBitmap.getWidth() != w || writingBitmap.getHeight() != h) {
+                writingBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                writingCanvas = new Canvas(writingBitmap);
+                writingCanvas.drawColor(Color.TRANSPARENT);
+                bitmapProvided = false;
+            }
+        }
+
+        private void provideBitmapIfNeeded() {
+            if (!bitmapProvided && writingBitmap != null) {
+                // Get view's position on screen to offset the bitmap
+                int[] loc = new int[2];
+                getLocationOnScreen(loc);
+                bridge.setWritingJavaBitmap(writingBitmap, 0, loc[0], loc[1]);
+                bitmapProvided = true;
+            }
         }
 
         @Override
         public boolean onTouchEvent(MotionEvent event) {
             int action = event.getActionMasked();
 
+            if (fastInkActive) {
+                return handleTouchFastInk(event, action);
+            } else {
+                return handleTouchNormal(event, action);
+            }
+        }
+
+        /**
+         * WritingSurface fast ink path:
+         * Draw into offscreen bitmap, call renderWriting() to push dirty rects
+         */
+        private boolean handleTouchFastInk(MotionEvent event, int action) {
+            switch (action) {
+                case MotionEvent.ACTION_DOWN:
+                    ensureBitmap();
+                    provideBitmapIfNeeded();
+                    bridge.onWritingStart();
+
+                    currentStroke = new StrokeData();
+                    currentStroke.setWidthParams(penWidthMin, penWidthMax);
+                    addPointToStroke(event);
+                    break;
+
+                case MotionEvent.ACTION_MOVE:
+                    if (currentStroke != null) {
+                        float minX = event.getX(), minY = event.getY();
+                        float maxX = minX, maxY = minY;
+
+                        // Process historical points
+                        for (int i = 0; i < event.getHistorySize(); i++) {
+                            float hx = event.getHistoricalX(i);
+                            float hy = event.getHistoricalY(i);
+                            float hp = event.getHistoricalPressure(i);
+
+                            float prevX = currentStroke.lastX();
+                            float prevY = currentStroke.lastY();
+                            float w = pressureToWidth(hp);
+
+                            // Draw segment into offscreen bitmap
+                            strokePaint.setStrokeWidth(w);
+                            writingCanvas.drawLine(prevX, prevY, hx, hy, strokePaint);
+
+                            currentStroke.addPoint(hx, hy, hp);
+
+                            // Track dirty rect bounds
+                            minX = Math.min(minX, Math.min(prevX, hx));
+                            minY = Math.min(minY, Math.min(prevY, hy));
+                            maxX = Math.max(maxX, Math.max(prevX, hx));
+                            maxY = Math.max(maxY, Math.max(prevY, hy));
+                        }
+
+                        // Current point
+                        float cx = event.getX(), cy = event.getY();
+                        float cp = event.getPressure();
+                        float prevX = currentStroke.lastX();
+                        float prevY = currentStroke.lastY();
+                        float w = pressureToWidth(cp);
+
+                        strokePaint.setStrokeWidth(w);
+                        writingCanvas.drawLine(prevX, prevY, cx, cy, strokePaint);
+                        currentStroke.addPoint(cx, cy, cp);
+
+                        minX = Math.min(minX, Math.min(prevX, cx));
+                        minY = Math.min(minY, Math.min(prevY, cy));
+                        maxX = Math.max(maxX, Math.max(prevX, cx));
+                        maxY = Math.max(maxY, Math.max(prevY, cy));
+
+                        // Push dirty rect to WritingSurface overlay
+                        // Add padding for stroke width
+                        float maxW = penWidthMax + 2;
+                        int[] loc = new int[2];
+                        getLocationOnScreen(loc);
+                        Rect dirty = new Rect(
+                                (int)(minX - maxW) + loc[0],
+                                (int)(minY - maxW) + loc[1],
+                                (int)(maxX + maxW) + loc[0],
+                                (int)(maxY + maxW) + loc[1]);
+                        bridge.renderWriting(dirty);
+                    }
+                    break;
+
+                case MotionEvent.ACTION_UP:
+                    if (currentStroke != null) {
+                        addPointToStroke(event);
+                        completedStrokes.add(currentStroke);
+                        currentStroke = null;
+                        bridge.onWritingEnd();
+                        // After overlay clears, do a normal View invalidate for persistence
+                        postDelayed(() -> invalidate(), 900);
+                    }
+                    break;
+            }
+            return true;
+        }
+
+        /**
+         * Normal (non-fast-ink) path: just record points and invalidate once on pen-up.
+         */
+        private boolean handleTouchNormal(MotionEvent event, int action) {
             switch (action) {
                 case MotionEvent.ACTION_DOWN:
                     currentStroke = new StrokeData();
-                    addPoint(event);
-                    invalidate();
+                    currentStroke.setWidthParams(penWidthMin, penWidthMax);
+                    addPointToStroke(event);
                     break;
 
                 case MotionEvent.ACTION_MOVE:
@@ -351,14 +387,13 @@ public class MainActivity extends Activity {
                                     event.getHistoricalY(i),
                                     event.getHistoricalPressure(i));
                         }
-                        addPoint(event);
-                        invalidate();
+                        addPointToStroke(event);
                     }
                     break;
 
                 case MotionEvent.ACTION_UP:
                     if (currentStroke != null) {
-                        addPoint(event);
+                        addPointToStroke(event);
                         completedStrokes.add(currentStroke);
                         currentStroke = null;
                         invalidate();
@@ -368,7 +403,7 @@ public class MainActivity extends Activity {
             return true;
         }
 
-        private void addPoint(MotionEvent event) {
+        private void addPointToStroke(MotionEvent event) {
             if (currentStroke != null) {
                 currentStroke.addPoint(event.getX(), event.getY(), event.getPressure());
             }
@@ -377,12 +412,12 @@ public class MainActivity extends Activity {
         @Override
         protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
-            // Draw completed strokes with pressure-sensitive width
+            // Draw completed strokes
             for (StrokeData stroke : completedStrokes) {
                 drawStroke(canvas, stroke);
             }
-            // Draw current stroke (only when not in AutoDraw mode)
-            if (!autoDrawActive && currentStroke != null) {
+            // Draw current stroke (only in non-fast-ink mode)
+            if (!fastInkActive && currentStroke != null) {
                 drawStroke(canvas, currentStroke);
             }
         }
@@ -392,10 +427,7 @@ public class MainActivity extends Activity {
             for (int i = 1; i < stroke.points.size(); i++) {
                 float[] prev = stroke.points.get(i - 1);
                 float[] curr = stroke.points.get(i);
-                // Pressure-sensitive width: map pressure to 1-6px
-                float pressure = curr[2];
-                float width = 1f + (pressure * 5f);
-                strokePaint.setStrokeWidth(width);
+                strokePaint.setStrokeWidth(stroke.widths.get(i));
                 canvas.drawLine(prev[0], prev[1], curr[0], curr[1], strokePaint);
             }
         }
@@ -403,16 +435,43 @@ public class MainActivity extends Activity {
         public void clear() {
             completedStrokes.clear();
             currentStroke = null;
+            if (writingBitmap != null) {
+                writingBitmap.eraseColor(Color.TRANSPARENT);
+            }
+            bitmapProvided = false;
             invalidate();
         }
     }
 
-    /** Simple stroke data: list of (x, y, pressure) points */
+    /** Stroke data with precomputed widths */
     static class StrokeData {
         final java.util.List<float[]> points = new java.util.ArrayList<>();
+        final java.util.List<Float> widths = new java.util.ArrayList<>();
+
+        private static final double LOG4 = Math.log(4.0);
+        private float wMin = 1.0f;
+        private float wMax = 3.5f;
+
+        void setWidthParams(float min, float max) {
+            this.wMin = min;
+            this.wMax = max;
+        }
 
         void addPoint(float x, float y, float pressure) {
             points.add(new float[]{x, y, pressure});
+            float range = wMax - wMin;
+            float w = wMin + (float)(range * Math.log(3.0 * pressure + 1.0) / LOG4);
+            widths.add(w);
+        }
+
+        float lastX() {
+            if (points.isEmpty()) return 0;
+            return points.get(points.size() - 1)[0];
+        }
+
+        float lastY() {
+            if (points.isEmpty()) return 0;
+            return points.get(points.size() - 1)[1];
         }
     }
 }

@@ -24,6 +24,8 @@ public class ENoteBridge {
 
     private Object binderService; // IENoteSetting extracted from wrapper's mService field
 
+    public Object getEnote() { return enote; }
+
     public boolean init(android.content.Context context) {
         this.appContext = context.getApplicationContext();
         StringBuilder initLog = new StringBuilder();
@@ -183,6 +185,29 @@ public class ENoteBridge {
             return "OK";
         } catch (Throwable e) {
             writeCrash("setWritingJavaBackgroundBitmap", e);
+            return errStr(e);
+        }
+    }
+
+    public String setWritingJavaBitmap(Bitmap bmp, int rot, int left, int top) {
+        try {
+            Method m = enote.getClass().getMethod("setWritingJavaBitmap",
+                    Bitmap.class, int.class, int.class, int.class);
+            m.invoke(enote, bmp, rot, left, top);
+            return "OK";
+        } catch (Throwable e) {
+            writeCrash("setWritingJavaBitmap", e);
+            return errStr(e);
+        }
+    }
+
+    public String renderWriting(Rect rect) {
+        try {
+            Method m = enote.getClass().getMethod("renderWriting", Rect.class);
+            m.invoke(enote, rect);
+            return "OK";
+        } catch (Throwable e) {
+            writeCrash("renderWriting", e);
             return errStr(e);
         }
     }
