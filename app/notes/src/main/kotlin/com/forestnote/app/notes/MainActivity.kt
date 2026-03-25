@@ -1,9 +1,11 @@
 package com.forestnote.app.notes
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
+import android.view.View
 import android.widget.FrameLayout
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.ink.BackendDetector
@@ -27,7 +29,8 @@ class MainActivity : Activity() {
     private lateinit var drawView: DrawView
     private lateinit var backend: InkBackend
     private lateinit var repository: NotebookRepository
-    private var isViwoods = false
+    private lateinit var toolBar: ToolBar
+    private var isEInk = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,20 +39,23 @@ class MainActivity : Activity() {
         // Detect and initialize backend
         val detection = BackendDetector.detect(this)
         backend = detection.backend
-        isViwoods = detection.isEInk
+        isEInk = detection.isEInk
 
         // Open storage
         repository = NotebookRepository.open(this)
 
-        // Create and configure DrawView
-        drawView = DrawView(this).apply {
-            setBackgroundColor(Color.WHITE)
+        // Load layout from XML
+        setContentView(R.layout.activity_main)
+
+        // Find views by ID
+        drawView = findViewById(R.id.draw_view)
+        val toolBarRoot: View = findViewById(R.id.toolbar)
+
+        // Configure DrawView
+        drawView.apply {
             setBackend(backend)
             setRepository(repository)
             setTransform(PageTransform())
-
-            // DrawView handles saving directly in ACTION_UP handler.
-            // This callback is for notification only (Phase 6+ may use for analytics/UI updates).
             onStrokeSaved = { stroke ->
                 // Notification-only callback
             }
@@ -59,20 +65,45 @@ class MainActivity : Activity() {
         val strokes = repository.loadStrokes()
         drawView.restoreStrokes(strokes)
 
-        // Full-screen layout
-        val container = FrameLayout(this)
-        container.setBackgroundColor(Color.WHITE)
-        container.addView(drawView, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
+        // Create and wire ToolBar
+        toolBar = ToolBar(toolBarRoot, isEInk) { tool ->
+            drawView.activeTool = tool
+        }
 
-        setContentView(container)
+        // Wire Clear button
+        toolBar.setOnClearClicked {
+            showClearConfirmation()
+        }
+
+        // E-ink optimizations
+        if (isEInk) {
+            window.setWindowAnimations(0)
+            drawView.overScrollMode = View.OVER_SCROLL_NEVER
+        }
+    }
+
+    /**
+     * Show confirmation dialog before clearing the page.
+     */
+    private fun showClearConfirmation() {
+        AlertDialog.Builder(this)
+            .setTitle("Clear Page")
+            .setMessage("Delete all strokes on this page?")
+            .setPositiveButton("Clear") { _, _ ->
+                drawView.clearAll()
+                try {
+                    repository.clearPage()
+                } catch (e: Throwable) {
+                    android.util.Log.e("MainActivity", "failed to clear page", e)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     override fun onPause() {
         super.onPause()
-        if (isViwoods) {
+        if (isEInk) {
             // Release WritingBufferQueue so other apps (WiNote etc.) can use it
             backend.release()
         }
@@ -80,7 +111,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (isViwoods) {
+        if (isEInk) {
             // Re-acquire the WritingBufferQueue
             val viwoodsBackend = backend as ViwoodsBackend
             viwoodsBackend.reacquire()

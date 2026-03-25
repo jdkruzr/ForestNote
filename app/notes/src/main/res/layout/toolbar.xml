@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/toolbar"
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:orientation="horizontal"
+    android:gravity="center"
+    android:background="@color/white"
+    android:elevation="0dp">
+
+    <ImageButton
+        android:id="@+id/btn_pen"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:src="@drawable/ic_pen"
+        android:contentDescription="Pen"
+        android:background="?attr/selectableItemBackground"
+        android:scaleType="center" />
+
+    <ImageButton
+        android:id="@+id/btn_stroke_eraser"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:src="@drawable/ic_stroke_eraser"
+        android:contentDescription="Stroke Eraser"
+        android:background="?attr/selectableItemBackground"
+        android:scaleType="center" />
+
+    <ImageButton
+        android:id="@+id/btn_pixel_eraser"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:src="@drawable/ic_pixel_eraser"
+        android:contentDescription="Pixel Eraser"
+        android:background="?attr/selectableItemBackground"
+        android:scaleType="center" />
+
+    <ImageButton
+        android:id="@+id/btn_clear"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:src="@drawable/ic_clear"
+        android:contentDescription="Clear"
+        android:background="?attr/selectableItemBackground"
+        android:scaleType="center" />
+
+</LinearLayout>
