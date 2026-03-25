@@ -10,6 +10,7 @@ junit = "4.13.2"
 kotlin-test = "2.0.21"
 androidx-test-ext-junit = "1.2.1"
 androidx-test-espresso = "3.6.1"
+mockito = "5.2.1"
 
 [libraries]
 # Gradle plugins (for build-logic dependencies)
@@ -35,6 +36,8 @@ sqldelight-gradlePlugin = { module = "app.cash.sqldelight:gradle-plugin", versio
 # Testing
 junit = { module = "junit:junit", version.ref = "junit" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin-test" }
+mockito = { module = "org.mockito.kotlin:mockito-kotlin", version.ref = "mockito" }
+mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
 androidx-test-ext-junit = { module = "androidx.test.ext:junit-ktx", version.ref = "androidx-test-ext-junit" }
 androidx-test-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "androidx-test-espresso" }
 
