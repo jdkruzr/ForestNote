@@ -1,0 +1,45 @@
+[versions]
+agp = "8.7.0"
+kotlin = "2.0.21"
+sqldelight = "2.0.2"
+androidx-core = "1.15.0"
+androidx-appcompat = "1.7.0"
+androidx-ink = "1.0.0"
+material = "1.12.0"
+junit = "4.13.2"
+kotlin-test = "2.0.21"
+androidx-test-ext-junit = "1.2.1"
+androidx-test-espresso = "3.6.1"
+
+[libraries]
+# Gradle plugins (for build-logic dependencies)
+android-gradlePlugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+kotlin-gradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+
+# AndroidX
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "androidx-appcompat" }
+
+# Material Design (Views, not Compose)
+material = { module = "com.google.android.material:material", version.ref = "material" }
+
+# Jetpack Ink API (geometry + brush for erase intersection, strokes added in Phase 6)
+androidx-ink-brush = { module = "androidx.ink:ink-brush", version.ref = "androidx-ink" }
+androidx-ink-geometry = { module = "androidx.ink:ink-geometry", version.ref = "androidx-ink" }
+
+# SQLDelight
+sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
+sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }
+sqldelight-gradlePlugin = { module = "app.cash.sqldelight:gradle-plugin", version.ref = "sqldelight" }
+
+# Testing
+junit = { module = "junit:junit", version.ref = "junit" }
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin-test" }
+androidx-test-ext-junit = { module = "androidx.test.ext:junit-ktx", version.ref = "androidx-test-ext-junit" }
+androidx-test-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "androidx-test-espresso" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }
