@@ -34,7 +34,11 @@ import kotlin.math.min
  * All rendering to bitmap uses screen coordinates.
  * All storage (StrokeBuilder, Stroke) uses virtual coordinates.
  */
-class DrawView(context: Context) : View(context) {
+class DrawView @JvmOverloads constructor(
+    context: Context,
+    attrs: android.util.AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : View(context, attrs, defStyleAttr) {
     companion object {
         /**
          * Pure function: Check if a tool type should be accepted for drawing.
