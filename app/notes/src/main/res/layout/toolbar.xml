@@ -48,4 +48,14 @@
         android:background="?attr/selectableItemBackground"
         android:scaleType="center" />
 
+    <ImageButton
+        android:id="@+id/btn_refresh"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:src="@drawable/ic_refresh"
+        android:contentDescription="Refresh"
+        android:background="?attr/selectableItemBackground"
+        android:scaleType="center" />
+
 </LinearLayout>

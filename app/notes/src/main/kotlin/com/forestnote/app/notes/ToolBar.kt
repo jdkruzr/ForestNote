@@ -21,11 +21,13 @@ class ToolBar(
     private val onToolSelected: (Tool) -> Unit
 ) {
     private var activeClearCallback: (() -> Unit)? = null
+    private var activeRefreshCallback: (() -> Unit)? = null
 
     private val btnPen: ImageButton = root.findViewById(R.id.btn_pen)
     private val btnStrokeEraser: ImageButton = root.findViewById(R.id.btn_stroke_eraser)
     private val btnPixelEraser: ImageButton = root.findViewById(R.id.btn_pixel_eraser)
     private val btnClear: ImageButton = root.findViewById(R.id.btn_clear)
+    private val btnRefresh: ImageButton = root.findViewById(R.id.btn_refresh)
 
     private val buttonMap = mapOf(
         btnPen to Tool.Pen,
@@ -50,6 +52,7 @@ class ToolBar(
         btnStrokeEraser.setOnClickListener { logic.selectTool(Tool.StrokeEraser) }
         btnPixelEraser.setOnClickListener { logic.selectTool(Tool.PixelEraser) }
         btnClear.setOnClickListener { logic.triggerClear() }
+        btnRefresh.setOnClickListener { activeRefreshCallback?.invoke() }
 
         // On e-ink, remove ripple background to prevent ghosting
         if (isEInk) {
@@ -57,6 +60,7 @@ class ToolBar(
                 button.background = null
             }
             btnClear.background = null
+            btnRefresh.background = null
         }
 
         // Set initial visual state
@@ -98,6 +102,14 @@ class ToolBar(
      */
     fun setOnClearClicked(callback: () -> Unit) {
         activeClearCallback = callback
+    }
+
+    /**
+     * Set the callback to invoke when Refresh button is tapped.
+     * Triggers a full e-ink panel refresh to clear ghosting.
+     */
+    fun setOnRefreshClicked(callback: () -> Unit) {
+        activeRefreshCallback = callback
     }
 
     /**

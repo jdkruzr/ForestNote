@@ -155,6 +155,15 @@ class DrawView @JvmOverloads constructor(
         }, 100)
     }
 
+    /**
+     * Trigger a full e-ink panel refresh (GC mode) to clear ghosting artifacts.
+     * Redraws all strokes from the authoritative in-memory list and pushes
+     * the clean bitmap to both foreground and background layers.
+     */
+    fun fullRefresh() {
+        redrawBitmap()
+    }
+
     // ========== Bitmap Management ==========
 
     /**

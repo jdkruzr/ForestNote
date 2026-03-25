@@ -75,6 +75,11 @@ class MainActivity : Activity() {
             showClearConfirmation()
         }
 
+        // Wire Refresh button — full GC panel refresh to clear ghosting
+        toolBar.setOnRefreshClicked {
+            drawView.fullRefresh()
+        }
+
         // E-ink optimizations
         if (isEInk) {
             window.setWindowAnimations(0)
