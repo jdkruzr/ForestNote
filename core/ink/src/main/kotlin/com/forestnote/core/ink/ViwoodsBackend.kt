@@ -64,6 +64,13 @@ class ViwoodsBackend : InkBackend {
         bridge.setWritingJavaBackgroundBitmap(bitmap, 0, viewLocation[0], viewLocation[1])
     }
 
+    override fun resetOverlay(bitmap: Bitmap, viewLocation: IntArray, screenWidth: Int, screenHeight: Int) {
+        // Re-provide the clean bitmap as the foreground layer
+        bridge.setWritingJavaBitmap(bitmap, 0, viewLocation[0], viewLocation[1])
+        // Render the full screen rect to force overlay to re-composite entirely
+        bridge.renderWriting(Rect(0, 0, screenWidth, screenHeight))
+    }
+
     override fun release() {
         if (initialized) {
             bridge.setWritingEnabled(false)

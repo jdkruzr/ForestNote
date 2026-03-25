@@ -38,6 +38,10 @@ class GenericBackend : InkBackend {
         // No-op: standard View.invalidate() handles display updates
     }
 
+    override fun resetOverlay(bitmap: Bitmap, viewLocation: IntArray, screenWidth: Int, screenHeight: Int) {
+        // No-op: no hardware overlay to reset
+    }
+
     override fun release() {
         // No-op: nothing to release
     }

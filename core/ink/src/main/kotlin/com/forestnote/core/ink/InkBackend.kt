@@ -57,6 +57,21 @@ interface InkBackend {
      */
     fun pushBackgroundBitmap(bitmap: Bitmap, viewLocation: IntArray)
 
+    /**
+     * Force the WritingSurface overlay to re-composite from the provided bitmap.
+     * Called after erase/clear to ensure the overlay matches the clean bitmap.
+     *
+     * This re-provides the bitmap to the foreground layer AND renders the
+     * full screen rect, forcing the overlay to replace all stale pixels.
+     * Equivalent to WiNote's resetFastShowContentBitmap().
+     *
+     * @param bitmap The offscreen bitmap with current stroke state
+     * @param viewLocation The view's [x, y] position on screen
+     * @param screenWidth Full screen width for the render rect
+     * @param screenHeight Full screen height for the render rect
+     */
+    fun resetOverlay(bitmap: Bitmap, viewLocation: IntArray, screenWidth: Int, screenHeight: Int)
+
     /** Release all resources. Called when the backend is no longer needed. */
     fun release()
 }

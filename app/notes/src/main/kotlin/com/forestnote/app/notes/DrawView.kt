@@ -141,18 +141,14 @@ class DrawView @JvmOverloads constructor(
         completedStrokes.clear()
         currentStroke = null
         writingBitmap?.eraseColor(Color.TRANSPARENT)
-        // Push empty bitmap to background + synchronous FULL_REFRESH
         writingBitmap?.let { bmp ->
             val loc = IntArray(2)
             getLocationOnScreen(loc)
             backend?.pushBackgroundBitmap(bmp, loc)
+            backend?.resetOverlay(bmp, loc, width, height)
         }
-        bitmapProvided = false
-        backend?.setDisplayMode(com.forestnote.core.ink.DisplayMode.FULL_REFRESH)
+        bitmapProvided = true
         invalidate()
-        postDelayed({
-            backend?.setDisplayMode(com.forestnote.core.ink.DisplayMode.FAST)
-        }, 100)
     }
 
     /**
@@ -498,24 +494,18 @@ class DrawView @JvmOverloads constructor(
         for (stroke in completedStrokes) {
             drawStrokeToBitmap(stroke)
         }
-        // Two-step WritingSurface cleanup after erase:
-        // 1. Push clean bitmap to background layer (async, tells compositor the true state)
-        // 2. Brief FULL_REFRESH to synchronously flush stale foreground overlay pixels
-        //
-        // Background bitmap alone has a race condition — the compositor may not process
-        // it before the next pen-down re-provides the foreground. FULL_REFRESH forces
-        // a synchronous panel redraw that clears the stale overlay immediately.
+        // Force the WritingSurface overlay to re-composite from the clean bitmap.
+        // This is equivalent to WiNote's resetFastShowContentBitmap(): re-provide
+        // the bitmap as the foreground layer and render a full-screen rect so the
+        // overlay replaces all stale pixels (including erased areas).
         writingBitmap?.let { bmp ->
             val loc = IntArray(2)
             getLocationOnScreen(loc)
             backend?.pushBackgroundBitmap(bmp, loc)
+            backend?.resetOverlay(bmp, loc, width, height)
         }
-        bitmapProvided = false
-        backend?.setDisplayMode(com.forestnote.core.ink.DisplayMode.FULL_REFRESH)
+        bitmapProvided = true  // we just re-provided it
         invalidate()
-        postDelayed({
-            backend?.setDisplayMode(com.forestnote.core.ink.DisplayMode.FAST)
-        }, 100)
     }
 
     // ========== Standard Canvas Rendering ==========
