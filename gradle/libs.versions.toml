@@ -27,6 +27,7 @@ material = { module = "com.google.android.material:material", version.ref = "mat
 # Jetpack Ink API (geometry + brush for erase intersection, strokes added in Phase 6)
 androidx-ink-brush = { module = "androidx.ink:ink-brush", version.ref = "androidx-ink" }
 androidx-ink-geometry = { module = "androidx.ink:ink-geometry", version.ref = "androidx-ink" }
+androidx-ink-strokes = { module = "androidx.ink:ink-strokes", version.ref = "androidx-ink" }
 
 # SQLDelight
 sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
