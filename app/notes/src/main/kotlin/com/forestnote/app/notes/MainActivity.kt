@@ -48,9 +48,10 @@ class MainActivity : Activity() {
             setRepository(repository)
             setTransform(PageTransform())
 
-            // Auto-save on pen-up
+            // DrawView handles saving directly in ACTION_UP handler.
+            // This callback is for notification only (Phase 6+ may use for analytics/UI updates).
             onStrokeSaved = { stroke ->
-                repository.saveStroke(stroke)
+                // Notification-only callback
             }
         }
 

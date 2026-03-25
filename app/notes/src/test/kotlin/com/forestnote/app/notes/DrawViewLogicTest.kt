@@ -25,21 +25,21 @@ class DrawViewLogicTest {
     fun `tool type TOOL_TYPE_STYLUS returns true`() {
         // AC1.3: Stylus input should be accepted
         val toolType = android.view.MotionEvent.TOOL_TYPE_STYLUS
-        assertTrue(isAcceptedToolType(toolType), "TOOL_TYPE_STYLUS should be accepted")
+        assertTrue(DrawView.shouldAcceptToolType(toolType), "TOOL_TYPE_STYLUS should be accepted")
     }
 
     @Test
     fun `tool type TOOL_TYPE_ERASER returns true`() {
         // Eraser is also an accepted tool type
         val toolType = android.view.MotionEvent.TOOL_TYPE_ERASER
-        assertTrue(isAcceptedToolType(toolType), "TOOL_TYPE_ERASER should be accepted")
+        assertTrue(DrawView.shouldAcceptToolType(toolType), "TOOL_TYPE_ERASER should be accepted")
     }
 
     @Test
     fun `tool type TOOL_TYPE_FINGER returns false`() {
         // AC1.3: Finger input should be rejected
         val toolType = android.view.MotionEvent.TOOL_TYPE_FINGER
-        assertFalse(isAcceptedToolType(toolType), "TOOL_TYPE_FINGER should be rejected")
+        assertFalse(DrawView.shouldAcceptToolType(toolType), "TOOL_TYPE_FINGER should be rejected")
     }
 
     // ========== Coordinate Conversion Tests ==========
@@ -195,18 +195,6 @@ class DrawViewLogicTest {
     }
 
     // ========== Helper Functions (Pure Logic, testable without Android) ==========
-
-    /**
-     * Pure function: Check if a tool type should be accepted for drawing.
-     */
-    private fun isAcceptedToolType(toolType: Int): Boolean {
-        return when (toolType) {
-            android.view.MotionEvent.TOOL_TYPE_STYLUS -> true
-            android.view.MotionEvent.TOOL_TYPE_ERASER -> true
-            android.view.MotionEvent.TOOL_TYPE_FINGER -> false
-            else -> false
-        }
-    }
 
     /**
      * Pure function: Calculate dirty rect from point bounds and padding.

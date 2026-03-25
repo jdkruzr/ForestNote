@@ -34,6 +34,20 @@ import kotlin.math.min
  * All storage (StrokeBuilder, Stroke) uses virtual coordinates.
  */
 class DrawView(context: Context) : View(context) {
+    companion object {
+        /**
+         * Pure function: Check if a tool type should be accepted for drawing.
+         * Stylus and eraser are accepted, finger is rejected (AC1.3).
+         */
+        fun shouldAcceptToolType(toolType: Int): Boolean {
+            return when (toolType) {
+                MotionEvent.TOOL_TYPE_STYLUS -> true
+                MotionEvent.TOOL_TYPE_ERASER -> true
+                MotionEvent.TOOL_TYPE_FINGER -> false
+                else -> false
+            }
+        }
+    }
     private val completedStrokes = mutableListOf<Stroke>()
     private var currentStroke: StrokeBuilder? = null
 
@@ -63,6 +77,21 @@ class DrawView(context: Context) : View(context) {
     private var prevScreenY = 0f
 
     // ========== Lifecycle & Configuration ==========
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // Update transform with actual screen dimensions so coordinate conversion is accurate
+        transform.update(w, h)
+        // Ensure bitmap matches new size
+        ensureBitmap()
+        // Restore strokes to bitmap in case scale changed
+        if (completedStrokes.isNotEmpty()) {
+            writingBitmap?.eraseColor(Color.TRANSPARENT)
+            for (stroke in completedStrokes) {
+                drawStrokeToBitmap(stroke)
+            }
+        }
+    }
 
     fun setBackend(backend: InkBackend) {
         this.backend = backend
@@ -136,10 +165,12 @@ class DrawView(context: Context) : View(context) {
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         // Tool-type filtering (AC1.3): stylus/eraser draw, finger ignored
+        if (!shouldAcceptToolType(event.getToolType(0))) {
+            return false
+        }
         return when (event.getToolType(0)) {
             MotionEvent.TOOL_TYPE_STYLUS -> handleStylus(event)
             MotionEvent.TOOL_TYPE_ERASER -> handleEraser(event)
-            MotionEvent.TOOL_TYPE_FINGER -> false  // Reject finger, bubble to UI
             else -> false
         }
     }
@@ -248,6 +279,10 @@ class DrawView(context: Context) : View(context) {
                     (maxX.toInt() + pad + loc[0]).coerceAtMost(Int.MAX_VALUE),
                     (maxY.toInt() + pad + loc[1]).coerceAtMost(Int.MAX_VALUE)
                 ))
+
+                // On GenericBackend, invalidate() to trigger onDraw which blits the bitmap.
+                // On ViwoodsBackend, renderSegment() handles display directly via WritingBufferQueue.
+                invalidate()
             }
 
             MotionEvent.ACTION_UP -> {
@@ -287,43 +322,28 @@ class DrawView(context: Context) : View(context) {
 
     /**
      * Handle eraser tool. Placeholder for Phase 6.
+     * Currently returns false to let events bubble up instead of silently consuming them.
      */
     private fun handleErase(event: MotionEvent): Boolean {
-        // Phase 6 will implement stroke and pixel eraser logic
-        return true
+        // Phase 6 implements stroke and pixel eraser logic
+        return false
     }
 
     // ========== Standard Canvas Rendering ==========
 
     /**
-     * Render all completed strokes to the screen canvas.
+     * Render offscreen bitmap to screen canvas.
      * Called by Android when invalidate() is triggered.
+     *
+     * On fast ink backends (ViwoodsBackend), the bitmap already has
+     * all segments rendered via renderSegment() during ACTION_MOVE.
+     *
+     * On GenericBackend, we blit the bitmap here so strokes are visible.
      */
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        for (stroke in completedStrokes) {
-            drawStrokeToCanvas(canvas, stroke)
-        }
-    }
-
-    /**
-     * Draw a single stroke to the provided canvas using screen coordinates.
-     */
-    private fun drawStrokeToCanvas(canvas: Canvas, stroke: Stroke) {
-        val points = stroke.points
-        if (points.size < 2) return
-
-        for (i in 1 until points.size) {
-            val prev = points[i - 1]
-            val curr = points[i]
-            val w = PressureCurve.width(curr.pressure, stroke.penWidthMin, stroke.penWidthMax)
-            strokePaint.strokeWidth = transform.toScreenSize(w)
-            canvas.drawLine(
-                transform.toScreenX(prev.x), transform.toScreenY(prev.y),
-                transform.toScreenX(curr.x), transform.toScreenY(curr.y),
-                strokePaint
-            )
-        }
+        // Blit the offscreen bitmap containing all accumulated strokes
+        writingBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
     }
 
     /**
