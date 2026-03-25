@@ -1,7 +1,6 @@
 package com.forestnote.core.ink
 
 import org.junit.Test
-import kotlin.math.abs
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
