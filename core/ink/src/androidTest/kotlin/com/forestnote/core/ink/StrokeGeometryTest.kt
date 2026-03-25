@@ -1,8 +1,5 @@
 package com.forestnote.core.ink
 
-import androidx.ink.geometry.MutableParallelogram
-import androidx.ink.geometry.MutableSegment
-import androidx.ink.geometry.MutableVec
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -17,55 +14,39 @@ import org.junit.runner.RunWith
  * Verifies AC1.5 (pixel eraser): split strokes without empty sub-strokes
  * Verifies AC1.6 (edge case): erase at end produces valid sub-strokes
  *
- * Note: These are instrumented tests (AndroidTest) because Jetpack Ink geometry
- * types use native code and cannot run on the JVM alone.
+ * Note: These are instrumented tests (AndroidTest) for consistency with the
+ * main implementation. They test distance-based collision detection.
  */
 @RunWith(AndroidJUnit4::class)
 class StrokeGeometryTest {
 
     @Test
-    fun buildEraserParallelogramCreatesValidParallelogram() {
-        // Arrange: eraser movement from (100, 100) to (200, 200) with radius 50
-        val prevX = 100
-        val prevY = 100
-        val curX = 200
-        val curY = 200
-        val radius = 50
-
-        // Act
-        val parallelogram = StrokeGeometry.buildEraserParallelogram(prevX, prevY, curX, curY, radius)
-
-        // Assert: parallelogram should be created successfully
-        assertNotNull(parallelogram)
-    }
-
-    @Test
     fun strokeIntersectsReturnsFalseForEmptyStroke() {
-        // Arrange
+        // Arrange: empty stroke
         val emptyStroke = Stroke(points = emptyList())
-        val parallelogram = MutableParallelogram()
 
-        // Act
-        val intersects = StrokeGeometry.strokeIntersects(emptyStroke, parallelogram)
+        // Act: test against eraser at (100, 100) to (200, 200), radius 20
+        val intersects = StrokeGeometry.strokeIntersects(
+            emptyStroke, 100, 100, 200, 200, 20
+        )
 
-        // Assert
+        // Assert: empty stroke should not intersect
         assertFalse("Empty stroke should not intersect", intersects)
     }
 
     @Test
     fun strokeIntersectsReturnsFalseForSinglePointStroke() {
-        // Arrange
+        // Arrange: single-point stroke
         val singlePointStroke = Stroke(
-            points = listOf(
-                StrokePoint(100, 100, 500, 0L)
-            )
+            points = listOf(StrokePoint(100, 100, 500, 0L))
         )
-        val parallelogram = MutableParallelogram()
 
-        // Act
-        val intersects = StrokeGeometry.strokeIntersects(singlePointStroke, parallelogram)
+        // Act: test against eraser
+        val intersects = StrokeGeometry.strokeIntersects(
+            singlePointStroke, 100, 100, 200, 200, 20
+        )
 
-        // Assert
+        // Assert: single-point stroke should not intersect
         assertFalse("Single point stroke should not intersect", intersects)
     }
 
@@ -83,19 +64,18 @@ class StrokeGeometryTest {
             )
         )
 
-        // Eraser region at (150, 150) - should overlap the middle of the stroke
-        val parallelogram = StrokeGeometry.buildEraserParallelogram(140, 140, 160, 160, 30)
+        // Act: eraser at (150, 150) with radius 30 should overlap
+        val intersects = StrokeGeometry.strokeIntersects(
+            stroke, 140, 140, 160, 160, 30
+        )
 
-        // Act
-        val intersects = StrokeGeometry.strokeIntersects(stroke, parallelogram)
-
-        // Assert
+        // Assert: should detect intersection
         assertTrue("Stroke should intersect eraser region at (150, 150)", intersects)
     }
 
     @Test
     fun strokeIntersectsDetectsNonOverlappingStroke() {
-        // Arrange: stroke far from eraser
+        // Arrange: stroke far from eraser at (10, 10) to (20, 20)
         val stroke = Stroke(
             points = listOf(
                 StrokePoint(10, 10, 500, 0L),
@@ -103,44 +83,46 @@ class StrokeGeometryTest {
             )
         )
 
-        // Eraser region at (200, 200), far away
-        val parallelogram = StrokeGeometry.buildEraserParallelogram(180, 180, 220, 220, 10)
+        // Act: eraser at (200, 200) with radius 10 is far away
+        val intersects = StrokeGeometry.strokeIntersects(
+            stroke, 180, 180, 220, 220, 10
+        )
 
-        // Act
-        val intersects = StrokeGeometry.strokeIntersects(stroke, parallelogram)
-
-        // Assert
-        // Note: due to conservative approximation, this might return true
-        // but the basic structure should be in place
-        // In production, we'd have more precise geometry testing
+        // Assert: should NOT detect intersection (stroke is far away)
+        assertFalse(
+            "Stroke at (10, 10) should not intersect eraser at (200, 200)",
+            intersects
+        )
     }
 
     @Test
     fun splitStrokeReturnsEmptyListForEmptyStroke() {
-        // Arrange
+        // Arrange: empty stroke
         val emptyStroke = Stroke(points = emptyList())
-        val parallelogram = MutableParallelogram()
 
         // Act
-        val subStrokes = StrokeGeometry.splitStroke(emptyStroke, parallelogram)
+        val subStrokes = StrokeGeometry.splitStroke(
+            emptyStroke, 100, 100, 200, 200, 20
+        )
 
-        // Assert
-        assertEquals(0, subStrokes.size)
+        // Assert: should return empty list
+        assertEquals("Empty stroke should produce no sub-strokes", 0, subStrokes.size)
     }
 
     @Test
     fun splitStrokeReturnsEmptyListForSinglePointStroke() {
-        // Arrange
+        // Arrange: single-point stroke
         val singlePointStroke = Stroke(
             points = listOf(StrokePoint(100, 100, 500, 0L))
         )
-        val parallelogram = MutableParallelogram()
 
         // Act
-        val subStrokes = StrokeGeometry.splitStroke(singlePointStroke, parallelogram)
+        val subStrokes = StrokeGeometry.splitStroke(
+            singlePointStroke, 100, 100, 200, 200, 20
+        )
 
-        // Assert
-        assertEquals(0, subStrokes.size)
+        // Assert: should return empty list
+        assertEquals("Single point stroke should produce no sub-strokes", 0, subStrokes.size)
     }
 
     @Test
@@ -154,20 +136,23 @@ class StrokeGeometryTest {
             )
         )
 
-        // Eraser far away
-        val parallelogram = StrokeGeometry.buildEraserParallelogram(500, 500, 600, 600, 10)
+        // Act: eraser far away at (500, 500)
+        val subStrokes = StrokeGeometry.splitStroke(
+            originalStroke, 500, 500, 600, 600, 10
+        )
 
-        // Act
-        val subStrokes = StrokeGeometry.splitStroke(originalStroke, parallelogram)
-
-        // Assert
-        // If no segments intersect, should return original as a single sub-stroke
-        // (or may return empty if all segments are conservative-marked as intersecting)
+        // Assert: should return original stroke as single sub-stroke
+        assertEquals("No intersection should return 1 sub-stroke", 1, subStrokes.size)
+        assertEquals(
+            "Sub-stroke should have same point count as original",
+            originalStroke.points.size,
+            subStrokes[0].points.size
+        )
     }
 
     @Test
     fun splitStrokeRemovesEmptySubStrokes() {
-        // Arrange: horizontal stroke with many points
+        // Arrange: horizontal stroke with many points from (50, 100) to (150, 100)
         val stroke = Stroke(
             points = listOf(
                 StrokePoint(50, 100, 500, 0L),
@@ -184,13 +169,13 @@ class StrokeGeometryTest {
             )
         )
 
-        // Eraser in middle
-        val parallelogram = StrokeGeometry.buildEraserParallelogram(85, 85, 115, 115, 20)
-
-        // Act
-        val subStrokes = StrokeGeometry.splitStroke(stroke, parallelogram)
+        // Act: eraser in middle from (85, 85) to (115, 115) with radius 20
+        val subStrokes = StrokeGeometry.splitStroke(
+            stroke, 85, 85, 115, 115, 20
+        )
 
         // Assert: all sub-strokes must have at least 2 points (AC1.6)
+        assertTrue("Should have at least one sub-stroke", subStrokes.isNotEmpty())
         for (subStroke in subStrokes) {
             assertTrue(
                 "All sub-strokes must have >= 2 points, got ${subStroke.points.size}",
@@ -216,23 +201,34 @@ class StrokeGeometryTest {
             penWidthMax = customMaxWidth
         )
 
-        // Eraser far away (no actual intersection)
-        val parallelogram = StrokeGeometry.buildEraserParallelogram(500, 500, 600, 600, 10)
-
-        // Act
-        val subStrokes = StrokeGeometry.splitStroke(stroke, parallelogram)
+        // Act: eraser far away (no actual intersection)
+        val subStrokes = StrokeGeometry.splitStroke(
+            stroke, 500, 500, 600, 600, 10
+        )
 
         // Assert: if any sub-strokes are returned, they should preserve attributes
         for (subStroke in subStrokes) {
-            assertEquals(customColor, subStroke.color)
-            assertEquals(customMinWidth, subStroke.penWidthMin)
-            assertEquals(customMaxWidth, subStroke.penWidthMax)
+            assertEquals(
+                "Sub-stroke should preserve color",
+                customColor,
+                subStroke.color
+            )
+            assertEquals(
+                "Sub-stroke should preserve penWidthMin",
+                customMinWidth,
+                subStroke.penWidthMin
+            )
+            assertEquals(
+                "Sub-stroke should preserve penWidthMax",
+                customMaxWidth,
+                subStroke.penWidthMax
+            )
         }
     }
 
     @Test
     fun splitStrokeHandlesFullErasure() {
-        // Arrange: short stroke entirely within eraser region
+        // Arrange: short stroke entirely within eraser region at (100, 100) to (110, 110)
         val stroke = Stroke(
             points = listOf(
                 StrokePoint(100, 100, 500, 0L),
@@ -240,17 +236,13 @@ class StrokeGeometryTest {
             )
         )
 
-        // Eraser entirely encompassing the stroke
-        val parallelogram = StrokeGeometry.buildEraserParallelogram(50, 50, 150, 150, 100)
+        // Act: eraser entirely encompassing the stroke from (50, 50) to (150, 150)
+        val subStrokes = StrokeGeometry.splitStroke(
+            stroke, 50, 50, 150, 150, 100
+        )
 
-        // Act
-        val subStrokes = StrokeGeometry.splitStroke(stroke, parallelogram)
-
-        // Assert: with conservative approximation, may return empty or sub-strokes
-        // All returned must be valid (>= 2 points)
-        for (subStroke in subStrokes) {
-            assertTrue(subStroke.points.size >= 2)
-        }
+        // Assert: should return empty list (fully erased)
+        assertEquals("Fully erased stroke should produce empty list", 0, subStrokes.size)
     }
 
     @Test
@@ -268,13 +260,13 @@ class StrokeGeometryTest {
             )
         )
 
-        // Eraser at the end of stroke
-        val parallelogram = StrokeGeometry.buildEraserParallelogram(60, 60, 80, 80, 20)
-
-        // Act
-        val subStrokes = StrokeGeometry.splitStroke(stroke, parallelogram)
+        // Act: eraser at the end from (60, 60) to (80, 80)
+        val subStrokes = StrokeGeometry.splitStroke(
+            stroke, 60, 60, 80, 80, 20
+        )
 
         // Assert: sub-strokes should not be empty (AC1.6)
+        assertTrue("End erasure should produce valid sub-strokes", subStrokes.isNotEmpty())
         for (subStroke in subStrokes) {
             assertTrue(
                 "Sub-stroke must have >= 2 points, got ${subStroke.points.size}",
@@ -284,17 +276,8 @@ class StrokeGeometryTest {
     }
 
     @Test
-    fun buildEraserParallelogramWithZeroRadius() {
-        // Arrange
-        val parallelogram = StrokeGeometry.buildEraserParallelogram(100, 100, 200, 200, 0)
-
-        // Act & Assert: should handle zero radius
-        assertNotNull(parallelogram)
-    }
-
-    @Test
     fun strokeIntersectsWithDiagonalMovement() {
-        // Arrange: diagonal stroke
+        // Arrange: diagonal stroke from (0, 0) to (200, 200)
         val stroke = Stroke(
             points = listOf(
                 StrokePoint(0, 0, 500, 0L),
@@ -305,20 +288,12 @@ class StrokeGeometryTest {
             )
         )
 
-        // Eraser diagonal movement
-        val parallelogram = StrokeGeometry.buildEraserParallelogram(95, 95, 105, 105, 10)
+        // Act: eraser diagonal movement from (95, 95) to (105, 105)
+        val intersects = StrokeGeometry.strokeIntersects(
+            stroke, 95, 95, 105, 105, 10
+        )
 
-        // Act
-        val intersects = StrokeGeometry.strokeIntersects(stroke, parallelogram)
-
-        // Assert: should detect intersection
+        // Assert: should detect intersection at (100, 100)
         assertTrue("Should detect intersection with diagonal eraser movement", intersects)
-    }
-
-    /**
-     * Helper assertion function
-     */
-    private fun assertNotNull(value: Any?) {
-        assertTrue("Value should not be null", value != null)
     }
 }

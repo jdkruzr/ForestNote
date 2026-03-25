@@ -1,11 +1,7 @@
 package com.forestnote.core.ink
 
-import androidx.ink.geometry.MutableParallelogram
-import androidx.ink.geometry.MutableSegment
-import androidx.ink.geometry.MutableVec
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sqrt
 
 /**
  * Bridge between ForestNote's [Stroke]/[StrokePoint] types and Jetpack Ink geometry types.
@@ -16,52 +12,27 @@ import kotlin.math.sqrt
 object StrokeGeometry {
 
     /**
-     * Build an eraser collision boundary from eraser movement.
+     * Test if a stroke intersects with an eraser region.
      *
-     * Creates a parallelogram representing the swept region of the eraser as it moves
-     * from the previous position to the current position, with padding to account for eraser radius.
+     * Used for whole-stroke hit testing in the stroke eraser tool.
+     * Tests each segment of the stroke against the eraser region defined by
+     * the eraser segment (prevX, prevY) → (curX, curY) and eraser radius.
      *
-     * The parallelogram is used for intersection testing against strokes.
-     *
-     * @param prevX Previous x position in virtual coordinates
-     * @param prevY Previous y position in virtual coordinates
-     * @param curX Current x position in virtual coordinates
-     * @param curY Current y position in virtual coordinates
+     * @param stroke ForestNote stroke to test
+     * @param prevX Previous x position of eraser in virtual coordinates
+     * @param prevY Previous y position of eraser in virtual coordinates
+     * @param curX Current x position of eraser in virtual coordinates
+     * @param curY Current y position of eraser in virtual coordinates
      * @param radius Eraser radius in virtual units
-     * @return Parallelogram representing the erased region
+     * @return true if any segment of the stroke intersects the eraser region, false otherwise
      */
-    fun buildEraserParallelogram(
+    fun strokeIntersects(
+        stroke: Stroke,
         prevX: Int,
         prevY: Int,
         curX: Int,
         curY: Int,
         radius: Int
-    ): MutableParallelogram {
-        // Create a segment from previous to current position
-        val start = MutableVec(prevX.toFloat(), prevY.toFloat())
-        val end = MutableVec(curX.toFloat(), curY.toFloat())
-        val segment = MutableSegment(start, end)
-
-        // Create a parallelogram expanded by the radius
-        val parallelogram = MutableParallelogram()
-        parallelogram.populateFromSegmentAndPadding(segment, radius.toFloat())
-
-        return parallelogram
-    }
-
-    /**
-     * Test if a stroke intersects with an eraser region.
-     *
-     * Used for whole-stroke hit testing in the stroke eraser tool.
-     * Tests each segment of the stroke against the eraser parallelogram.
-     *
-     * @param stroke ForestNote stroke to test
-     * @param parallelogram Eraser collision boundary
-     * @return true if any segment of the stroke intersects the eraser region, false otherwise
-     */
-    fun strokeIntersects(
-        stroke: Stroke,
-        parallelogram: MutableParallelogram
     ): Boolean {
         if (stroke.points.size < 2) return false
 
@@ -70,7 +41,7 @@ object StrokeGeometry {
             val p1 = stroke.points[i]
             val p2 = stroke.points[i + 1]
 
-            if (segmentIntersectsParallelogram(p1, p2, parallelogram)) {
+            if (segmentIntersectsEraser(p1, p2, prevX, prevY, curX, curY, radius)) {
                 return true
             }
         }
@@ -87,24 +58,32 @@ object StrokeGeometry {
      * Used for pixel eraser tool that removes only the erased region.
      *
      * @param stroke ForestNote stroke to split
-     * @param parallelogram Eraser collision boundary
+     * @param prevX Previous x position of eraser in virtual coordinates
+     * @param prevY Previous y position of eraser in virtual coordinates
+     * @param curX Current x position of eraser in virtual coordinates
+     * @param curY Current y position of eraser in virtual coordinates
+     * @param radius Eraser radius in virtual units
      * @return List of valid sub-strokes (filtered to exclude empty ones)
      */
     fun splitStroke(
         stroke: Stroke,
-        parallelogram: MutableParallelogram
+        prevX: Int,
+        prevY: Int,
+        curX: Int,
+        curY: Int,
+        radius: Int
     ): List<Stroke> {
         if (stroke.points.size < 2) return emptyList()
 
         // Track which segments intersect the eraser
-        val segmentIntersects = mutableListOf<Boolean>()
+        val erasedSegments = mutableListOf<Boolean>()
 
         // Test each segment (pair of consecutive points)
         for (i in 0 until stroke.points.size - 1) {
             val p1 = stroke.points[i]
             val p2 = stroke.points[i + 1]
-            val intersects = segmentIntersectsParallelogram(p1, p2, parallelogram)
-            segmentIntersects.add(intersects)
+            val intersects = segmentIntersectsEraser(p1, p2, prevX, prevY, curX, curY, radius)
+            erasedSegments.add(intersects)
         }
 
         // Collect runs of non-intersecting segments into sub-strokes
@@ -116,9 +95,9 @@ object StrokeGeometry {
 
             // Check if the segment starting at this point intersects
             // For the last point, consider it as not intersecting a segment (no segment after it)
-            val segmentIntersects = i < segmentIntersects.size && segmentIntersects[i]
+            val isErased = i < erasedSegments.size && erasedSegments[i]
 
-            if (!segmentIntersects) {
+            if (!isErased) {
                 // This segment doesn't intersect; add the point to current run
                 currentRun.add(point)
             } else {
@@ -154,47 +133,92 @@ object StrokeGeometry {
     }
 
     /**
-     * Test if a segment intersects with the parallelogram using distance-based collision.
+     * Test if a stroke segment intersects with the eraser region.
      *
-     * Uses conservative point-in-parallelogram testing:
-     * check both endpoints and middle point of the segment.
+     * Computes the minimum distance from the stroke segment to the eraser segment.
+     * If this distance is less than or equal to the eraser radius, they intersect.
+     *
+     * Tests three key points on the segment:
+     * 1. Start point
+     * 2. End point
+     * 3. Midpoint
+     *
+     * If any point's distance to the eraser segment is within the radius, the segments intersect.
      */
-    private fun segmentIntersectsParallelogram(
+    private fun segmentIntersectsEraser(
         p1: StrokePoint,
         p2: StrokePoint,
-        parallelogram: MutableParallelogram
+        eraserPrevX: Int,
+        eraserPrevY: Int,
+        eraserCurX: Int,
+        eraserCurY: Int,
+        eraserRadius: Int
     ): Boolean {
-        // Conservative approach: check key points on the segment
-        // Check both endpoints and middle point
-        return pointInParallelogramApprox(p1.x.toFloat(), p1.y.toFloat(), parallelogram) ||
-            pointInParallelogramApprox(p2.x.toFloat(), p2.y.toFloat(), parallelogram) ||
-            pointInParallelogramApprox(
-                ((p1.x + p2.x) / 2).toFloat(),
-                ((p1.y + p2.y) / 2).toFloat(),
-                parallelogram
-            )
+        val radiusSq = (eraserRadius * eraserRadius).toFloat()
+
+        // Test start point
+        if (pointToSegmentDistanceSq(p1.x.toFloat(), p1.y.toFloat(),
+                eraserPrevX.toFloat(), eraserPrevY.toFloat(),
+                eraserCurX.toFloat(), eraserCurY.toFloat()) <= radiusSq) {
+            return true
+        }
+
+        // Test end point
+        if (pointToSegmentDistanceSq(p2.x.toFloat(), p2.y.toFloat(),
+                eraserPrevX.toFloat(), eraserPrevY.toFloat(),
+                eraserCurX.toFloat(), eraserCurY.toFloat()) <= radiusSq) {
+            return true
+        }
+
+        // Test midpoint
+        val midX = (p1.x + p2.x) / 2.0f
+        val midY = (p1.y + p2.y) / 2.0f
+        if (pointToSegmentDistanceSq(midX, midY,
+                eraserPrevX.toFloat(), eraserPrevY.toFloat(),
+                eraserCurX.toFloat(), eraserCurY.toFloat()) <= radiusSq) {
+            return true
+        }
+
+        return false
     }
 
     /**
-     * Approximate test if a point is inside or very near a parallelogram.
-     * This is a conservative estimate since we don't have direct geometry query APIs.
+     * Compute the squared distance from a point to a line segment.
      *
-     * Conservative behavior: we assume intersection (returns true often) which is safe
-     * for erase operations - better to erase more than less.
+     * The segment is defined by endpoints (x1, y1) to (x2, y2).
+     * Returns the squared Euclidean distance (saves a sqrt call).
+     *
+     * Handles projection to the segment correctly:
+     * - If the projection falls on the segment, returns perpendicular distance
+     * - If the projection is before the start, returns distance to start point
+     * - If the projection is after the end, returns distance to end point
      */
-    private fun pointInParallelogramApprox(
-        x: Float,
-        y: Float,
-        parallelogram: MutableParallelogram
-    ): Boolean {
-        // Without direct access to parallelogram's corner points in the public API,
-        // we use a conservative approach: assume points might be in the erased region.
-        // This is safe because false positives (erasing extra) are better than
-        // false negatives (not erasing when we should).
-        //
-        // In production, this would use actual parallelogram geometry testing,
-        // but for now we rely on the Ink API's geometry handling via
-        // the populateFromSegmentAndPadding method.
-        return true
+    private fun pointToSegmentDistanceSq(
+        px: Float, py: Float,
+        x1: Float, y1: Float,
+        x2: Float, y2: Float
+    ): Float {
+        val dx = x2 - x1
+        val dy = y2 - y1
+        val lenSq = dx * dx + dy * dy
+
+        if (lenSq == 0f) {
+            // Segment is a single point
+            val dpx = px - x1
+            val dpy = py - y1
+            return dpx * dpx + dpy * dpy
+        }
+
+        // Project point onto the line defined by the segment
+        val t = max(0f, min(1f, ((px - x1) * dx + (py - y1) * dy) / lenSq))
+
+        // Find the closest point on the segment
+        val closestX = x1 + t * dx
+        val closestY = y1 + t * dy
+
+        // Return squared distance
+        val dpx = px - closestX
+        val dpy = py - closestY
+        return dpx * dpx + dpy * dpy
     }
 }

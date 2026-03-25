@@ -23,3 +23,6 @@ einkpoc_*.txt
 # Screenshots and pulled APKs
 *.png
 einkpoc.apk
+
+# Build and test logs
+*.log

@@ -184,8 +184,10 @@ class DrawView(context: Context) : View(context) {
     }
 
     private fun handleEraser(event: MotionEvent): Boolean {
-        // Eraser always erases, regardless of activeTool
-        return handleErase(event)
+        // Hardware eraser (TOOL_TYPE_ERASER) always triggers erase.
+        // If activeTool is Pen, default to StrokeEraser. Otherwise use activeTool.
+        val tool = if (activeTool is Tool.Pen) Tool.StrokeEraser else activeTool
+        return handleErase(event, tool)
     }
 
     /**
@@ -322,27 +324,27 @@ class DrawView(context: Context) : View(context) {
     }
 
     /**
-     * Handle eraser tool (stroke eraser or pixel eraser based on activeTool).
+     * Handle eraser tool (stroke eraser or pixel eraser based on tool parameter).
      *
      * Stroke eraser (Tool.StrokeEraser):
-     * 1. Build eraser parallelogram from previous → current position
-     * 2. Test all completed strokes for intersection
-     * 3. Delete intersecting strokes from repository and in-memory list
-     * 4. Redraw bitmap from remaining strokes
+     * 1. Test all completed strokes against eraser movement path
+     * 2. Delete intersecting strokes from repository and in-memory list
+     * 3. Redraw bitmap from remaining strokes
      *
      * Pixel eraser (Tool.PixelEraser):
-     * 1. Build eraser parallelogram from previous → current position
-     * 2. Test all completed strokes for intersection
-     * 3. For each intersecting stroke, split it at eraser boundaries
-     * 4. Delete original stroke, save sub-strokes with new IDs
-     * 5. Replace original stroke with sub-strokes in in-memory list
-     * 6. Redraw bitmap from remaining and new sub-strokes
+     * 1. Test all completed strokes against eraser movement path
+     * 2. For each intersecting stroke, split it at eraser boundaries
+     * 3. Delete original stroke, save sub-strokes with new IDs
+     * 4. Replace original stroke with sub-strokes in in-memory list
+     * 5. Redraw bitmap from remaining and new sub-strokes
      *
      * Implements AC1.4 (stroke eraser), AC1.5/1.6 (pixel eraser), AC1.7 (hardware eraser).
+     *
+     * @param event Motion event from touch input
+     * @param tool Eraser tool to use (StrokeEraser or PixelEraser)
      */
-    private fun handleErase(event: MotionEvent): Boolean {
+    private fun handleErase(event: MotionEvent, tool: Tool = activeTool): Boolean {
         val repo = repository ?: return true
-        val canvas = writingCanvas ?: return true
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -364,80 +366,74 @@ class DrawView(context: Context) : View(context) {
                 // Use a standard eraser size; on e-ink, ~20 virtual units is reasonable
                 val eraserRadius = 20
 
-                // Build eraser collision boundary
-                val eraserParallelogram = StrokeGeometry.buildEraserParallelogram(
-                    prevVx.toInt(),
-                    prevVy.toInt(),
-                    curVx.toInt(),
-                    curVy.toInt(),
-                    eraserRadius
-                )
+                // Build new list by processing each stroke exactly once
+                val updatedStrokes = mutableListOf<Stroke>()
+                var didMutate = false
 
-                // Track which strokes to remove or replace
-                val strokesToRemove = mutableListOf<Int>() // indices to delete
-                val strokeUpdates = mutableListOf<Pair<Int, List<Stroke>>>() // index -> replacement sub-strokes
+                for (stroke in completedStrokes) {
+                    // Check if stroke intersects the eraser
+                    val intersects = StrokeGeometry.strokeIntersects(
+                        stroke,
+                        prevVx.toInt(),
+                        prevVy.toInt(),
+                        curVx.toInt(),
+                        curVy.toInt(),
+                        eraserRadius
+                    )
 
-                // Test each completed stroke
-                for (i in completedStrokes.indices) {
-                    val stroke = completedStrokes[i]
+                    if (!intersects) {
+                        // Stroke doesn't intersect; keep it unchanged
+                        updatedStrokes.add(stroke)
+                    } else if (tool is Tool.StrokeEraser) {
+                        // Stroke eraser: delete entire stroke
+                        didMutate = true
+                        try {
+                            if (stroke.id > 0) repo.deleteStroke(stroke.id)
+                        } catch (e: Throwable) {
+                            android.util.Log.e("DrawView", "failed to delete stroke", e)
+                        }
+                    } else if (tool is Tool.PixelEraser) {
+                        // Pixel eraser: split stroke at erased region
+                        val subStrokes = StrokeGeometry.splitStroke(
+                            stroke,
+                            prevVx.toInt(),
+                            prevVy.toInt(),
+                            curVx.toInt(),
+                            curVy.toInt(),
+                            eraserRadius
+                        )
 
-                    if (activeTool is Tool.StrokeEraser) {
-                        // Stroke eraser: delete entire stroke if it intersects
-                        if (StrokeGeometry.strokeIntersects(stroke, eraserParallelogram)) {
-                            strokesToRemove.add(i)
+                        if (subStrokes.isEmpty()) {
+                            // Stroke completely erased
+                            didMutate = true
                             try {
                                 if (stroke.id > 0) repo.deleteStroke(stroke.id)
                             } catch (e: Throwable) {
                                 android.util.Log.e("DrawView", "failed to delete stroke", e)
                             }
-                        }
-                    } else if (activeTool is Tool.PixelEraser) {
-                        // Pixel eraser: split stroke at erased region
-                        if (StrokeGeometry.strokeIntersects(stroke, eraserParallelogram)) {
-                            val subStrokes = StrokeGeometry.splitStroke(stroke, eraserParallelogram)
-                            if (subStrokes.isNotEmpty()) {
-                                // Save sub-strokes and track for replacement
-                                val savedSubStrokes = mutableListOf<Stroke>()
-                                try {
-                                    stroke.id.let { if (it > 0) repo.deleteStroke(it) }
-                                    for (subStroke in subStrokes) {
-                                        // Save sub-stroke with id=0 (unsaved)
-                                        val savedId = repo.saveStroke(subStroke)
-                                        savedSubStrokes.add(subStroke.copy(id = savedId))
-                                    }
-                                    strokeUpdates.add(i to savedSubStrokes)
-                                } catch (e: Throwable) {
-                                    android.util.Log.e("DrawView", "failed to split stroke", e)
+                        } else {
+                            // Save sub-strokes and replace original
+                            didMutate = true
+                            try {
+                                stroke.id.let { if (it > 0) repo.deleteStroke(it) }
+                                for (subStroke in subStrokes) {
+                                    // Save sub-stroke with id=0 (unsaved)
+                                    val savedId = repo.saveStroke(subStroke)
+                                    updatedStrokes.add(subStroke.copy(id = savedId))
                                 }
-                            } else {
-                                // Stroke completely erased
-                                strokesToRemove.add(i)
-                                try {
-                                    if (stroke.id > 0) repo.deleteStroke(stroke.id)
-                                } catch (e: Throwable) {
-                                    android.util.Log.e("DrawView", "failed to delete stroke", e)
-                                }
+                            } catch (e: Throwable) {
+                                android.util.Log.e("DrawView", "failed to split stroke", e)
+                                // On error, keep original stroke
+                                updatedStrokes.add(stroke)
                             }
                         }
                     }
                 }
 
-                // Apply updates (must handle in reverse order to preserve indices)
-                val indicesToRemove = strokesToRemove.sorted().reversed()
-                for (i in indicesToRemove) {
-                    completedStrokes.removeAt(i)
-                }
-
-                // Apply stroke replacements (after removing full erasures)
-                for ((originalIndex, subStrokes) in strokeUpdates.reversed()) {
-                    if (originalIndex < completedStrokes.size) {
-                        completedStrokes.removeAt(originalIndex)
-                    }
-                    completedStrokes.addAll(originalIndex, subStrokes)
-                }
-
-                // Redraw bitmap from remaining strokes
-                if (strokesToRemove.isNotEmpty() || strokeUpdates.isNotEmpty()) {
+                // Replace completedStrokes with updated list
+                if (didMutate) {
+                    completedStrokes.clear()
+                    completedStrokes.addAll(updatedStrokes)
                     redrawBitmap()
                 }
 
