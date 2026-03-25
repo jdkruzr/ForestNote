@@ -141,6 +141,13 @@ class DrawView @JvmOverloads constructor(
         completedStrokes.clear()
         currentStroke = null
         writingBitmap?.eraseColor(Color.TRANSPARENT)
+        // Push empty bitmap to WritingSurface background layer
+        writingBitmap?.let { bmp ->
+            val loc = IntArray(2)
+            getLocationOnScreen(loc)
+            backend?.pushBackgroundBitmap(bmp, loc)
+        }
+        bitmapProvided = false
         invalidate()
     }
 
@@ -478,6 +485,17 @@ class DrawView @JvmOverloads constructor(
         for (stroke in completedStrokes) {
             drawStrokeToBitmap(stroke)
         }
+        // Push clean bitmap to the WritingSurface background layer so the
+        // hardware overlay reflects the post-erase state without a full GC refresh.
+        // This is how WiNote handles erase — setWritingJavaBackgroundBitmap()
+        // updates the compositor's background, clearing ghost pixels.
+        writingBitmap?.let { bmp ->
+            val loc = IntArray(2)
+            getLocationOnScreen(loc)
+            backend?.pushBackgroundBitmap(bmp, loc)
+        }
+        // Force re-provide foreground bitmap on next pen-down
+        bitmapProvided = false
         invalidate()
     }
 

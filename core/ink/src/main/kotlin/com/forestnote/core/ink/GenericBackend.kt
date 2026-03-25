@@ -34,6 +34,10 @@ class GenericBackend : InkBackend {
         // No-op: no overlay to disable
     }
 
+    override fun pushBackgroundBitmap(bitmap: Bitmap, viewLocation: IntArray) {
+        // No-op: standard View.invalidate() handles display updates
+    }
+
     override fun release() {
         // No-op: nothing to release
     }

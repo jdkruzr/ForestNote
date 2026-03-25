@@ -60,6 +60,10 @@ class ViwoodsBackend : InkBackend {
         bridge.onWritingEnd()
     }
 
+    override fun pushBackgroundBitmap(bitmap: Bitmap, viewLocation: IntArray) {
+        bridge.setWritingJavaBackgroundBitmap(bitmap, 0, viewLocation[0], viewLocation[1])
+    }
+
     override fun release() {
         if (initialized) {
             bridge.setWritingEnabled(false)

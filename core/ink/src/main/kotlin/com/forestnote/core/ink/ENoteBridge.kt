@@ -97,6 +97,23 @@ class ENoteBridge {
         }
     }
 
+    fun setWritingJavaBackgroundBitmap(bmp: Bitmap, rotation: Int, left: Int, top: Int): String {
+        return try {
+            enote?.javaClass?.getMethod(
+                "setWritingJavaBackgroundBitmap",
+                Bitmap::class.java, Int::class.java, Int::class.java, Int::class.java
+            )?.invoke(enote, bmp, rotation, left, top)
+            "OK"
+        } catch (e: Throwable) {
+            CrashLog.log("setWritingJavaBackgroundBitmap", e)
+            errStr(e)
+        }
+    }
+
+    fun releaseWritingJavaBackgroundBitmap(): String {
+        return safeCallVoid("releaseWritingJavaBackgroundBitmap")
+    }
+
     fun setPictureMode(mode: Int): String {
         return try {
             val r = enote?.javaClass?.getMethod("setPictureMode", Int::class.java)

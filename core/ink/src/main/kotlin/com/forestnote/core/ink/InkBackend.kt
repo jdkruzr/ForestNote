@@ -41,6 +41,22 @@ interface InkBackend {
     /** Called on pen-up. Signals end of stroke to the display subsystem. */
     fun endStroke()
 
+    /**
+     * Push the current bitmap state as the background layer.
+     * Called after erase operations to update the hardware overlay
+     * with the clean bitmap (erased pixels removed).
+     *
+     * On Viwoods: delegates to setWritingJavaBackgroundBitmap which
+     * updates the WritingSurface background compositor. This avoids
+     * needing a full GC panel refresh after every erase.
+     *
+     * On generic backends: no-op (standard View invalidate handles it).
+     *
+     * @param bitmap The offscreen bitmap with current stroke state
+     * @param viewLocation The view's [x, y] position on screen
+     */
+    fun pushBackgroundBitmap(bitmap: Bitmap, viewLocation: IntArray)
+
     /** Release all resources. Called when the backend is no longer needed. */
     fun release()
 }
