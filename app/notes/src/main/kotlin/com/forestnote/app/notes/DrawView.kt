@@ -14,6 +14,7 @@ import com.forestnote.core.ink.PageTransform
 import com.forestnote.core.ink.PressureCurve
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeBuilder
+import com.forestnote.core.ink.StrokeGeometry
 import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.Tool
 import kotlin.math.max
@@ -321,12 +322,152 @@ class DrawView(context: Context) : View(context) {
     }
 
     /**
-     * Handle eraser tool. Placeholder for Phase 6.
-     * Currently returns false to let events bubble up instead of silently consuming them.
+     * Handle eraser tool (stroke eraser or pixel eraser based on activeTool).
+     *
+     * Stroke eraser (Tool.StrokeEraser):
+     * 1. Build eraser parallelogram from previous → current position
+     * 2. Test all completed strokes for intersection
+     * 3. Delete intersecting strokes from repository and in-memory list
+     * 4. Redraw bitmap from remaining strokes
+     *
+     * Pixel eraser (Tool.PixelEraser):
+     * 1. Build eraser parallelogram from previous → current position
+     * 2. Test all completed strokes for intersection
+     * 3. For each intersecting stroke, split it at eraser boundaries
+     * 4. Delete original stroke, save sub-strokes with new IDs
+     * 5. Replace original stroke with sub-strokes in in-memory list
+     * 6. Redraw bitmap from remaining and new sub-strokes
+     *
+     * Implements AC1.4 (stroke eraser), AC1.5/1.6 (pixel eraser), AC1.7 (hardware eraser).
      */
     private fun handleErase(event: MotionEvent): Boolean {
-        // Phase 6 implements stroke and pixel eraser logic
-        return false
+        val repo = repository ?: return true
+        val canvas = writingCanvas ?: return true
+
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                ensureBitmap()
+                provideBitmapIfNeeded()
+                // Track initial position for eraser movement
+                prevScreenX = event.x
+                prevScreenY = event.y
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                // Convert screen coordinates to virtual for collision testing
+                val prevVx = transform.toVirtualX(prevScreenX)
+                val prevVy = transform.toVirtualY(prevScreenY)
+                val curVx = transform.toVirtualX(event.x)
+                val curVy = transform.toVirtualY(event.y)
+
+                // Eraser radius in virtual units (roughly proportional to screen radius)
+                // Use a standard eraser size; on e-ink, ~20 virtual units is reasonable
+                val eraserRadius = 20
+
+                // Build eraser collision boundary
+                val eraserParallelogram = StrokeGeometry.buildEraserParallelogram(
+                    prevVx.toInt(),
+                    prevVy.toInt(),
+                    curVx.toInt(),
+                    curVy.toInt(),
+                    eraserRadius
+                )
+
+                // Track which strokes to remove or replace
+                val strokesToRemove = mutableListOf<Int>() // indices to delete
+                val strokeUpdates = mutableListOf<Pair<Int, List<Stroke>>>() // index -> replacement sub-strokes
+
+                // Test each completed stroke
+                for (i in completedStrokes.indices) {
+                    val stroke = completedStrokes[i]
+
+                    if (activeTool is Tool.StrokeEraser) {
+                        // Stroke eraser: delete entire stroke if it intersects
+                        if (StrokeGeometry.strokeIntersects(stroke, eraserParallelogram)) {
+                            strokesToRemove.add(i)
+                            try {
+                                if (stroke.id > 0) repo.deleteStroke(stroke.id)
+                            } catch (e: Throwable) {
+                                android.util.Log.e("DrawView", "failed to delete stroke", e)
+                            }
+                        }
+                    } else if (activeTool is Tool.PixelEraser) {
+                        // Pixel eraser: split stroke at erased region
+                        if (StrokeGeometry.strokeIntersects(stroke, eraserParallelogram)) {
+                            val subStrokes = StrokeGeometry.splitStroke(stroke, eraserParallelogram)
+                            if (subStrokes.isNotEmpty()) {
+                                // Save sub-strokes and track for replacement
+                                val savedSubStrokes = mutableListOf<Stroke>()
+                                try {
+                                    stroke.id.let { if (it > 0) repo.deleteStroke(it) }
+                                    for (subStroke in subStrokes) {
+                                        // Save sub-stroke with id=0 (unsaved)
+                                        val savedId = repo.saveStroke(subStroke)
+                                        savedSubStrokes.add(subStroke.copy(id = savedId))
+                                    }
+                                    strokeUpdates.add(i to savedSubStrokes)
+                                } catch (e: Throwable) {
+                                    android.util.Log.e("DrawView", "failed to split stroke", e)
+                                }
+                            } else {
+                                // Stroke completely erased
+                                strokesToRemove.add(i)
+                                try {
+                                    if (stroke.id > 0) repo.deleteStroke(stroke.id)
+                                } catch (e: Throwable) {
+                                    android.util.Log.e("DrawView", "failed to delete stroke", e)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Apply updates (must handle in reverse order to preserve indices)
+                val indicesToRemove = strokesToRemove.sorted().reversed()
+                for (i in indicesToRemove) {
+                    completedStrokes.removeAt(i)
+                }
+
+                // Apply stroke replacements (after removing full erasures)
+                for ((originalIndex, subStrokes) in strokeUpdates.reversed()) {
+                    if (originalIndex < completedStrokes.size) {
+                        completedStrokes.removeAt(originalIndex)
+                    }
+                    completedStrokes.addAll(originalIndex, subStrokes)
+                }
+
+                // Redraw bitmap from remaining strokes
+                if (strokesToRemove.isNotEmpty() || strokeUpdates.isNotEmpty()) {
+                    redrawBitmap()
+                }
+
+                // Track screen position for next movement
+                prevScreenX = event.x
+                prevScreenY = event.y
+            }
+
+            MotionEvent.ACTION_UP -> {
+                // Erase operation complete
+                // Signal backend end-of-stroke to support fast ink display
+                backend?.endStroke()
+                // Redraw on e-ink for quality output
+                postDelayed({ invalidate() }, 900)
+            }
+        }
+        return true
+    }
+
+    /**
+     * Clear offscreen bitmap and replay all completed strokes.
+     * Called after erase operations to update the display.
+     */
+    private fun redrawBitmap() {
+        val canvas = writingCanvas ?: return
+        writingBitmap?.eraseColor(Color.TRANSPARENT)
+        for (stroke in completedStrokes) {
+            drawStrokeToBitmap(stroke)
+        }
+        invalidate()
     }
 
     // ========== Standard Canvas Rendering ==========

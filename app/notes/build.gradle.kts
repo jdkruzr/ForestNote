@@ -10,7 +10,12 @@ android {
     }
 }
 
+val libs = extensions.getByType<VersionCatalogsExtension>().named("libs")
+
 dependencies {
     implementation(project(":core:ink"))
     implementation(project(":core:format"))
+
+    // Ink API for erase tools (geometry types used indirectly via StrokeGeometry)
+    implementation(libs.findLibrary("androidx-ink-geometry").get())
 }
