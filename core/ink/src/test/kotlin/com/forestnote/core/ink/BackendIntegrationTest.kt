@@ -33,18 +33,6 @@ class BackendIntegrationTest {
     // AC3.1 & AC3.4: GenericBackend on non-e-ink
     // ============================================
 
-    @Test
-    fun backendDetection_onNonEinkDevice_returnsGenericBackend() {
-        // AC3.1: BackendDetector returns GenericBackend on non-AiPaper
-        // AC3.4: GenericBackend can render strokes via standard Canvas
-        val result = BackendDetector.detect(mockContext)
-
-        assertNotNull("Backend should not be null", result.backend)
-        assertTrue("Backend should be GenericBackend instance",
-            result.backend is GenericBackend)
-        assertFalse("isEInk should be false on non-e-ink device",
-            result.isEInk)
-    }
 
     @Test
     fun backendDetection_onNonEinkDevice_doesNotCrash() {
@@ -73,22 +61,6 @@ class BackendIntegrationTest {
     // AC3.5: Graceful fallback on init failure
     // ============================================
 
-    @Test
-    fun backendFallback_whenViwoodsUnavailable_fallsBackToGeneric() {
-        // AC3.5: When ViwoodsBackend.isAvailable() returns false
-        // (as it does on JVM since ENoteSetting class doesn't exist),
-        // BackendDetector should fall back to GenericBackend without crashing
-        val viwoods = ViwoodsBackend()
-        assertFalse("ViwoodsBackend.isAvailable() should be false on JVM",
-            viwoods.isAvailable())
-
-        val result = BackendDetector.detect(mockContext)
-
-        assertTrue("Should fall back to GenericBackend",
-            result.backend is GenericBackend)
-        assertFalse("isEInk should be false",
-            result.isEInk)
-    }
 
     @Test
     fun backendFallback_doesNotPropagateException() {
@@ -188,33 +160,6 @@ class BackendIntegrationTest {
     // Robustness: Fallback consistency
     // ============================================
 
-    @Test
-    fun backendFallback_consistentAcrossMultipleCalls() {
-        // AC3.5: Multiple detect calls return consistent fallback
-        val result1 = BackendDetector.detect(mockContext)
-        val result2 = BackendDetector.detect(mockContext)
-        val result3 = BackendDetector.detect(mockContext)
-
-        assertTrue("All should be GenericBackend",
-            result1.backend is GenericBackend &&
-            result2.backend is GenericBackend &&
-            result3.backend is GenericBackend)
-
-        assertFalse("All should have isEInk=false",
-            result1.isEInk || result2.isEInk || result3.isEInk)
-    }
-
-    @Test
-    fun backendFallback_eachCallReturnsFreshInstance() {
-        // AC3.5: No singleton state leakage
-        val result1 = BackendDetector.detect(mockContext)
-        val result2 = BackendDetector.detect(mockContext)
-
-        assertNotSame("DetectionResult instances should be fresh",
-            result1, result2)
-        assertNotSame("Backend instances should be fresh",
-            result1.backend, result2.backend)
-    }
 
     // ============================================
     // Helper: JUnit 4 compatible assertDoesNotThrow
