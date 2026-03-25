@@ -105,6 +105,55 @@ enote.onWritingEnd();
 view.postDelayed(() -> view.invalidate(), 900);
 ```
 
+## Lifecycle Management (CRITICAL)
+
+**The WritingBufferQueue is a system-wide singleton.** Only one process can hold it at a time. If your app holds the queue when backgrounded, other apps (including Viwoods' own WiNote) will lose fast ink until the queue is released.
+
+You **must** release on `onPause` and re-acquire on `onResume`:
+
+```java
+@Override
+protected void onPause() {
+    super.onPause();
+    if (fastInkEnabled) {
+        enote.setWritingEnabled(false);  // disconnects from WritingBufferQueue
+    }
+}
+
+@Override
+protected void onResume() {
+    super.onResume();
+    if (fastInkEnabled) {
+        enote.initWriting();
+        enote.setPictureMode(4);
+        enote.setRenderWritingDelayCount(0);
+        enote.setWritingEnabled(true);
+        // Re-provide your bitmap on next pen-down
+    }
+}
+```
+
+Kotlin equivalent:
+
+```kotlin
+override fun onPause() {
+    super.onPause()
+    if (fastInkActive) bridge.setWritingEnabled(false)
+}
+
+override fun onResume() {
+    super.onResume()
+    if (fastInkActive) {
+        bridge.initWriting()
+        bridge.setPictureMode(4)
+        bridge.setRenderWritingDelayCount(0)
+        bridge.setWritingEnabled(true)
+    }
+}
+```
+
+**What happens if you don't do this:** Your app keeps the WritingBufferQueue connected while backgrounded. When WiNote (or any other app) tries to connect, it gets `lock error:-22` on every stroke attempt and falls back to slow rendering. When you return to your app, the queue is in a corrupted state (connected but disabled by the SDK's recovery broadcast), producing `dequeueBuffer: exceeding max count` errors. Only a full OFF → disconnect → ON → reconnect cycle fixes it.
+
 ## Cleanup
 
 ```java
@@ -147,6 +196,7 @@ Recommended steel pen width presets (min, max in pixels):
 - **Do not call `System.loadLibrary("paintworker")`** — the framework loads it internally via `initWriting()`. Double-loading crashes.
 - **Do not call `setenforce 0`** — permissive SELinux creates zombie WritingSurface connections that break all apps until reboot.
 - **Do not call `View.invalidate()` on every `ACTION_MOVE`** — on e-ink, each invalidation queues a display refresh. Hundreds of queued refreshes cause multi-second redraw delays.
+- **Do not hold the WritingBufferQueue while backgrounded** — release it in `onPause()` via `setWritingEnabled(false)`. Failing to do so blocks fast ink for ALL other apps on the device and corrupts your own connection state. See [Lifecycle Management](#lifecycle-management-critical) above.
 
 ## Architecture
 
@@ -172,5 +222,6 @@ Recommended steel pen width presets (min, max in pixels):
 ## Reference
 
 - Full API reference with AIDL transaction codes: `VIWOODS_APP_DEV.md`
-- Working Java implementation: `app/src/main/java/com/example/einkpoc/`
+- Working Java PoC: `~/ForestNote/app/src/main/java/com/example/einkpoc/` (tag `v0.1-java-poc`)
+- Working Kotlin implementation: `~/KotlinViwoodsPort/app/src/main/java/com/example/forestnote/`
 - Decompiled Viwoods sources: `~/viwoods_re/` (framework.jar, services.jar, WiNote)
