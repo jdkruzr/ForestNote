@@ -44,15 +44,16 @@ class NotebookRepositoryTest {
             penWidthMax = 35
         )
 
-        // AC2.1: Save stroke on pen-up
-        val strokeId = repo.saveStroke(original)
-        assertTrue(strokeId > 0, "Stroke should have positive database ID")
+        // AC2.1: Save stroke on pen-up (stroke carries its own ULID)
+        repo.saveStroke(original)
 
-        // AC2.2: Load stroke back
+        // AC2.2: Load stroke back; id is stable across save/load
         val loaded = repo.loadStrokes()
         assertEquals(1, loaded.size, "Should have one stroke")
 
         val loadedStroke = loaded[0]
+        assertEquals(original.id, loadedStroke.id, "Stroke id should be stable across save/load")
+        assertEquals(26, loadedStroke.id.length, "Loaded id should be a 26-char ULID")
         assertEquals(original.points, loadedStroke.points, "Points should match")
         assertEquals(original.color, loadedStroke.color, "Color should match")
         assertEquals(original.penWidthMin, loadedStroke.penWidthMin, "Min width should match")
@@ -78,17 +79,20 @@ class NotebookRepositoryTest {
         )
 
         // AC2.1: Save multiple strokes
-        val id1 = repo.saveStroke(stroke1)
-        val id2 = repo.saveStroke(stroke2)
-        val id3 = repo.saveStroke(stroke3)
+        repo.saveStroke(stroke1)
+        repo.saveStroke(stroke2)
+        repo.saveStroke(stroke3)
 
-        // AC2.2: Load all and verify order preserved
+        // AC2.2 + AC5.2: Load all and verify order preserved (by z ascending)
         val loaded = repo.loadStrokes()
         assertEquals(3, loaded.size, "Should have three strokes")
 
-        assertEquals(stroke1.points, loaded[0].points, "First stroke should be first")
-        assertEquals(stroke2.points, loaded[1].points, "Second stroke should be second")
-        assertEquals(stroke3.points, loaded[2].points, "Third stroke should be third")
+        assertEquals(stroke1.id, loaded[0].id, "First stroke should be first")
+        assertEquals(stroke2.id, loaded[1].id, "Second stroke should be second")
+        assertEquals(stroke3.id, loaded[2].id, "Third stroke should be third")
+        assertEquals(stroke1.points, loaded[0].points, "First stroke points")
+        assertEquals(stroke2.points, loaded[1].points, "Second stroke points")
+        assertEquals(stroke3.points, loaded[2].points, "Third stroke points")
 
         repo.close()
     }
@@ -99,18 +103,19 @@ class NotebookRepositoryTest {
         val stroke1 = Stroke(points = listOf(StrokePoint(10, 20, 100, 1000L)))
         val stroke2 = Stroke(points = listOf(StrokePoint(30, 40, 200, 2000L)))
 
-        val id1 = repo.saveStroke(stroke1)
-        val id2 = repo.saveStroke(stroke2)
+        repo.saveStroke(stroke1)
+        repo.saveStroke(stroke2)
 
         // Verify both are there
         assertEquals(2, repo.loadStrokes().size, "Should have two strokes")
 
-        // Delete first stroke
-        repo.deleteStroke(id1)
+        // Delete first stroke by its stable id
+        repo.deleteStroke(stroke1.id)
 
         // Verify only second remains
         val remaining = repo.loadStrokes()
         assertEquals(1, remaining.size, "Should have one stroke after delete")
+        assertEquals(stroke2.id, remaining[0].id, "Should be the second stroke")
         assertEquals(stroke2.points, remaining[0].points, "Should be the second stroke")
 
         repo.close()
@@ -204,8 +209,7 @@ class NotebookRepositoryTest {
 
         // Should be able to save strokes to recovered database
         val stroke = Stroke(points = listOf(StrokePoint(1, 2, 3, 4L)))
-        val id = repo.saveStroke(stroke)
-        assertTrue(id > 0, "Should be able to save to recovered database")
+        repo.saveStroke(stroke)
 
         assertEquals(1, repo.loadStrokes().size, "Should have saved stroke")
 
@@ -235,6 +239,8 @@ class NotebookRepositoryTest {
         val loaded = repo2.loadStrokes()
 
         assertEquals(2, loaded.size, "Second instance should restore both strokes")
+        assertEquals(stroke1.id, loaded[0].id, "First stroke id should be restored")
+        assertEquals(stroke2.id, loaded[1].id, "Second stroke id should be restored")
         assertEquals(stroke1.points, loaded[0].points, "First stroke should be restored")
         assertEquals(stroke2.points, loaded[1].points, "Second stroke should be restored")
 
@@ -288,13 +294,39 @@ class NotebookRepositoryTest {
     }
 
     @Test
+    fun strokesReloadInDrawOrderByZ() {
+        // AC5.1/AC5.2/AC5.3: first stroke on an empty page gets the deterministic
+        // starting z, each later stroke a higher z, and load order is z ascending.
+        val repo = createRepository()
+        val first = Stroke(points = listOf(StrokePoint(1, 1, 100, 1L)), color = 0xFF111111.toInt())
+        val second = Stroke(points = listOf(StrokePoint(2, 2, 200, 2L)), color = 0xFF222222.toInt())
+        val third = Stroke(points = listOf(StrokePoint(3, 3, 300, 3L)), color = 0xFF333333.toInt())
+
+        repo.saveStroke(first)
+        repo.saveStroke(second)
+        repo.saveStroke(third)
+
+        val loaded = repo.loadStrokes()
+        assertEquals(
+            listOf(first.id, second.id, third.id),
+            loaded.map { it.id },
+            "strokes reload in draw order (z ascending), independent of id sort"
+        )
+        // A stroke saved later loads after one saved earlier.
+        assertTrue(
+            loaded.indexOfFirst { it.id == first.id } < loaded.indexOfFirst { it.id == third.id },
+            "earlier-saved stroke precedes later-saved stroke"
+        )
+        repo.close()
+    }
+
+    @Test
     fun emptyStrokeCanBeSaved() {
         // Edge case: stroke with no points
         val repo = createRepository()
         val emptyStroke = Stroke(points = emptyList())
 
-        val id = repo.saveStroke(emptyStroke)
-        assertTrue(id > 0, "Empty stroke should save")
+        repo.saveStroke(emptyStroke)
 
         val loaded = repo.loadStrokes()
         assertEquals(1, loaded.size, "Should have one stroke")
