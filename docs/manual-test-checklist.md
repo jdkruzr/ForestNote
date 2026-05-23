@@ -54,21 +54,21 @@ Robolectric). The storage-layer behavior is covered by `core:format` tests and t
 off-thread/drain guarantees by `NotebookStore` tests; these verify the full
 Activity/View/threading integration.
 
-- [ ] **AC1.2: Non-blocking cold start** - Launch the app → the canvas accepts strokes immediately, with no blocking spinner or jank while previously-saved ink loads.
+- [x] **AC1.2: Non-blocking cold start** - Launch the app → the canvas accepts strokes immediately, with no blocking spinner or jank while previously-saved ink loads. _(verified on-device 2026-05-23)_
 - [ ] **AC1.3: No ANR on large erase** - With many strokes on the page, do a large, fast pixel-erase across them → no ANR / freeze; erase completes smoothly.
-- [ ] **AC2.4 / AC3.2: Whole-stroke erase survives relaunch** - Draw strokes, stroke-erase some, relaunch → erased ink stays gone (does not resurrect).
-- [ ] **AC3.3: Pixel-erase split survives relaunch** - Pixel-erase through the middle of a stroke, relaunch → the surviving fragments are present and correct, the gap remains.
-- [ ] **AC3.1: Draw order survives relaunch** - Draw several overlapping strokes, relaunch → they reload in the original draw order.
-- [ ] **AC3.4: Clear survives relaunch** - Clear the page, relaunch → the page is empty.
+- [x] **AC2.4 / AC3.2: Whole-stroke erase survives relaunch** - Draw strokes, stroke-erase some, relaunch → erased ink stays gone (does not resurrect). _(verified on-device 2026-05-23)_
+- [x] **AC3.3: Pixel-erase split survives relaunch** - Pixel-erase through the middle of a stroke, relaunch → the surviving fragments are present and correct, the gap remains. _(verified on-device 2026-05-23)_
+- [x] **AC3.1: Draw order survives relaunch** - Draw several overlapping strokes, relaunch → they reload in the original draw order. _(verified on-device 2026-05-23)_
+- [x] **AC3.4: Clear survives relaunch** - Clear the page, relaunch → the page is empty. _(verified on-device 2026-05-23)_
 - [ ] **AC7.x: Gap-drawn ink preserved** - Immediately on launch (before/while older ink loads), draw new strokes → they are preserved alongside the loaded ink, ordered after it, with no duplicates.
 - [ ] **AC7.4 / AC8.1 / AC8.2: Failures don't crash** - If a load/save/erase fails, the canvas stays usable and the app does not crash.
 
 ## Test Sign-Off
 
-- Date tested: ________________
+- Date tested: 2026-05-23 (persistence-ulid: AC1.2, AC3.1, AC2.4/AC3.2, AC3.3, AC3.4 verified on-device)
 - Tester name: ________________
-- Device model: ________________
+- Device model: Viwoods AiPaper Mini
 - OS version: ________________
-- Notes/Issues: ________________________________________________________________
+- Notes/Issues: persistence-ulid core relaunch/cold-start flows pass on-device. Still to verify on-device: AC1.3 (no-ANR large erase), AC7.x (gap-drawn merge), AC7.4/AC8.1/AC8.2 (failure-path UX).
 
 All tests completed and passing: [ ] Yes [ ] No
