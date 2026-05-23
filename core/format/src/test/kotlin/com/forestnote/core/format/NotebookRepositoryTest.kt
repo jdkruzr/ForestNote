@@ -10,8 +10,9 @@ import kotlin.test.assertTrue
 /**
  * Unit tests for NotebookRepository.
  *
- * Verifies AC2.1-2.5: Auto-save, restore, persistence, corruption recovery,
- * and resolution-independent virtual coordinates.
+ * Covers v1 AC2.1-2.5 (auto-save, restore, persistence, corruption recovery,
+ * resolution-independent virtual coordinates) and the persistence-ulid scope:
+ * stable ULID ids across save/load (AC2.2) and explicit z ordering (AC5.1-5.3).
  *
  * Uses in-memory SQLite database via JdbcSqliteDriver for fast, isolated testing.
  */

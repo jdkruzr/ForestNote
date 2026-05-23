@@ -10,8 +10,10 @@ import kotlin.test.assertTrue
 /**
  * Integration tests for storage persistence across repository instances.
  *
- * Verifies AC2.1-2.4: Auto-save (AC2.1), restore after kill/relaunch (AC2.2),
- * serialization fidelity (AC2.3), and corrupted database recovery (AC2.4).
+ * Covers v1 AC2.1-2.4 (auto-save, restore after kill/relaunch, serialization
+ * fidelity, corrupted database recovery) and the persistence-ulid relaunch scope:
+ * whole-stroke erase (AC3.2), pixel-split fragments (AC3.3), and clear (AC3.4) all
+ * survive reopening on the same driver.
  *
  * Uses shared JdbcSqliteDriver(IN_MEMORY) with separate NotebookRepository instances
  * to verify that data persists across repository lifecycle boundaries. Each cross-instance
