@@ -12,6 +12,112 @@ import kotlin.math.min
 object StrokeGeometry {
 
     /**
+     * Result of reconciling an erase gesture against the stroke model.
+     *
+     * @param survivingStrokes the complete new in-memory stroke list (for bitmap redraw)
+     * @param removedStrokeIds DB ids of strokes that must be deleted
+     * @param addedStrokes new strokes (pixel-eraser split survivors, id=0) to persist
+     */
+    data class EraseResult(
+        val survivingStrokes: List<Stroke>,
+        val removedStrokeIds: List<Long>,
+        val addedStrokes: List<Stroke>
+    )
+
+    /**
+     * Reconcile an eraser gesture against the stroke model so erase is durable.
+     *
+     * @param strokes current strokes (virtual coordinates)
+     * @param eraserPath eraser positions in virtual coordinates, in order
+     * @param radius eraser radius in virtual units
+     * @param eraseWholeStrokes true = stroke eraser (drop any touched stroke);
+     *                          false = pixel eraser (split touched strokes)
+     */
+    fun reconcileErase(
+        strokes: List<Stroke>,
+        eraserPath: List<Pair<Int, Int>>,
+        radius: Int,
+        eraseWholeStrokes: Boolean
+    ): EraseResult {
+        if (eraserPath.size < 2) {
+            return EraseResult(strokes, emptyList(), emptyList())
+        }
+
+        val surviving = mutableListOf<Stroke>()
+        val removedIds = mutableListOf<Long>()
+        val added = mutableListOf<Stroke>()
+
+        for (stroke in strokes) {
+            if (stroke.points.size < 2) {
+                surviving.add(stroke)
+                continue
+            }
+
+            // For each stroke segment, mark erased if ANY eraser-path segment hits it.
+            val erased = BooleanArray(stroke.points.size - 1)
+            var anyErased = false
+            for (si in 0 until stroke.points.size - 1) {
+                val a = stroke.points[si]
+                val b = stroke.points[si + 1]
+                for (ei in 0 until eraserPath.size - 1) {
+                    val (ex1, ey1) = eraserPath[ei]
+                    val (ex2, ey2) = eraserPath[ei + 1]
+                    if (segmentIntersectsEraser(a, b, ex1, ey1, ex2, ey2, radius)) {
+                        erased[si] = true
+                        anyErased = true
+                        break
+                    }
+                }
+            }
+
+            if (!anyErased) {
+                surviving.add(stroke)
+                continue
+            }
+
+            // The stroke was touched: it must be removed from the DB...
+            if (stroke.id != 0L) removedIds.add(stroke.id)
+
+            if (eraseWholeStrokes) {
+                // Stroke eraser: drop the whole stroke. Nothing replaces it.
+                continue
+            }
+
+            // Pixel eraser: keep runs of points joined by surviving segments.
+            val subStrokes = collectSurvivingRuns(stroke, erased)
+            added.addAll(subStrokes)
+            surviving.addAll(subStrokes)
+        }
+
+        return EraseResult(surviving, removedIds, added)
+    }
+
+    /**
+     * Collect maximal runs of points connected by non-erased segments into sub-strokes.
+     * Only runs with 2+ points become strokes (AC1.6: no empty/one-point ghosts).
+     * Sub-strokes are new (id=0) and inherit the original stroke's style.
+     */
+    private fun collectSurvivingRuns(stroke: Stroke, erasedSegments: BooleanArray): List<Stroke> {
+        val runs = mutableListOf<Stroke>()
+        var current = mutableListOf(stroke.points[0])
+        for (si in erasedSegments.indices) {
+            val next = stroke.points[si + 1]
+            if (erasedSegments[si]) {
+                if (current.size >= 2) {
+                    runs.add(stroke.copy(id = 0L, points = current.toList()))
+                }
+                current = mutableListOf(next)
+            } else {
+                current.add(next)
+            }
+        }
+        if (current.size >= 2) {
+            runs.add(stroke.copy(id = 0L, points = current.toList()))
+        }
+        return runs
+    }
+
+    /**
      * Test if a stroke intersects with an eraser region.
      *
      * Used for whole-stroke hit testing in the stroke eraser tool.
