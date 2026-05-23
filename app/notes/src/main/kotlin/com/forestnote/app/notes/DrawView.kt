@@ -366,11 +366,9 @@ class DrawView @JvmOverloads constructor(
                 // Auto-save to repository
                 if (!stroke.isEmpty() && repository != null) {
                     try {
-                        val newId = repository!!.saveStroke(completed)
-                        // Keep the in-memory stroke's id in sync with its DB row so a later
-                        // erase can delete it. Without this, strokes drawn this session keep
-                        // id=0 and would resurrect from the DB on relaunch after being erased.
-                        completedStrokes[completedStrokes.lastIndex] = completed.copy(id = newId)
+                        // The stroke already carries its stable ULID, so saving never
+                        // changes its in-memory id — no copy-back needed.
+                        repository!!.saveStroke(completed)
                         onStrokeSaved?.invoke(completed)
                     } catch (e: Throwable) {
                         // Defensive: Log but don't crash on save failure
@@ -494,12 +492,10 @@ class DrawView @JvmOverloads constructor(
             if (result.removedStrokeIds.isEmpty() && result.addedStrokes.isEmpty()) return@execute
 
             // One transaction for the whole erase (delete + all fragment inserts).
-            val newIds = runCatching {
-                repo?.applyErase(result.removedStrokeIds, result.addedStrokes) ?: emptyList()
-            }.getOrDefault(emptyList())
-            val savedFragments = result.addedStrokes.mapIndexed { i, s ->
-                s.copy(id = newIds.getOrElse(i) { 0L })
-            }
+            // Fragments already carry their ULIDs from reconcileErase, so the saved
+            // list is just the added strokes.
+            runCatching { repo?.applyErase(result.removedStrokeIds, result.addedStrokes) }
+            val savedFragments = result.addedStrokes
 
             post {
                 // Apply as a diff so strokes drawn while we worked aren't clobbered.
