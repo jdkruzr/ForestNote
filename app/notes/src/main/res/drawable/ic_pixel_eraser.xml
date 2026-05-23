@@ -1,17 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Pixel eraser: a 2x2 checkerboard (erases by region / pixels). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
-    android:viewportHeight="24"
-    android:tint="@color/black">
+    android:viewportHeight="24">
+    <!-- filled diagonal cells -->
     <path
-        android:fillColor="@android:color/white"
-        android:pathData="M14,7h-4v4h4V7Z" />
+        android:fillColor="#000000"
+        android:pathData="M4,4 H12 V12 H4 Z" />
     <path
-        android:fillColor="@android:color/white"
-        android:pathData="M19,3h-7.5L9.5,1h-3l1.5,2H5c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h14c1.1,0 2,-0.9 2,-2V5c0,-1.1 -0.9,-2 -2,-2Z"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:strokeWidth="0.5" />
+        android:fillColor="#000000"
+        android:pathData="M12,12 H20 V20 H12 Z" />
+    <!-- outer frame + center dividers so the empty cells read as a checkerboard -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#000000"
+        android:strokeWidth="1.5"
+        android:pathData="M4,4 H20 V20 H4 Z M12,4 V20 M4,12 H20" />
 </vector>
