@@ -1,6 +1,6 @@
 # Ink Domain (core:ink)
 
-Last verified: 2026-03-25
+Last verified: 2026-05-23
 
 ## Purpose
 Abstracts device-specific e-ink rendering behind a common interface and provides the stroke data model, coordinate system, and geometry operations used by all other modules.
@@ -26,13 +26,16 @@ Abstracts device-specific e-ink rendering behind a common interface and provides
 - PageTransform is the ONLY class that converts between virtual and screen coordinates
 - ViwoodsBackend.isAvailable() returns false on non-AiPaper devices (checks ENoteSetting class)
 - Sub-strokes from splitStroke() always have 2+ points
+- `Stroke.id` is a client-minted ULID (String), defaulted to `Ulid.generate()` at construction — every stroke has a stable id from creation, no "unsaved" state
+- `StrokeGeometry.reconcileErase` mints fragment ids via an injected `newId: () -> String = Ulid::generate` factory, keeping it pure and deterministically testable
 
 ## Key Files
 - `InkBackend.kt` - Backend interface (init, startStroke, renderSegment, endStroke, release)
 - `ViwoodsBackend.kt` - AiPaper fast ink via ENoteBridge reflection
 - `GenericBackend.kt` - Fallback using standard View.invalidate()
 - `BackendDetector.kt` - Runtime backend selection (Viwoods > Generic)
-- `Stroke.kt` - Immutable Stroke + mutable StrokeBuilder
+- `Stroke.kt` - Immutable Stroke (ULID id) + mutable StrokeBuilder
+- `Ulid.kt` - Dependency-free, time-sortable ULID generator (stroke/page identity)
 - `PageTransform.kt` - Virtual/screen coordinate conversion
 - `StrokeGeometry.kt` - Intersection testing and stroke splitting for erasers
 
