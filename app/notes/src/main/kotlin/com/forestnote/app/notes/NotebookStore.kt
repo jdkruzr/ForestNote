@@ -10,6 +10,10 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
+// pattern: Imperative Shell
+// Owns the executor, the repository handle, and all I/O orchestration + logging.
+// Pure geometry (StrokeGeometry.reconcileErase) is delegated to core:ink.
+
 /**
  * Single owner of all persistence. Runs every database operation on one background
  * thread (the serialization point — single writer, no lock contention), and posts
