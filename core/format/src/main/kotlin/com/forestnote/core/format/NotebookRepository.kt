@@ -121,6 +121,31 @@ class NotebookRepository private constructor(
     }
 
     /**
+     * Apply an erase reconciliation in a single transaction: delete the given
+     * stroke ids and insert the given replacement strokes. Returns the new ids of
+     * the inserted strokes, in order. Batching into one transaction (one commit)
+     * keeps pixel-erase fragmentation from becoming N separate disk writes.
+     */
+    fun applyErase(removedIds: List<Long>, added: List<Stroke>): List<Long> {
+        val newIds = mutableListOf<Long>()
+        db.transaction {
+            removedIds.forEach { id -> db.notebookQueries.deleteStroke(id) }
+            added.forEach { stroke ->
+                db.notebookQueries.insertStroke(
+                    page_id = currentPageId,
+                    color = stroke.color.toLong(),
+                    pen_width_min = stroke.penWidthMin.toLong(),
+                    pen_width_max = stroke.penWidthMax.toLong(),
+                    points = StrokeSerializer.encode(stroke.points),
+                    created_at = System.currentTimeMillis()
+                )
+                newIds.add(db.notebookQueries.lastInsertRowId().executeAsOne())
+            }
+        }
+        return newIds
+    }
+
+    /**
      * Delete all strokes on the current page. Used by Clear tool.
      */
     fun clearPage() {

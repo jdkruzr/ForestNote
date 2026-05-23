@@ -19,6 +19,8 @@ import com.forestnote.core.ink.StrokeBuilder
 import com.forestnote.core.ink.StrokeGeometry
 import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.Tool
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
 
@@ -92,6 +94,15 @@ class DrawView @JvmOverloads constructor(
     private var prevScreenX = 0f
     private var prevScreenY = 0f
 
+    // Eraser path in virtual coordinates, captured during an erase gesture for
+    // model reconciliation on pen-up.
+    private val eraserPathVirtual = mutableListOf<Pair<Int, Int>>()
+
+    // Background executor for erase reconciliation + DB writes. Pixel erase can split
+    // one stroke into many fragments; doing that geometry + persistence on the main
+    // thread stalls the UI, so it runs here and posts results back.
+    private val eraseExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+
     // ========== Lifecycle & Configuration ==========
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -107,6 +118,11 @@ class DrawView @JvmOverloads constructor(
                 drawStrokeToBitmap(stroke)
             }
         }
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        eraseExecutor.shutdown()
     }
 
     fun setBackend(backend: InkBackend) {
@@ -350,7 +366,11 @@ class DrawView @JvmOverloads constructor(
                 // Auto-save to repository
                 if (!stroke.isEmpty() && repository != null) {
                     try {
-                        repository!!.saveStroke(completed)
+                        val newId = repository!!.saveStroke(completed)
+                        // Keep the in-memory stroke's id in sync with its DB row so a later
+                        // erase can delete it. Without this, strokes drawn this session keep
+                        // id=0 and would resurrect from the DB on relaunch after being erased.
+                        completedStrokes[completedStrokes.lastIndex] = completed.copy(id = newId)
                         onStrokeSaved?.invoke(completed)
                     } catch (e: Throwable) {
                         // Defensive: Log but don't crash on save failure
@@ -400,6 +420,9 @@ class DrawView @JvmOverloads constructor(
                 provideBitmapIfNeeded()
                 prevScreenX = event.x
                 prevScreenY = event.y
+                // Start a fresh eraser path (virtual coords) for reconciliation.
+                eraserPathVirtual.clear()
+                eraserPathVirtual.add(transform.toVirtualX(event.x) to transform.toVirtualY(event.y))
             }
 
             MotionEvent.ACTION_MOVE -> {
@@ -418,23 +441,22 @@ class DrawView @JvmOverloads constructor(
                 backend?.renderSegment(dirtyRect)
                 invalidate()
 
+                // Record the eraser path in virtual coordinates for model reconciliation.
+                eraserPathVirtual.add(transform.toVirtualX(event.x) to transform.toVirtualY(event.y))
+
                 prevScreenX = event.x
                 prevScreenY = event.y
             }
 
             MotionEvent.ACTION_UP -> {
+                eraserPathVirtual.add(transform.toVirtualX(event.x) to transform.toVirtualY(event.y))
                 backend?.endStroke()
 
-                // Reconcile stroke data model with bitmap state on pen-up.
-                // Rebuild: clear all strokes from DB, redraw bitmap from scratch
-                // using only the strokes that still have visible pixels.
-                // For v1, simply delete all and re-save from the clean bitmap state.
-                //
-                // TODO: For a future version, consider vector-based reconciliation
-                // using StrokeGeometry.strokeIntersects/splitStroke to precisely
-                // determine which strokes were affected. The geometry code is
-                // preserved in StrokeGeometry.kt for this purpose.
-                reconcileAfterErase()
+                // Reconcile the stroke data model with the erase gesture so it sticks:
+                // remove whole strokes (stroke eraser) or split them (pixel eraser),
+                // updating both the in-memory list and the database. A redraw-from-model
+                // (refresh button / relaunch) then no longer resurrects erased ink.
+                reconcileAfterErase(tool, eraserWidth)
 
                 postDelayed({ invalidate() }, 900)
             }
@@ -443,34 +465,51 @@ class DrawView @JvmOverloads constructor(
     }
 
     /**
-     * After bitmap-based erase, reconcile the data model.
+     * Reconcile the stroke data model after an erase gesture.
      *
-     * V1 approach: delete all strokes from DB, clear completedStrokes,
-     * then re-save each stroke whose pixels are still on the bitmap.
-     * Since we can't reverse-engineer strokes from pixels, we keep the
-     * original stroke data and just remove strokes that were fully erased
-     * (all their points fall within erased regions).
-     *
-     * This is a simplified reconciliation — strokes are either kept or deleted
-     * entirely. Partial pixel erase is visually correct on the bitmap but the
-     * underlying stroke data retains the full original points. A full redraw
-     * from the data model (e.g., on app restart) will restore the full strokes.
-     * This matches how WiNote works — their undo is bitmap-snapshot-based,
-     * not stroke-based.
+     * Uses [StrokeGeometry.reconcileErase] (pure, unit-tested) to compute which
+     * strokes the eraser path removed (stroke eraser) or split (pixel eraser),
+     * applies the result to both the in-memory list and the database, and redraws
+     * the bitmap from the reconciled model so the erase survives refresh/relaunch.
      */
-    private fun reconcileAfterErase() {
-        // For v1: just reset the overlay so it matches the bitmap.
-        // The bitmap has the correct visual state (erased pixels are gone).
-        // The stroke data in completedStrokes/DB is unchanged — strokes that
-        // were partially erased will re-render fully on next app restart.
-        // This is acceptable for v1 and matches WiNote's behavior.
-        writingBitmap?.let { bmp ->
-            val loc = IntArray(2)
-            getLocationOnScreen(loc)
-            backend?.pushBackgroundBitmap(bmp, loc)
-            backend?.resetOverlay(bmp, loc, width, height)
+    private fun reconcileAfterErase(tool: Tool, eraserWidthScreen: Float) {
+        val repo = repository
+        // Snapshot inputs on the UI thread; do the heavy reconcile + DB work on the
+        // background executor so a large pixel erase never blocks the main thread.
+        val strokesSnapshot = completedStrokes.toList()
+        val pathSnapshot = eraserPathVirtual.toList()
+        // Eraser radius: half the eraser width, screen px -> virtual units.
+        // PageTransform is a pure scale, so toVirtualX doubles as a size converter.
+        val virtualRadius = transform.toVirtualX(eraserWidthScreen / 2f).coerceAtLeast(1)
+        val wholeStrokes = tool is Tool.StrokeEraser
+        eraserPathVirtual.clear()
+
+        eraseExecutor.execute {
+            val result = StrokeGeometry.reconcileErase(
+                strokes = strokesSnapshot,
+                eraserPath = pathSnapshot,
+                radius = virtualRadius,
+                eraseWholeStrokes = wholeStrokes
+            )
+            if (result.removedStrokeIds.isEmpty() && result.addedStrokes.isEmpty()) return@execute
+
+            // One transaction for the whole erase (delete + all fragment inserts).
+            val newIds = runCatching {
+                repo?.applyErase(result.removedStrokeIds, result.addedStrokes) ?: emptyList()
+            }.getOrDefault(emptyList())
+            val savedFragments = result.addedStrokes.mapIndexed { i, s ->
+                s.copy(id = newIds.getOrElse(i) { 0L })
+            }
+
+            post {
+                // Apply as a diff so strokes drawn while we worked aren't clobbered.
+                val removed = result.removedStrokeIds.toHashSet()
+                completedStrokes.removeAll { it.id in removed }
+                completedStrokes.addAll(savedFragments)
+                // Redraw the bitmap from the reconciled model and re-composite overlay.
+                redrawBitmap()
+            }
         }
-        bitmapProvided = true
     }
 
     /**
