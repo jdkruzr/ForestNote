@@ -1,12 +1,12 @@
 # Format Domain (core:format)
 
-Last verified: 2026-03-25
+Last verified: 2026-05-23
 
 ## Purpose
 Persists notebook data (strokes) to a SQLite database file (.forestnote) using SQLDelight. Provides auto-save on pen-up and full restore on app launch.
 
 ## Contracts
-- **Exposes**: `NotebookRepository` (open, saveStroke, loadStrokes, deleteStroke, clearPage, close), `StrokeSerializer` (encode/decode)
+- **Exposes**: `NotebookRepository` (open, saveStroke→Unit, loadStrokes, deleteStroke(String), applyErase, clearPage, close), `StrokeSerializer` (encode/decode)
 - **Guarantees**: Corrupted databases are deleted and recreated (AC2.4). Stroke round-trip through serialize/deserialize is lossless. V1 operates on a single implicit page.
 - **Expects**: Android Context for database creation. `Stroke`/`StrokePoint` types from `core:ink`.
 
@@ -24,7 +24,8 @@ Persists notebook data (strokes) to a SQLite database file (.forestnote) using S
 ## Invariants
 - Database always has at least one page row after open
 - StrokeSerializer rejects truncated BLOBs (returns empty list, never crashes)
-- Stroke IDs from saveStroke() are always > 0
+- Stroke/page ids are client-minted ULIDs (TEXT); strokes carry their id from creation, so saveStroke() does not return or change it
+- Strokes load ordered by the explicit `z` column (ascending = paint order); saveStroke assigns z = max(z)+1 per page
 
 ## Key Files
 - `NotebookRepository.kt` - Storage facade (CRUD operations)
@@ -33,4 +34,5 @@ Persists notebook data (strokes) to a SQLite database file (.forestnote) using S
 
 ## Gotchas
 - NotebookRepository.open() silently deletes and recreates on any database error
-- Stroke.id=0 means unsaved; only saved strokes have positive IDs
+- Ids are client-minted ULIDs minted at Stroke construction — there is no "unsaved" id state
+- Schema is at version 2; `migrations/1.sqm` is a DESTRUCTIVE v1→v2 reset (drops existing data)
