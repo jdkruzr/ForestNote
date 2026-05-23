@@ -10,17 +10,13 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.view.MotionEvent
 import android.view.View
-import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
 import com.forestnote.core.ink.PressureCurve
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeBuilder
-import com.forestnote.core.ink.StrokeGeometry
 import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.Tool
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
 
@@ -56,13 +52,26 @@ class DrawView @JvmOverloads constructor(
                 else -> false
             }
         }
+
+        /**
+         * Merge DB-loaded strokes (already z-ordered) with strokes drawn during the
+         * async load gap. Loaded come first, then session strokes not already present;
+         * dedup by stable id so nothing is duplicated or clobbered.
+         */
+        fun mergeStrokes(loaded: List<Stroke>, session: List<Stroke>): List<Stroke> {
+            val seen = HashSet<String>(loaded.size + session.size)
+            val out = ArrayList<Stroke>(loaded.size + session.size)
+            for (s in loaded) if (seen.add(s.id)) out.add(s)
+            for (s in session) if (seen.add(s.id)) out.add(s)
+            return out
+        }
     }
     private val completedStrokes = mutableListOf<Stroke>()
     private var currentStroke: StrokeBuilder? = null
 
     // Configuration
     private var backend: InkBackend? = null
-    private var repository: NotebookRepository? = null
+    private var store: NotebookStore? = null
     private var transform = PageTransform()
     var activeTool: Tool = Tool.Pen
     var onStrokeSaved: ((Stroke) -> Unit)? = null
@@ -98,11 +107,6 @@ class DrawView @JvmOverloads constructor(
     // model reconciliation on pen-up.
     private val eraserPathVirtual = mutableListOf<Pair<Int, Int>>()
 
-    // Background executor for erase reconciliation + DB writes. Pixel erase can split
-    // one stroke into many fragments; doing that geometry + persistence on the main
-    // thread stalls the UI, so it runs here and posts results back.
-    private val eraseExecutor: ExecutorService = Executors.newSingleThreadExecutor()
-
     // ========== Lifecycle & Configuration ==========
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -120,17 +124,12 @@ class DrawView @JvmOverloads constructor(
         }
     }
 
-    override fun onDetachedFromWindow() {
-        super.onDetachedFromWindow()
-        eraseExecutor.shutdown()
-    }
-
     fun setBackend(backend: InkBackend) {
         this.backend = backend
     }
 
-    fun setRepository(repository: NotebookRepository) {
-        this.repository = repository
+    fun setStore(store: NotebookStore) {
+        this.store = store
     }
 
     fun setTransform(transform: PageTransform) {
@@ -138,15 +137,18 @@ class DrawView @JvmOverloads constructor(
     }
 
     /**
-     * Restore previously saved strokes from the repository.
-     * Replays all strokes onto the offscreen bitmap for display.
+     * Apply an async startup load: merge the DB-loaded strokes with any strokes drawn
+     * during the load gap (dedup by id, loaded first — see [mergeStrokes]), then replay
+     * the merged model onto the offscreen bitmap. Safe to call after the user has
+     * already started drawing, so the non-blocking load never clobbers fresh ink.
      */
-    fun restoreStrokes(strokes: List<Stroke>) {
+    fun mergeLoadedStrokes(strokes: List<Stroke>) {
+        val merged = mergeStrokes(strokes, completedStrokes)
         completedStrokes.clear()
-        completedStrokes.addAll(strokes)
+        completedStrokes.addAll(merged)
         ensureBitmap()
         writingBitmap?.eraseColor(Color.TRANSPARENT)
-        for (stroke in strokes) {
+        for (stroke in completedStrokes) {
             drawStrokeToBitmap(stroke)
         }
         invalidate()
@@ -364,16 +366,11 @@ class DrawView @JvmOverloads constructor(
                 backend?.endStroke()
 
                 // Auto-save to repository
-                if (!stroke.isEmpty() && repository != null) {
-                    try {
-                        // The stroke already carries its stable ULID, so saving never
-                        // changes its in-memory id — no copy-back needed.
-                        repository!!.saveStroke(completed)
-                        onStrokeSaved?.invoke(completed)
-                    } catch (e: Throwable) {
-                        // Defensive: Log but don't crash on save failure
-                        android.util.Log.e("DrawView", "failed to save stroke", e)
-                    }
+                if (!stroke.isEmpty()) {
+                    // Fire-and-forget: the store persists off-thread and logs its own
+                    // failures. The stroke already carries its ULID — no copy-back.
+                    store?.save(completed)
+                    onStrokeSaved?.invoke(completed)
                 }
 
                 // Redraw on e-ink for quality output (postDelayed prevents excessive redraws)
@@ -465,15 +462,14 @@ class DrawView @JvmOverloads constructor(
     /**
      * Reconcile the stroke data model after an erase gesture.
      *
-     * Uses [StrokeGeometry.reconcileErase] (pure, unit-tested) to compute which
-     * strokes the eraser path removed (stroke eraser) or split (pixel eraser),
-     * applies the result to both the in-memory list and the database, and redraws
-     * the bitmap from the reconciled model so the erase survives refresh/relaunch.
+     * Snapshots the inputs on the UI thread, then hands the geometry + persistence to
+     * [NotebookStore.reconcileErase], which runs them off-thread (so a large pixel
+     * erase never blocks the main thread) and posts back the diff. Applying the diff
+     * as remove-then-add means strokes drawn while we worked aren't clobbered, and the
+     * redraw-from-model makes the erase survive refresh/relaunch.
      */
     private fun reconcileAfterErase(tool: Tool, eraserWidthScreen: Float) {
-        val repo = repository
-        // Snapshot inputs on the UI thread; do the heavy reconcile + DB work on the
-        // background executor so a large pixel erase never blocks the main thread.
+        // Snapshot inputs on the UI thread before handing off to the store's thread.
         val strokesSnapshot = completedStrokes.toList()
         val pathSnapshot = eraserPathVirtual.toList()
         // Eraser radius: half the eraser width, screen px -> virtual units.
@@ -482,29 +478,18 @@ class DrawView @JvmOverloads constructor(
         val wholeStrokes = tool is Tool.StrokeEraser
         eraserPathVirtual.clear()
 
-        eraseExecutor.execute {
-            val result = StrokeGeometry.reconcileErase(
-                strokes = strokesSnapshot,
-                eraserPath = pathSnapshot,
-                radius = virtualRadius,
-                eraseWholeStrokes = wholeStrokes
-            )
-            if (result.removedStrokeIds.isEmpty() && result.addedStrokes.isEmpty()) return@execute
-
-            // One transaction for the whole erase (delete + all fragment inserts).
-            // Fragments already carry their ULIDs from reconcileErase, so the saved
-            // list is just the added strokes.
-            runCatching { repo?.applyErase(result.removedStrokeIds, result.addedStrokes) }
-            val savedFragments = result.addedStrokes
-
-            post {
-                // Apply as a diff so strokes drawn while we worked aren't clobbered.
-                val removed = result.removedStrokeIds.toHashSet()
-                completedStrokes.removeAll { it.id in removed }
-                completedStrokes.addAll(savedFragments)
-                // Redraw the bitmap from the reconciled model and re-composite overlay.
-                redrawBitmap()
-            }
+        store?.reconcileErase(
+            strokes = strokesSnapshot,
+            eraserPath = pathSnapshot,
+            radius = virtualRadius,
+            eraseWholeStrokes = wholeStrokes
+        ) { removed, fragments ->
+            // Posted to the main thread by the store. Apply as a diff so strokes drawn
+            // while we worked aren't clobbered, then redraw from the reconciled model.
+            val removedSet = removed.toHashSet()
+            completedStrokes.removeAll { it.id in removedSet }
+            completedStrokes.addAll(fragments)
+            redrawBitmap()
         }
     }
 
