@@ -7,7 +7,6 @@ import android.graphics.Color
 import android.os.Bundle
 import android.view.View
 import android.widget.FrameLayout
-import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.ink.BackendDetector
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
@@ -16,19 +15,23 @@ import java.io.FileWriter
 import java.io.PrintWriter
 import java.util.Date
 
+// pattern: Imperative Shell
+// Activity lifecycle orchestration: wires backend, NotebookStore, and DrawView; no
+// business logic (delegated to core modules and NotebookStore).
+
 /**
  * Main app entry point. Wires together backend, storage, and drawing view.
  *
  * Lifecycle:
- * - onCreate: detect backend, open repository, load/restore strokes
+ * - onCreate: detect backend, create NotebookStore, kick off a non-blocking load
  * - onPause: release WritingBufferQueue (allows WiNote to use it)
  * - onResume: re-acquire WritingBufferQueue, reset bitmap
- * - onDestroy: clean up resources
+ * - onDestroy: drain + shut down the store, release backend
  */
 class MainActivity : Activity() {
     private lateinit var drawView: DrawView
     private lateinit var backend: InkBackend
-    private lateinit var repository: NotebookRepository
+    private lateinit var store: NotebookStore
     private lateinit var toolBar: ToolBar
     private var isEInk = false
 
@@ -41,8 +44,9 @@ class MainActivity : Activity() {
         backend = detection.backend
         isEInk = detection.isEInk
 
-        // Open storage
-        repository = NotebookRepository.open(this)
+        // Open storage. The store opens the repository on its own background thread,
+        // so onCreate never makes a synchronous DB call (AC1.2).
+        store = NotebookStore.create(this)
 
         // Load layout from XML
         setContentView(R.layout.activity_main)
@@ -54,16 +58,16 @@ class MainActivity : Activity() {
         // Configure DrawView
         drawView.apply {
             setBackend(backend)
-            setRepository(repository)
+            setStore(store)
             setTransform(PageTransform())
             onStrokeSaved = { stroke ->
                 // Notification-only callback
             }
         }
 
-        // Load and restore previously saved strokes
-        val strokes = repository.loadStrokes()
-        drawView.restoreStrokes(strokes)
+        // Non-blocking restore: the canvas is interactive immediately; previously-saved
+        // ink appears when the async load returns, merged with anything drawn meanwhile.
+        store.load { strokes -> drawView.mergeLoadedStrokes(strokes) }
 
         // Create and wire ToolBar
         toolBar = ToolBar(toolBarRoot, isEInk) { tool ->
@@ -96,11 +100,8 @@ class MainActivity : Activity() {
             .setMessage("Delete all strokes on this page?")
             .setPositiveButton("Clear") { _, _ ->
                 drawView.clearAll()
-                try {
-                    repository.clearPage()
-                } catch (e: Throwable) {
-                    android.util.Log.e("MainActivity", "failed to clear page", e)
-                }
+                // The store clears off-thread and handles its own errors.
+                store.clear { }
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -128,7 +129,8 @@ class MainActivity : Activity() {
         super.onDestroy()
         try {
             backend.release()
-            repository.close()
+            // Drains pending saves, then closes the driver as its last task.
+            store.shutdown()
         } catch (_: Throwable) {
             // Ignore cleanup errors
         }

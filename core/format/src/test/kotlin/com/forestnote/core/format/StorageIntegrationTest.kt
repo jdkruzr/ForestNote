@@ -10,8 +10,10 @@ import kotlin.test.assertTrue
 /**
  * Integration tests for storage persistence across repository instances.
  *
- * Verifies AC2.1-2.4: Auto-save (AC2.1), restore after kill/relaunch (AC2.2),
- * serialization fidelity (AC2.3), and corrupted database recovery (AC2.4).
+ * Covers v1 AC2.1-2.4 (auto-save, restore after kill/relaunch, serialization
+ * fidelity, corrupted database recovery) and the persistence-ulid relaunch scope:
+ * whole-stroke erase (AC3.2), pixel-split fragments (AC3.3), and clear (AC3.4) all
+ * survive reopening on the same driver.
  *
  * Uses shared JdbcSqliteDriver(IN_MEMORY) with separate NotebookRepository instances
  * to verify that data persists across repository lifecycle boundaries. Each cross-instance
@@ -106,11 +108,11 @@ class StorageIntegrationTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
 
         val repo1 = NotebookRepository.forTesting(driver)
-        val id1 = repo1.saveStroke(stroke1)
+        repo1.saveStroke(stroke1)
         repo1.saveStroke(stroke2)
         repo1.saveStroke(stroke3)
 
-        repo1.deleteStroke(id1)
+        repo1.deleteStroke(stroke1.id)
 
         val subStroke1 = Stroke(points = listOf(StrokePoint(10, 20, 100, 1000L)))
         val subStroke2 = Stroke(points = listOf(StrokePoint(11, 21, 101, 1001L)))
@@ -122,10 +124,10 @@ class StorageIntegrationTest {
         val loadedStrokes = repo2.loadStrokes()
 
         assertEquals(4, loadedStrokes.size, "Should have stroke2, stroke3, and 2 sub-strokes (AC2.1, AC2.2)")
-        assertEquals(stroke2.points, loadedStrokes[0].points, "Stroke 2 should be first")
-        assertEquals(stroke3.points, loadedStrokes[1].points, "Stroke 3 should be second")
-        assertEquals(subStroke1.points, loadedStrokes[2].points, "Sub-stroke 1 should be third")
-        assertEquals(subStroke2.points, loadedStrokes[3].points, "Sub-stroke 2 should be fourth")
+        assertEquals(stroke2.id, loadedStrokes[0].id, "Stroke 2 should be first")
+        assertEquals(stroke3.id, loadedStrokes[1].id, "Stroke 3 should be second")
+        assertEquals(subStroke1.id, loadedStrokes[2].id, "Sub-stroke 1 should be third")
+        assertEquals(subStroke2.id, loadedStrokes[3].id, "Sub-stroke 2 should be fourth")
 
         driver.close()
     }
@@ -170,6 +172,75 @@ class StorageIntegrationTest {
         driver.close()
     }
 
+    /**
+     * Whole-stroke erase survives relaunch (AC2.4 storage half, AC3.2):
+     * save two strokes, applyErase removing one, reopen on the same driver and
+     * confirm the erased stroke does not reappear.
+     */
+    @Test
+    fun wholeStrokeEraseSurvivesRelaunch() {
+        val keep = Stroke(points = listOf(StrokePoint(10, 10, 500, 1L)))
+        val erased = Stroke(points = listOf(StrokePoint(20, 20, 500, 2L)))
+
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo1 = NotebookRepository.forTesting(driver)
+        repo1.saveStroke(keep)
+        repo1.saveStroke(erased)
+
+        repo1.applyErase(removedIds = listOf(erased.id), added = emptyList())
+
+        val repo2 = NotebookRepository.openExisting(driver)
+        val loaded = repo2.loadStrokes()
+        assertEquals(1, loaded.size, "only the kept stroke survives the relaunch (AC3.2)")
+        assertEquals(keep.id, loaded[0].id, "kept stroke present by stable id")
+        assertTrue(loaded.none { it.id == erased.id }, "erased stroke does not resurrect (AC2.4/AC3.2)")
+
+        driver.close()
+    }
+
+    /**
+     * Pixel-erase split survives relaunch (AC3.3):
+     * persist applyErase(remove original, add two fragments), reopen, and confirm
+     * both fragments are present and the original is gone.
+     */
+    @Test
+    fun pixelSplitFragmentsSurviveRelaunch() {
+        val original = Stroke(points = listOf(StrokePoint(0, 0, 500, 0L), StrokePoint(100, 0, 500, 1L)))
+        val fragA = Stroke(points = listOf(StrokePoint(0, 0, 500, 0L), StrokePoint(40, 0, 500, 1L)))
+        val fragB = Stroke(points = listOf(StrokePoint(60, 0, 500, 2L), StrokePoint(100, 0, 500, 3L)))
+
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo1 = NotebookRepository.forTesting(driver)
+        repo1.saveStroke(original)
+
+        repo1.applyErase(removedIds = listOf(original.id), added = listOf(fragA, fragB))
+
+        val repo2 = NotebookRepository.openExisting(driver)
+        val loaded = repo2.loadStrokes()
+        assertEquals(2, loaded.size, "two surviving fragments after split (AC3.3)")
+        assertTrue(loaded.none { it.id == original.id }, "original stroke gone after split (AC3.3)")
+        assertTrue(loaded.any { it.id == fragA.id }, "fragment A present (AC3.3)")
+        assertTrue(loaded.any { it.id == fragB.id }, "fragment B present (AC3.3)")
+
+        driver.close()
+    }
+
+    /** Clear → empty page after relaunch (AC3.4). */
+    @Test
+    fun clearLeavesEmptyPageAfterRelaunch() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo1 = NotebookRepository.forTesting(driver)
+        repo1.saveStroke(Stroke(points = listOf(StrokePoint(1, 1, 100, 1L))))
+        repo1.saveStroke(Stroke(points = listOf(StrokePoint(2, 2, 200, 2L))))
+
+        repo1.clearPage()
+
+        val repo2 = NotebookRepository.openExisting(driver)
+        assertEquals(0, repo2.loadStrokes().size, "page is empty after clear + relaunch (AC3.4)")
+
+        driver.close()
+    }
+
     /** Corrupted database recovery (AC2.4): forTesting creates valid empty repo. */
     @Test
     fun corruptedDatabaseRecoveryCreatesValidRepository() {
@@ -180,8 +251,7 @@ class StorageIntegrationTest {
         assertEquals(0, strokes.size, "Recovered database should be empty (AC2.4)")
 
         val stroke = Stroke(points = listOf(StrokePoint(1, 2, 3, 4L)))
-        val id = repo.saveStroke(stroke)
-        assertTrue(id > 0, "Should be able to save to recovered database (AC2.4)")
+        repo.saveStroke(stroke)
 
         val loadedStrokes = repo.loadStrokes()
         assertEquals(1, loadedStrokes.size, "Should have saved stroke (AC2.4)")

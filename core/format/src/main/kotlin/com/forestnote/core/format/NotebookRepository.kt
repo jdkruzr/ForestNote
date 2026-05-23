@@ -5,6 +5,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
+import com.forestnote.core.ink.Ulid
 
 /**
  * Storage facade for .forestnote notebook files.
@@ -16,7 +17,7 @@ class NotebookRepository private constructor(
     private val driver: SqlDriver,
     private val db: NotebookDatabase
 ) {
-    private var currentPageId: Long = -1
+    private var currentPageId: String = ""
 
     companion object {
         private const val DEFAULT_FILENAME = "default.forestnote"
@@ -71,33 +72,39 @@ class NotebookRepository private constructor(
         if (page != null) {
             currentPageId = page.id
         } else {
+            val id = Ulid.generate()
             db.notebookQueries.insertPage(
+                id = id,
                 sort_order = 0,
                 created_at = System.currentTimeMillis()
             )
-            currentPageId = db.notebookQueries.lastInsertRowId().executeAsOne()
+            currentPageId = id
         }
     }
 
     /**
      * Save a completed stroke. Called on pen-up for auto-save (AC2.1).
-     * Returns the database ID of the inserted stroke.
+     * The stroke carries its own client-minted ULID; z is assigned as the next
+     * paint order for the page (AC5.1).
      */
-    fun saveStroke(stroke: Stroke): Long {
-        val blob = StrokeSerializer.encode(stroke.points)
+    fun saveStroke(stroke: Stroke) {
+        val z = db.notebookQueries.nextZForPage(currentPageId).executeAsOne()
         db.notebookQueries.insertStroke(
+            id = stroke.id,
             page_id = currentPageId,
             color = stroke.color.toLong(),
             pen_width_min = stroke.penWidthMin.toLong(),
             pen_width_max = stroke.penWidthMax.toLong(),
-            points = blob,
+            points = StrokeSerializer.encode(stroke.points),
+            z = z,
             created_at = System.currentTimeMillis()
         )
-        return db.notebookQueries.lastInsertRowId().executeAsOne()
     }
 
     /**
-     * Load all strokes for the current page. Used on app restore (AC2.2).
+     * Load all strokes for the current page, ordered by z ascending (AC5.2).
+     * Used on app restore (AC2.2). Ordering is encoded by the query's ORDER BY z;
+     * the Stroke model deliberately carries no z field — list order is the order.
      */
     fun loadStrokes(): List<Stroke> {
         return db.notebookQueries.getStrokesForPage(currentPageId)
@@ -114,35 +121,36 @@ class NotebookRepository private constructor(
     }
 
     /**
-     * Delete a single stroke by ID. Used by stroke eraser.
+     * Delete a single stroke by its stable ULID. Used by stroke eraser.
      */
-    fun deleteStroke(strokeId: Long) {
+    fun deleteStroke(strokeId: String) {
         db.notebookQueries.deleteStroke(strokeId)
     }
 
     /**
      * Apply an erase reconciliation in a single transaction: delete the given
-     * stroke ids and insert the given replacement strokes. Returns the new ids of
-     * the inserted strokes, in order. Batching into one transaction (one commit)
-     * keeps pixel-erase fragmentation from becoming N separate disk writes.
+     * stroke ids and insert the given replacement strokes (each carrying its own
+     * ULID from reconcileErase), assigning each a sequential z. Batching into one
+     * transaction (one commit) keeps pixel-erase fragmentation from becoming N
+     * separate disk writes.
      */
-    fun applyErase(removedIds: List<Long>, added: List<Stroke>): List<Long> {
-        val newIds = mutableListOf<Long>()
+    fun applyErase(removedIds: List<String>, added: List<Stroke>) {
         db.transaction {
             removedIds.forEach { id -> db.notebookQueries.deleteStroke(id) }
             added.forEach { stroke ->
+                val z = db.notebookQueries.nextZForPage(currentPageId).executeAsOne()
                 db.notebookQueries.insertStroke(
+                    id = stroke.id,
                     page_id = currentPageId,
                     color = stroke.color.toLong(),
                     pen_width_min = stroke.penWidthMin.toLong(),
                     pen_width_max = stroke.penWidthMax.toLong(),
                     points = StrokeSerializer.encode(stroke.points),
+                    z = z,
                     created_at = System.currentTimeMillis()
                 )
-                newIds.add(db.notebookQueries.lastInsertRowId().executeAsOne())
             }
         }
-        return newIds
     }
 
     /**

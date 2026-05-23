@@ -26,27 +26,23 @@ class ApplyEraseTest {
     fun applyEraseRemovesAndAddsInOneTransaction() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val repo = NotebookRepository.forTesting(driver)
-        val keepId = repo.saveStroke(stroke(0))
-        val eraseId = repo.saveStroke(stroke(100))
+        val keep = stroke(0)
+        val erase = stroke(100)
+        repo.saveStroke(keep)
+        repo.saveStroke(erase)
         val fragmentA = stroke(200)
         val fragmentB = stroke(300)
 
-        val newIds = repo.applyErase(
-            removedIds = listOf(eraseId),
+        repo.applyErase(
+            removedIds = listOf(erase.id),
             added = listOf(fragmentA, fragmentB)
         )
 
         val strokes = repo.loadStrokes()
-        // Identify strokes by their (reuse-stable) first-point x rather than by id:
-        // SQLite may recycle the deleted row's id for a freshly inserted fragment.
-        assertEquals(2, newIds.size, "two fragments inserted -> two new ids")
         assertEquals(3, strokes.size, "one deleted, two added -> keep + 2 fragments")
-        assertTrue(strokes.any { it.points.first().x == 0 }, "untouched stroke remains")
-        assertTrue(strokes.none { it.points.first().x == 100 }, "erased stroke's content is gone")
-        assertEquals(
-            2,
-            strokes.count { it.points.first().x == 200 || it.points.first().x == 300 },
-            "both fragments present"
-        )
+        assertTrue(strokes.any { it.id == keep.id }, "untouched stroke remains (by stable id)")
+        assertTrue(strokes.none { it.id == erase.id }, "erased stroke is gone (by stable id)")
+        assertTrue(strokes.any { it.id == fragmentA.id }, "fragment A present")
+        assertTrue(strokes.any { it.id == fragmentB.id }, "fragment B present")
     }
 }

@@ -3,14 +3,14 @@ package com.forestnote.core.ink
 /**
  * An immutable, completed stroke ready for storage and rendering.
  *
- * @param id Database ID (0 for unsaved strokes)
+ * @param id Stable ULID identity, minted at creation (so there is no "unsaved" state)
  * @param points Ordered list of points in virtual coordinate space
  * @param color Stroke color as ARGB int
  * @param penWidthMin Minimum pen width in virtual units (at zero pressure)
  * @param penWidthMax Maximum pen width in virtual units (at full pressure)
  */
 data class Stroke(
-    val id: Long = 0,
+    val id: String = Ulid.generate(),
     val points: List<StrokePoint>,
     val color: Int = COLOR_BLACK,
     val penWidthMin: Int = DEFAULT_WIDTH_MIN,
