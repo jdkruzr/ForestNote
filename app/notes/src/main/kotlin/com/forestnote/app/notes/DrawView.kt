@@ -20,6 +20,11 @@ import com.forestnote.core.ink.Tool
 import kotlin.math.max
 import kotlin.math.min
 
+// pattern: Imperative Shell
+// View orchestration: touch input, bitmap rendering, backend + NotebookStore I/O.
+// The companion's `shouldAcceptToolType` and `mergeStrokes` are pure Functional Core
+// islands (unit-tested without Android).
+
 /**
  * Drawing view using the WritingSurface fast ink path for AiPaper,
  * with fallback to standard canvas rendering on other devices.

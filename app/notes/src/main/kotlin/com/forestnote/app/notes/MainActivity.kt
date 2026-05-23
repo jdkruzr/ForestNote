@@ -15,6 +15,10 @@ import java.io.FileWriter
 import java.io.PrintWriter
 import java.util.Date
 
+// pattern: Imperative Shell
+// Activity lifecycle orchestration: wires backend, NotebookStore, and DrawView; no
+// business logic (delegated to core modules and NotebookStore).
+
 /**
  * Main app entry point. Wires together backend, storage, and drawing view.
  *
