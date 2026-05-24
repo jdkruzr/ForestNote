@@ -188,6 +188,101 @@ class NotebookStoreTest {
         store.shutdown()
     }
 
+    // AC4.1: switchPage loads only the target page's strokes; switching back returns the original.
+    @Test
+    fun switchPageLoadsTargetPageStrokesInIsolation() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+
+        val original = horizontalStroke()
+        store.save(original)
+
+        // Capture the bootstrap page id via listPages, then create + switch to a new page.
+        val originalPageId = awaitResult<String> { cb ->
+            store.listPages { _, activePageId -> cb(activePageId) }
+        }
+        val newPageId = awaitResult<String> { cb -> store.createPage { cb(it) } }
+
+        val onNewPage = awaitResult<List<Stroke>> { cb -> store.switchPage(newPageId) { cb(it) } }
+        assertTrue(onNewPage.isEmpty(), "the new page has no strokes")
+
+        val backOnOriginal = awaitResult<List<Stroke>> { cb -> store.switchPage(originalPageId) { cb(it) } }
+        assertEquals(listOf(original.id), backOnOriginal.map { it.id }, "the original page's stroke returns")
+
+        store.shutdown()
+    }
+
+    // AC4.2: switchNotebook activates the new notebook and loads its (empty) active page.
+    @Test
+    fun switchNotebookActivatesNewNotebookAndPage() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+        // Put a stroke in the bootstrap notebook so "empty after switch" is meaningful.
+        store.save(horizontalStroke())
+
+        val newNotebookId = awaitResult<String> { cb -> store.createNotebook("B") { cb(it) } }
+        val strokesInB = awaitResult<List<Stroke>> { cb -> store.switchNotebook(newNotebookId) { cb(it) } }
+        assertTrue(strokesInB.isEmpty(), "the new notebook's active page starts empty")
+
+        // The active notebook is now B.
+        val activeNotebookId = awaitResult<String> { cb ->
+            store.listNotebooks { _, active -> cb(active) }
+        }
+        assertEquals(newNotebookId, activeNotebookId, "the active notebook is the newly-switched one")
+
+        store.shutdown()
+    }
+
+    // AC4.4: a save enqueued before a switchPage lands on the original page (single-thread FIFO).
+    @Test
+    fun saveBeforeSwitchAppliesToOriginalPage() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+
+        val originalPageId = awaitResult<String> { cb ->
+            store.listPages { _, activePageId -> cb(activePageId) }
+        }
+        val otherPageId = awaitResult<String> { cb -> store.createPage { cb(it) } }
+
+        // Enqueue the save, then immediately a switch to the other page. FIFO means the
+        // save runs first — against the original page — before the switch takes effect.
+        val saved = horizontalStroke()
+        store.save(saved)
+        store.switchPage(otherPageId) { /* drains the switch */ }
+
+        // Switch back to the original page: the saved stroke must be there.
+        val backOnOriginal = awaitResult<List<Stroke>> { cb -> store.switchPage(originalPageId) { cb(it) } }
+        assertEquals(
+            listOf(saved.id),
+            backOnOriginal.map { it.id },
+            "the save enqueued before the switch landed on the original page"
+        )
+
+        store.shutdown()
+    }
+
+    /** Block until a single async store callback fires, returning its value. */
+    private fun <T> awaitResult(invoke: ((T) -> Unit) -> Unit): T {
+        val latch = CountDownLatch(1)
+        var captured: T? = null
+        invoke { value -> captured = value; latch.countDown() }
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "store callback should fire within 5s")
+        @Suppress("UNCHECKED_CAST")
+        return captured as T
+    }
+
     /** Holds a captured thread + a latch for a single async callback. */
     private class CallbackLatch {
         @Volatile var captured: Thread? = null
