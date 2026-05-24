@@ -188,6 +188,32 @@ class NotebookCrudTest {
         repo.close()
     }
 
+    /** Defensive (AC3.2/AC3.3): deleting a page that belongs to another notebook is refused. */
+    @Test
+    fun deletePageFromOtherNotebookRefused() {
+        val repo = NotebookRepository.forTesting(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY))
+        val a = repo.currentNotebookId()
+
+        // Create notebook B and capture one of its page ids.
+        val b = repo.createNotebook("B")
+        repo.switchNotebook(b)
+        val pageInB = repo.currentPageId()
+
+        // Back in A (which has >1 page so the only-page guard wouldn't trip), try to
+        // delete B's page — it must be refused and remain.
+        repo.switchNotebook(a)
+        repo.createPage() // A now has 2 pages
+        assertFalse(repo.deletePage(pageInB), "deleting a foreign notebook's page is refused")
+
+        repo.switchNotebook(b)
+        assertTrue(
+            repo.listPagesForCurrentNotebook().any { it.id == pageInB },
+            "B's page survives the refused cross-notebook delete"
+        )
+
+        repo.close()
+    }
+
     /** AC3.4: pages are scoped per notebook — a page in A never appears in B's list. */
     @Test
     fun pagesScopedPerNotebook() {

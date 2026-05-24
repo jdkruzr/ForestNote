@@ -68,7 +68,7 @@ class NotebookRepository private constructor(
 
         /**
          * Open an existing database without running schema creation (for testing
-         * persistence across driver instances — Phase 8 integration tests).
+         * persistence across driver instances on a shared in-memory/file driver).
          */
         fun openExisting(driver: SqlDriver): NotebookRepository {
             val db = NotebookDatabase(driver)
@@ -189,12 +189,15 @@ class NotebookRepository private constructor(
     }
 
     /**
-     * Delete a page in the current notebook. Refuses to delete the only page (AC3.3).
+     * Delete a page in the current notebook. Refuses to delete the only page (AC3.3)
+     * or a page that does not belong to the current notebook (defensive — the only-page
+     * guard counts the current notebook, so a foreign id must never reach the delete).
      * Returns true if deleted. Deletes the page and its strokes transactionally (AC3.2).
      */
     fun deletePage(pageId: String): Boolean {
-        val count = db.notebookQueries.countPagesForNotebook(currentNotebookId).executeAsOne()
-        if (count <= 1L) return false
+        val pages = db.notebookQueries.listPagesForNotebook(currentNotebookId).executeAsList()
+        if (pages.none { it.id == pageId }) return false
+        if (pages.size <= 1) return false
         db.transaction {
             db.notebookQueries.deleteStrokesForPage(pageId)
             db.notebookQueries.deletePage(pageId)
