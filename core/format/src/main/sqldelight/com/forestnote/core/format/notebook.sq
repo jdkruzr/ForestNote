@@ -1,9 +1,19 @@
--- Page table: each notebook has one or more pages
-CREATE TABLE page (
-    id TEXT PRIMARY KEY NOT NULL,
+-- Notebook table: a named, ordered collection of pages.
+CREATE TABLE notebook (
+    id TEXT PRIMARY KEY NOT NULL,         -- client-minted ULID
+    name TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );
+
+-- Page table: each page belongs to exactly one notebook.
+CREATE TABLE page (
+    id TEXT PRIMARY KEY NOT NULL,
+    notebook_id TEXT NOT NULL REFERENCES notebook(id) ON DELETE CASCADE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX page_notebook_id ON page(notebook_id);
 
 -- Stroke table: vector strokes on a page.
 -- id is a client-minted ULID; z is explicit paint/sort order within a page.
@@ -18,16 +28,56 @@ CREATE TABLE stroke (
     z INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );
-
 CREATE INDEX stroke_page_id ON stroke(page_id);
 
--- V1 queries --
+-- Singleton "where the user left off" (id is always 0).
+CREATE TABLE app_state (
+    id INTEGER PRIMARY KEY NOT NULL CHECK (id = 0),
+    active_notebook_id TEXT,
+    active_page_id TEXT
+);
 
-getFirstPage:
-SELECT * FROM page ORDER BY sort_order ASC LIMIT 1;
+-- notebooks --
+
+listNotebooks:
+SELECT * FROM notebook ORDER BY sort_order ASC, created_at ASC;
+
+insertNotebook:
+INSERT INTO notebook(id, name, sort_order, created_at) VALUES (?, ?, ?, ?);
+
+renameNotebook:
+UPDATE notebook SET name = ? WHERE id = ?;
+
+deleteNotebook:
+DELETE FROM notebook WHERE id = ?;
+
+nextNotebookSortOrder:
+SELECT coalesce(max(sort_order), -1) + 1 FROM notebook;
+
+-- pages (scoped by notebook) --
+
+listPagesForNotebook:
+SELECT * FROM page WHERE notebook_id = ? ORDER BY sort_order ASC, created_at ASC;
 
 insertPage:
-INSERT INTO page(id, sort_order, created_at) VALUES (?, ?, ?);
+INSERT INTO page(id, notebook_id, sort_order, created_at) VALUES (?, ?, ?, ?);
+
+nextPageSortOrder:
+SELECT coalesce(max(sort_order), -1) + 1 FROM page WHERE notebook_id = ?;
+
+countPagesForNotebook:
+SELECT count(*) FROM page WHERE notebook_id = ?;
+
+deletePage:
+DELETE FROM page WHERE id = ?;
+
+deletePagesForNotebook:
+DELETE FROM page WHERE notebook_id = ?;
+
+deleteStrokesForNotebook:
+DELETE FROM stroke WHERE page_id IN (SELECT id FROM page WHERE notebook_id = ?);
+
+-- strokes --
 
 getStrokesForPage:
 SELECT * FROM stroke WHERE page_id = ? ORDER BY z ASC;
@@ -44,3 +94,11 @@ DELETE FROM stroke WHERE id = ?;
 
 deleteStrokesForPage:
 DELETE FROM stroke WHERE page_id = ?;
+
+-- app_state --
+
+getAppState:
+SELECT * FROM app_state WHERE id = 0;
+
+upsertAppState:
+INSERT OR REPLACE INTO app_state(id, active_notebook_id, active_page_id) VALUES (0, ?, ?);
