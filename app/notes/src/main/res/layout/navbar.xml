@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/navbar"
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:orientation="horizontal"
+    android:gravity="center"
+    android:background="@color/white"
+    android:elevation="0dp">
+
+    <ImageButton
+        android:id="@+id/btn_prev_page"
+        android:layout_width="48dp"
+        android:layout_height="match_parent"
+        android:src="@android:drawable/ic_media_previous"
+        android:contentDescription="Previous page"
+        android:background="?attr/selectableItemBackground"
+        android:scaleType="center" />
+
+    <TextView
+        android:id="@+id/page_indicator"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:text="1 / 1"
+        android:textSize="14sp"
+        android:textColor="@color/black"
+        android:maxLines="1"
+        android:background="?attr/selectableItemBackground" />
+
+    <ImageButton
+        android:id="@+id/btn_next_page"
+        android:layout_width="48dp"
+        android:layout_height="match_parent"
+        android:src="@android:drawable/ic_media_next"
+        android:contentDescription="Next page"
+        android:background="?attr/selectableItemBackground"
+        android:scaleType="center" />
+
+</LinearLayout>

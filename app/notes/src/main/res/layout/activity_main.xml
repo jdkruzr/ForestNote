@@ -5,6 +5,9 @@
     android:orientation="vertical"
     android:background="@color/white">
 
+    <!-- Page navigation bar: prev / "N / M" indicator / next -->
+    <include layout="@layout/navbar" />
+
     <!-- Drawing canvas fills available space -->
     <com.forestnote.app.notes.DrawView
         android:id="@+id/draw_view"
