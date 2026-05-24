@@ -8,6 +8,24 @@
     android:background="@color/white"
     android:elevation="0dp">
 
+    <TextView
+        android:id="@+id/btn_notebooks"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:maxWidth="160dp"
+        android:gravity="center_vertical"
+        android:clickable="true"
+        android:focusable="true"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:text="Notebook"
+        android:textSize="14sp"
+        android:textColor="@color/black"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:contentDescription="Notebooks"
+        android:background="?attr/selectableItemBackground" />
+
     <ImageButton
         android:id="@+id/btn_prev_page"
         android:layout_width="48dp"
