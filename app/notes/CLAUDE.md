@@ -39,7 +39,7 @@ Main application module that wires together ink rendering, storage, and user int
 - `ToolBar.kt` - UI toolbar with tool button state management
 - `ToolSelectionLogic.kt` - Pure tool selection state machine
 - `PageNavigationLogic.kt` - Pure page navigation (index, prev/next bounds, "N / M" label, can-delete)
-- `res/layout/navbar.xml` - Nav bar: notebook label / prev / "N / M" indicator / next
+- `res/layout/navbar.xml` - Unified top bar: notebook label / prev (◀) / "N / M" indicator / next (▶) / `<include>` of `toolbar.xml` (the five tools); a 1dp divider in `activity_main.xml` separates it from the canvas. `toolbar.xml` (root id `@id/toolbar`) is included here rather than placed at the bottom.
 
 ## Gotchas
 - ViwoodsBackend cast in onResume: only safe because isEInk guards it
