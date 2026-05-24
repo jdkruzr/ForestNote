@@ -1,19 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The five tools. Each cell (LinearLayout) is the clickable hitbox so a tap on
+  either the icon OR its word selects the tool; the ImageButton inside is
+  non-clickable so touches fall through to the cell. ToolBar.kt wires listeners
+  and the selection highlight onto the cells.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/toolbar"
     android:layout_width="match_parent"
-    android:layout_height="60dp"
+    android:layout_height="30dp"
     android:orientation="horizontal"
     android:gravity="center"
     android:background="@color/white"
     android:elevation="0dp">
 
     <LinearLayout
+        android:id="@+id/cell_pen"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
         android:orientation="vertical"
-        android:gravity="center">
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="Pen"
+        android:background="?attr/selectableItemBackground">
 
         <ImageButton
             android:id="@+id/btn_pen"
@@ -21,27 +32,34 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:src="@drawable/ic_pen"
-            android:contentDescription="Pen"
-            android:background="?attr/selectableItemBackground"
-            android:scaleType="center" />
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="no"
+            android:background="@null"
+            android:scaleType="fitCenter" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Pen"
             android:gravity="center"
-            android:textSize="10sp"
+            android:textSize="9sp"
             android:textColor="@color/black"
             android:maxLines="1"
-            android:paddingBottom="3dp" />
+            android:paddingBottom="2dp" />
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/cell_stroke_eraser"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
         android:orientation="vertical"
-        android:gravity="center">
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="Stroke Eraser"
+        android:background="?attr/selectableItemBackground">
 
         <ImageButton
             android:id="@+id/btn_stroke_eraser"
@@ -49,27 +67,34 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:src="@drawable/ic_stroke_eraser"
-            android:contentDescription="Stroke Eraser"
-            android:background="?attr/selectableItemBackground"
-            android:scaleType="center" />
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="no"
+            android:background="@null"
+            android:scaleType="fitCenter" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Stroke"
             android:gravity="center"
-            android:textSize="10sp"
+            android:textSize="9sp"
             android:textColor="@color/black"
             android:maxLines="1"
-            android:paddingBottom="3dp" />
+            android:paddingBottom="2dp" />
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/cell_pixel_eraser"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
         android:orientation="vertical"
-        android:gravity="center">
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="Pixel Eraser"
+        android:background="?attr/selectableItemBackground">
 
         <ImageButton
             android:id="@+id/btn_pixel_eraser"
@@ -77,27 +102,34 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:src="@drawable/ic_pixel_eraser"
-            android:contentDescription="Pixel Eraser"
-            android:background="?attr/selectableItemBackground"
-            android:scaleType="center" />
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="no"
+            android:background="@null"
+            android:scaleType="fitCenter" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Pixel"
             android:gravity="center"
-            android:textSize="10sp"
+            android:textSize="9sp"
             android:textColor="@color/black"
             android:maxLines="1"
-            android:paddingBottom="3dp" />
+            android:paddingBottom="2dp" />
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/cell_clear"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
         android:orientation="vertical"
-        android:gravity="center">
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="Clear"
+        android:background="?attr/selectableItemBackground">
 
         <ImageButton
             android:id="@+id/btn_clear"
@@ -105,27 +137,34 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:src="@drawable/ic_clear"
-            android:contentDescription="Clear"
-            android:background="?attr/selectableItemBackground"
-            android:scaleType="center" />
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="no"
+            android:background="@null"
+            android:scaleType="fitCenter" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Clear"
             android:gravity="center"
-            android:textSize="10sp"
+            android:textSize="9sp"
             android:textColor="@color/black"
             android:maxLines="1"
-            android:paddingBottom="3dp" />
+            android:paddingBottom="2dp" />
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/cell_refresh"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
         android:orientation="vertical"
-        android:gravity="center">
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="Refresh"
+        android:background="?attr/selectableItemBackground">
 
         <ImageButton
             android:id="@+id/btn_refresh"
@@ -133,19 +172,21 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:src="@drawable/ic_refresh"
-            android:contentDescription="Refresh"
-            android:background="?attr/selectableItemBackground"
-            android:scaleType="center" />
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="no"
+            android:background="@null"
+            android:scaleType="fitCenter" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Refresh"
             android:gravity="center"
-            android:textSize="10sp"
+            android:textSize="9sp"
             android:textColor="@color/black"
             android:maxLines="1"
-            android:paddingBottom="3dp" />
+            android:paddingBottom="2dp" />
     </LinearLayout>
 
 </LinearLayout>
