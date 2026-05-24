@@ -3,7 +3,6 @@ package com.forestnote.app.notes
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.view.View
-import android.widget.ImageButton
 import com.forestnote.core.ink.Tool
 
 /**
@@ -23,11 +22,12 @@ class ToolBar(
     private var activeClearCallback: (() -> Unit)? = null
     private var activeRefreshCallback: (() -> Unit)? = null
 
-    private val btnPen: ImageButton = root.findViewById(R.id.btn_pen)
-    private val btnStrokeEraser: ImageButton = root.findViewById(R.id.btn_stroke_eraser)
-    private val btnPixelEraser: ImageButton = root.findViewById(R.id.btn_pixel_eraser)
-    private val btnClear: ImageButton = root.findViewById(R.id.btn_clear)
-    private val btnRefresh: ImageButton = root.findViewById(R.id.btn_refresh)
+    // Each tool's clickable hitbox is the whole cell (icon + word), not just the icon.
+    private val btnPen: View = root.findViewById(R.id.cell_pen)
+    private val btnStrokeEraser: View = root.findViewById(R.id.cell_stroke_eraser)
+    private val btnPixelEraser: View = root.findViewById(R.id.cell_pixel_eraser)
+    private val btnClear: View = root.findViewById(R.id.cell_clear)
+    private val btnRefresh: View = root.findViewById(R.id.cell_refresh)
 
     private val buttonMap = mapOf(
         btnPen to Tool.Pen,

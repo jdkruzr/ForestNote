@@ -5,6 +5,15 @@
     android:orientation="vertical"
     android:background="@color/white">
 
+    <!-- Unified top bar: notebook / page nav / tools -->
+    <include layout="@layout/navbar" />
+
+    <!-- Border line: marks the bottom edge of the bar / top of the canvas -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/black" />
+
     <!-- Drawing canvas fills available space -->
     <com.forestnote.app.notes.DrawView
         android:id="@+id/draw_view"
@@ -12,8 +21,5 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:background="@color/white" />
-
-    <!-- Toolbar at bottom -->
-    <include layout="@layout/toolbar" />
 
 </LinearLayout>

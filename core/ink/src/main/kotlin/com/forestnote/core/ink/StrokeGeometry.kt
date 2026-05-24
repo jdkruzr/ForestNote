@@ -16,11 +16,11 @@ object StrokeGeometry {
      *
      * @param survivingStrokes the complete new in-memory stroke list (for bitmap redraw)
      * @param removedStrokeIds DB ids of strokes that must be deleted
-     * @param addedStrokes new strokes (pixel-eraser split survivors, id=0) to persist
+     * @param addedStrokes new strokes (pixel-eraser split survivors, each with a fresh ULID) to persist
      */
     data class EraseResult(
         val survivingStrokes: List<Stroke>,
-        val removedStrokeIds: List<Long>,
+        val removedStrokeIds: List<String>,
         val addedStrokes: List<Stroke>
     )
 
@@ -32,19 +32,22 @@ object StrokeGeometry {
      * @param radius eraser radius in virtual units
      * @param eraseWholeStrokes true = stroke eraser (drop any touched stroke);
      *                          false = pixel eraser (split touched strokes)
+     * @param newId factory for fresh fragment ids; defaults to [Ulid.generate] but is
+     *              injectable so tests can pin deterministic ids
      */
     fun reconcileErase(
         strokes: List<Stroke>,
         eraserPath: List<Pair<Int, Int>>,
         radius: Int,
-        eraseWholeStrokes: Boolean
+        eraseWholeStrokes: Boolean,
+        newId: () -> String = Ulid::generate
     ): EraseResult {
         if (eraserPath.size < 2) {
             return EraseResult(strokes, emptyList(), emptyList())
         }
 
         val surviving = mutableListOf<Stroke>()
-        val removedIds = mutableListOf<Long>()
+        val removedIds = mutableListOf<String>()
         val added = mutableListOf<Stroke>()
 
         for (stroke in strokes) {
@@ -75,8 +78,9 @@ object StrokeGeometry {
                 continue
             }
 
-            // The stroke was touched: it must be removed from the DB...
-            if (stroke.id != 0L) removedIds.add(stroke.id)
+            // The stroke was touched: it must be removed from the DB. Every stroke
+            // now carries a stable ULID, so this is unconditional.
+            removedIds.add(stroke.id)
 
             if (eraseWholeStrokes) {
                 // Stroke eraser: drop the whole stroke. Nothing replaces it.
@@ -84,7 +88,7 @@ object StrokeGeometry {
             }
 
             // Pixel eraser: keep runs of points joined by surviving segments.
-            val subStrokes = collectSurvivingRuns(stroke, erased)
+            val subStrokes = collectSurvivingRuns(stroke, erased, newId)
             added.addAll(subStrokes)
             surviving.addAll(subStrokes)
         }
@@ -95,16 +99,20 @@ object StrokeGeometry {
     /**
      * Collect maximal runs of points connected by non-erased segments into sub-strokes.
      * Only runs with 2+ points become strokes (AC1.6: no empty/one-point ghosts).
-     * Sub-strokes are new (id=0) and inherit the original stroke's style.
+     * Each sub-stroke gets a fresh id from [newId] and inherits the original stroke's style.
      */
-    private fun collectSurvivingRuns(stroke: Stroke, erasedSegments: BooleanArray): List<Stroke> {
+    private fun collectSurvivingRuns(
+        stroke: Stroke,
+        erasedSegments: BooleanArray,
+        newId: () -> String
+    ): List<Stroke> {
         val runs = mutableListOf<Stroke>()
         var current = mutableListOf(stroke.points[0])
         for (si in erasedSegments.indices) {
             val next = stroke.points[si + 1]
             if (erasedSegments[si]) {
                 if (current.size >= 2) {
-                    runs.add(stroke.copy(id = 0L, points = current.toList()))
+                    runs.add(stroke.copy(id = newId(), points = current.toList()))
                 }
                 current = mutableListOf(next)
             } else {
@@ -112,7 +120,7 @@ object StrokeGeometry {
             }
         }
         if (current.size >= 2) {
-            runs.add(stroke.copy(id = 0L, points = current.toList()))
+            runs.add(stroke.copy(id = newId(), points = current.toList()))
         }
         return runs
     }

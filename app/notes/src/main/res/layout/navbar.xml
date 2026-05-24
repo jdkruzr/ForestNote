@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Unified top bar: notebook name / prev (◀) / "N / M" / next (▶) / the five tools.
+  The tool group is included from toolbar.xml (root id @id/toolbar) so ToolBar.kt
+  still finds its buttons unchanged. A 1dp divider below this bar (in
+  activity_main.xml) marks where the drawing surface begins.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/navbar"
+    android:layout_width="match_parent"
+    android:layout_height="30dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="@color/white"
+    android:elevation="0dp">
+
+    <TextView
+        android:id="@+id/btn_notebooks"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:maxWidth="160dp"
+        android:gravity="center_vertical"
+        android:clickable="true"
+        android:focusable="true"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:text="Notebook"
+        android:textSize="14sp"
+        android:textColor="@color/black"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:contentDescription="Notebooks"
+        android:background="?attr/selectableItemBackground" />
+
+    <ImageButton
+        android:id="@+id/btn_prev_page"
+        android:layout_width="48dp"
+        android:layout_height="match_parent"
+        android:src="@drawable/ic_arrow_left"
+        android:contentDescription="Previous page"
+        android:background="?attr/selectableItemBackground"
+        android:scaleType="center" />
+
+    <TextView
+        android:id="@+id/page_indicator"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:minWidth="48dp"
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:text="1 / 1"
+        android:textSize="14sp"
+        android:textColor="@color/black"
+        android:maxLines="1"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:background="?attr/selectableItemBackground" />
+
+    <ImageButton
+        android:id="@+id/btn_next_page"
+        android:layout_width="48dp"
+        android:layout_height="match_parent"
+        android:src="@drawable/ic_arrow_right"
+        android:contentDescription="Next page"
+        android:background="?attr/selectableItemBackground"
+        android:scaleType="center" />
+
+    <!-- The five tool buttons fill the remaining width. -->
+    <include
+        layout="@layout/toolbar"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1" />
+
+</LinearLayout>
