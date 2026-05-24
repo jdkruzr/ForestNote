@@ -63,6 +63,18 @@ Activity/View/threading integration.
 - [x] **AC7.x: Gap-drawn ink preserved** - Immediately on launch (before/while older ink loads), draw new strokes → they are preserved alongside the loaded ink, ordered after it, with no duplicates. _(verified on-device 2026-05-23)_
 - [x] **AC7.4 / AC8.1 / AC8.2: Failures don't crash** - If a load/save/erase fails, the canvas stays usable and the app does not crash. _(covered by automated `NotebookStoreTest` failure-injection tests; not practically reproducible on-device, so accepted as automated-only)_
 
+## Multiple Notebooks with Multiple Pages — Phase 2: Multi-page Navigation (multi-notebook-multi-page)
+
+On-device checks for the navigation UI that can't be unit-tested here (no Robolectric).
+The page index math is covered by `PageNavigationLogic` tests and the switch/CRUD
+storage behavior by `core:format` / `NotebookStore` tests; these verify the full
+Activity/View integration.
+
+- [ ] **AC6.1: Prev/next navigation** - Create several pages, then use the prev/next buttons → they move between pages of the current notebook in order, and the "N / M" indicator updates to the correct position/count.
+- [ ] **AC6.3: Page picker** - Tap the "N / M" indicator → the picker lists the pages; tapping one switches to it and loads the right ink. "New Page" adds and opens a blank page. "Delete Current Page" is hidden when only one page exists and deletes (falling back to a surviving page) otherwise.
+- [ ] **AC6.4: Switch commits stroke + no ghosting** - Draw a stroke, then tap next/prev → the just-drawn stroke is kept (not lost), and the new page renders cleanly without e-ink ghosting from the previous page.
+- [ ] **AC5.1: Reopen on last-viewed page** - With 3 pages, navigate to page 2 and draw, then kill + relaunch the app → it reopens on page 2 showing that page's ink (not page 1).
+
 ## Test Sign-Off
 
 - Date tested: 2026-05-23 (persistence-ulid: all on-device ACs verified — AC1.2, AC1.3, AC2.4/AC3.2, AC3.1, AC3.3, AC3.4, AC7.x; failure paths AC7.4/AC8.1/AC8.2 covered by automated tests)
