@@ -75,6 +75,17 @@ Activity/View integration.
 - [ ] **AC6.4: Switch commits stroke + no ghosting** - Draw a stroke, then tap next/prev → the just-drawn stroke is kept (not lost), and the new page renders cleanly without e-ink ghosting from the previous page.
 - [ ] **AC5.1: Reopen on last-viewed page** - With 3 pages, navigate to page 2 and draw, then kill + relaunch the app → it reopens on page 2 showing that page's ink (not page 1).
 
+## Multiple Notebooks with Multiple Pages — Phase 3: Notebook Picker (multi-notebook-multi-page)
+
+On-device checks for the notebook picker (UI-only, no Robolectric). The underlying
+list/switch/CRUD storage is covered by `core:format` / `NotebookStore` tests.
+
+- [ ] **AC7.1: Notebook switch** - Tap the notebook label → the picker lists notebooks; selecting one switches to it and loads its active/first page (correct ink, indicator updates, label shows the chosen notebook's name).
+- [ ] **AC7.2: New Notebook** - "New Notebook" → enter a name → a fresh notebook is created and opened with one blank page; the label shows the new name.
+- [ ] **AC7.2: Rename** - "Edit Current" → "Rename" → change the name → the label updates to the new name; reopening the picker shows the renamed entry.
+- [ ] **AC7.2: Delete (confirms first)** - "Edit Current" → "Delete" → confirm → the notebook and all its pages are removed, the app switches to a remaining notebook; "Delete" is unavailable when only one notebook exists (never zero notebooks).
+- [ ] **End-to-end: reopen last-active notebook+page** - Create 2 notebooks with distinct pages/ink, switch between them landing on a non-default notebook+page, kill + relaunch → the app reopens the last-active notebook and page with the right ink.
+
 ## Test Sign-Off
 
 - Date tested: 2026-05-23 (persistence-ulid: all on-device ACs verified — AC1.2, AC1.3, AC2.4/AC3.2, AC3.1, AC3.3, AC3.4, AC7.x; failure paths AC7.4/AC8.1/AC8.2 covered by automated tests)
