@@ -31,8 +31,9 @@ class NotebookRepository private constructor(
         private const val DEFAULT_FILENAME = "default.forestnote"
 
         /**
-         * Open or create the default v1 notebook.
-         * If the file is corrupted, deletes it and starts fresh (AC2.4).
+         * Open or create the library database, bootstrapping ≥1 notebook/≥1 page
+         * and restoring the active context from `app_state`.
+         * If the file is corrupted, deletes it and starts fresh.
          */
         fun open(context: Context): NotebookRepository {
             return try {
@@ -44,7 +45,7 @@ class NotebookRepository private constructor(
                 val db = NotebookDatabase(driver)
                 NotebookRepository(driver, db).also { it.bootstrap() }
             } catch (e: Throwable) {
-                // Corrupted database — delete and recreate (AC2.4)
+                // Corrupted database — delete and recreate.
                 context.deleteDatabase(DEFAULT_FILENAME)
                 val driver = AndroidSqliteDriver(
                     schema = NotebookDatabase.Schema,
@@ -207,9 +208,9 @@ class NotebookRepository private constructor(
     }
 
     /**
-     * Save a completed stroke. Called on pen-up for auto-save (AC2.1).
+     * Save a completed stroke. Called on pen-up for auto-save.
      * The stroke carries its own client-minted ULID; z is assigned as the next
-     * paint order for the page (AC5.1).
+     * paint order for the current page.
      */
     fun saveStroke(stroke: Stroke) {
         val z = db.notebookQueries.nextZForPage(currentPageId).executeAsOne()
@@ -226,8 +227,8 @@ class NotebookRepository private constructor(
     }
 
     /**
-     * Load all strokes for the current page, ordered by z ascending (AC5.2).
-     * Used on app restore (AC2.2). Ordering is encoded by the query's ORDER BY z;
+     * Load all strokes for the current page, ordered by z ascending.
+     * Used on app restore. Ordering is encoded by the query's ORDER BY z;
      * the Stroke model deliberately carries no z field — list order is the order.
      */
     fun loadStrokes(): List<Stroke> {
