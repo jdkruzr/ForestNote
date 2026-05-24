@@ -7,16 +7,24 @@ import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.Ulid
 
+/** Public notebook metadata so the UI never touches generated row types. */
+data class NotebookMeta(val id: String, val name: String)
+
+/** Public page metadata so the UI never touches generated row types. */
+data class PageMeta(val id: String, val createdAt: Long)
+
 /**
- * Storage facade for .forestnote notebook files.
+ * Storage facade for the .forestnote library file.
  *
- * V1 operates on a single implicit notebook with one page.
- * Opens the database on construction, creates schema if new.
+ * One SQLite file holds notebook → page → stroke. The repository tracks the
+ * active notebook + page, bootstraps at least one of each on open, and restores
+ * the active context from `app_state`.
  */
 class NotebookRepository private constructor(
     private val driver: SqlDriver,
     private val db: NotebookDatabase
 ) {
+    private var currentNotebookId: String = ""
     private var currentPageId: String = ""
 
     companion object {
@@ -34,7 +42,7 @@ class NotebookRepository private constructor(
                     name = DEFAULT_FILENAME
                 )
                 val db = NotebookDatabase(driver)
-                NotebookRepository(driver, db).also { it.ensurePage() }
+                NotebookRepository(driver, db).also { it.bootstrap() }
             } catch (e: Throwable) {
                 // Corrupted database — delete and recreate (AC2.4)
                 context.deleteDatabase(DEFAULT_FILENAME)
@@ -44,7 +52,7 @@ class NotebookRepository private constructor(
                     name = DEFAULT_FILENAME
                 )
                 val db = NotebookDatabase(driver)
-                NotebookRepository(driver, db).also { it.ensurePage() }
+                NotebookRepository(driver, db).also { it.bootstrap() }
             }
         }
 
@@ -54,7 +62,7 @@ class NotebookRepository private constructor(
         fun forTesting(driver: SqlDriver): NotebookRepository {
             NotebookDatabase.Schema.create(driver)
             val db = NotebookDatabase(driver)
-            return NotebookRepository(driver, db).also { it.ensurePage() }
+            return NotebookRepository(driver, db).also { it.bootstrap() }
         }
 
         /**
@@ -63,23 +71,139 @@ class NotebookRepository private constructor(
          */
         fun openExisting(driver: SqlDriver): NotebookRepository {
             val db = NotebookDatabase(driver)
-            return NotebookRepository(driver, db).also { it.ensurePage() }
+            return NotebookRepository(driver, db).also { it.bootstrap() }
         }
     }
 
-    private fun ensurePage() {
-        val page = db.notebookQueries.getFirstPage().executeAsOneOrNull()
-        if (page != null) {
-            currentPageId = page.id
-        } else {
-            val id = Ulid.generate()
-            db.notebookQueries.insertPage(
-                id = id,
-                sort_order = 0,
-                created_at = System.currentTimeMillis()
-            )
-            currentPageId = id
+    /**
+     * Ensure at least one notebook with at least one page exists, and restore the
+     * active notebook + page from `app_state` (AC1.3, AC5.1, AC5.2). Falls back to
+     * the first available when the recorded ids no longer exist.
+     */
+    private fun bootstrap() {
+        val now = System.currentTimeMillis()
+        // Ensure at least one notebook.
+        var notebooks = db.notebookQueries.listNotebooks().executeAsList()
+        if (notebooks.isEmpty()) {
+            val nid = Ulid.generate()
+            db.notebookQueries.insertNotebook(nid, "Notebook 1", 0, now)
+            notebooks = db.notebookQueries.listNotebooks().executeAsList()
         }
+        val state = db.notebookQueries.getAppState().executeAsOneOrNull()
+        // Restore active notebook from app_state if it still exists (AC5.1/AC5.2).
+        currentNotebookId = state?.active_notebook_id
+            ?.takeIf { id -> notebooks.any { it.id == id } }
+            ?: notebooks.first().id
+        // Ensure the active notebook has at least one page.
+        var pages = db.notebookQueries.listPagesForNotebook(currentNotebookId).executeAsList()
+        if (pages.isEmpty()) {
+            val pid = Ulid.generate()
+            db.notebookQueries.insertPage(pid, currentNotebookId, 0, now)
+            pages = db.notebookQueries.listPagesForNotebook(currentNotebookId).executeAsList()
+        }
+        currentPageId = state?.active_page_id
+            ?.takeIf { id -> pages.any { it.id == id } }
+            ?: pages.first().id
+        persistActive()
+    }
+
+    private fun persistActive() {
+        db.notebookQueries.upsertAppState(currentNotebookId, currentPageId)
+    }
+
+    fun currentNotebookId(): String = currentNotebookId
+    fun currentPageId(): String = currentPageId
+
+    fun listNotebooks(): List<NotebookMeta> =
+        db.notebookQueries.listNotebooks().executeAsList().map { NotebookMeta(it.id, it.name) }
+
+    fun listPagesForCurrentNotebook(): List<PageMeta> =
+        db.notebookQueries.listPagesForNotebook(currentNotebookId).executeAsList()
+            .map { PageMeta(it.id, it.created_at) }
+
+    /** Switch the active page within the current notebook and persist it (AC4.1, AC4.3). */
+    fun switchPage(pageId: String) {
+        currentPageId = pageId
+        persistActive()
+    }
+
+    /** Switch the active notebook, loading its active/first page (AC4.2, AC4.3). */
+    fun switchNotebook(notebookId: String) {
+        currentNotebookId = notebookId
+        var pages = db.notebookQueries.listPagesForNotebook(notebookId).executeAsList()
+        if (pages.isEmpty()) {
+            val pid = Ulid.generate()
+            db.notebookQueries.insertPage(pid, notebookId, 0, System.currentTimeMillis())
+            pages = db.notebookQueries.listPagesForNotebook(notebookId).executeAsList()
+        }
+        currentPageId = pages.first().id
+        persistActive()
+    }
+
+    /** Create a notebook appended at sort_order = max+1, with one initial page (AC2.1). */
+    fun createNotebook(name: String): String {
+        val nid = Ulid.generate()
+        val now = System.currentTimeMillis()
+        val so = db.notebookQueries.nextNotebookSortOrder().executeAsOne()
+        db.transaction {
+            db.notebookQueries.insertNotebook(nid, name, so, now)
+            // A notebook always has at least one page.
+            db.notebookQueries.insertPage(Ulid.generate(), nid, 0, now)
+        }
+        return nid
+    }
+
+    /** Rename a notebook (AC2.2). */
+    fun renameNotebook(notebookId: String, name: String) {
+        db.notebookQueries.renameNotebook(name, notebookId)
+    }
+
+    /**
+     * Delete a notebook and everything under it in one transaction (no FK-cascade
+     * reliance, AC2.3). If the active notebook is deleted, switch to a remaining one;
+     * if none remain, bootstrap a fresh notebook + page (never zero notebooks, AC2.4).
+     */
+    fun deleteNotebook(notebookId: String) {
+        db.transaction {
+            db.notebookQueries.deleteStrokesForNotebook(notebookId)
+            db.notebookQueries.deletePagesForNotebook(notebookId)
+            db.notebookQueries.deleteNotebook(notebookId)
+        }
+        if (currentNotebookId == notebookId) {
+            val remaining = db.notebookQueries.listNotebooks().executeAsList()
+            if (remaining.isEmpty()) {
+                bootstrap() // recreates a fresh notebook + page and persists app_state
+            } else {
+                switchNotebook(remaining.first().id)
+            }
+        }
+    }
+
+    /** Append a page to the current notebook; returns its id. Caller decides whether to switch (AC3.1). */
+    fun createPage(): String {
+        val pid = Ulid.generate()
+        val so = db.notebookQueries.nextPageSortOrder(currentNotebookId).executeAsOne()
+        db.notebookQueries.insertPage(pid, currentNotebookId, so, System.currentTimeMillis())
+        return pid
+    }
+
+    /**
+     * Delete a page in the current notebook. Refuses to delete the only page (AC3.3).
+     * Returns true if deleted. Deletes the page and its strokes transactionally (AC3.2).
+     */
+    fun deletePage(pageId: String): Boolean {
+        val count = db.notebookQueries.countPagesForNotebook(currentNotebookId).executeAsOne()
+        if (count <= 1L) return false
+        db.transaction {
+            db.notebookQueries.deleteStrokesForPage(pageId)
+            db.notebookQueries.deletePage(pageId)
+        }
+        if (currentPageId == pageId) {
+            currentPageId = db.notebookQueries.listPagesForNotebook(currentNotebookId)
+                .executeAsList().first().id
+            persistActive()
+        }
+        return true
     }
 
     /**
