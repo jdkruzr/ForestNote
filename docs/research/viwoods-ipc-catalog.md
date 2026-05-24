@@ -59,10 +59,84 @@ Notes:
   manifest provider** — source-only/runtime, ignore for IPC.
 - `me.jessyan.autosize.InitProvider` / `androidx.startup.*` / `JLatexMathInitProvider` etc. are
   third-party init shims (`exported=false`), excluded.
-- To learn each provider's read surface, read its `query()`/`getType()` in the jadx tree (e.g.
-  `WiNote/sources/com/wisky/libnotewriter/provider/FileInfoProvider.java`) and its `UriMatcher` paths.
-  Per the interop doc, `ScheduleInfoProvider.insert()` is **not** a task-write API (only an internal
-  unpack flag) — don't assume `insert`/`update` are open just because `query` is.
+- The `query()`/`insert()`/`call()`/`openFile()` bodies were read for all of these — see §1.1 for the
+  verified capability of each (don't assume `insert`/`update` work just because `query` does; most are
+  no-op stubs).
+
+### 1.1 What each provider can actually do (verified by reading the code, 2026-05-24)
+
+Read the decompiled `query`/`insert`/`update`/`delete`/`call`/`openFile` bodies + traced backing
+tables. **No provider implements `call()`; almost all `insert`/`update`/`delete` are no-op stubs.**
+Capability is gated on the provider being reachable (all are `exported=true` per §1; manifest-verified).
+
+**WiNote**
+- **FileInfoProvider** — *read-only metadata catalog.* `query()` over Room tables: `tb_file_info`
+  (notebook/page/folder index — `id,pid,userId,fileName,description,creationTime,fileType,fileState,
+  totalPageSize,…`) and `tb_page_resource` (per-page asset index — `fileName` like `mainBmp_*.png`/
+  `path_*.json`/`Thumbnail_*.png`, `resourceType`, geometry). All-table reads are forced
+  `WHERE userId = <device WiNote account>`. A `note_password` path returns the user's **note password**
+  in a MatrixCursor. insert/update/delete are no-ops. → *ForestNote can read WiNote's note/page catalog
+  (rows, not the bitmap/stroke files), scoped to the signed-in account.*
+- **PdfNoteProvider** — *write-only, marginal.* Only `insert()`: give it a local `path` to a `.pdf`
+  (must already be readable by WiNote) and it registers that PDF as a new WiNote PDF-template note. No read.
+- **ScreenShotProvider** — *read-only raster preview.* `openFile(screenshot/<noteId>)` → RO fd to a page
+  **thumbnail/screenshot PNG**; `openFile(video/<id>)` → an audio file. Flattened image, **not strokes**.
+- **ImportFileProvider** — *the useful one: note import/export.* `insert(isPackage=true)` packages an
+  existing WiNote note to zip/PNG/PDF; `insert(isPackage=false, downloadPath=…)` unpacks a `.note`
+  archive into WiNote; `openFile(path)` reads it back (RO). (Exact `isPackage=true` value-keys didn't
+  decompile.) → *the cleanest path for `.note` interop with WiNote.*
+
+**Wschedule**
+- **ScheduleInfoProvider** — *read-only.* `query`: `monthDayList`, `dayPageList/<fileName>`,
+  `supportImportList`, `associationInfo?appType=&fileId=&pageId=` (is-this-note-linked), `dailySetting`.
+  **To-dos are NOT here.** `insert` is the internal `isPackage` zip/unzip staging only (confirms interop doc).
+- **DailyProvider** — *read to-dos + one real write smuggled into `query`.* `query(todo?year=&month=&day=
+  &pageIndex=&pageSize=)` → `tb_schedule_to_do_info` rows `[id,sort,content,type,year,month,day,toDo,time]`;
+  also `monthDay`/`file`/`event` calendar reads. **Write:** `query(updateTodo?id=&status=)` flips an
+  existing to-do's done-flag + timestamp by id (throws if id absent). Cannot create a to-do or edit its
+  content/date. → *ForestNote can read daily to-dos and toggle one done; not create them.*
+
+**Wmemo**
+- **MemoFileInfoProvider** — *read-only.* `query`: memo file list + metadata
+  (`id,userId,fileName,creationTime,lastModifiedTime,fileType,isTodoFinished,hasRemind,remindTime,
+  pageFileName`), `supportImportList`, `queryOneById`; `openFile` RO. `insert` is `isPackage` zip/unzip
+  staging only. No memo create/edit.
+
+**wiskyAi** (no provider offers prompt-in / answer-out — see callout below)
+- **AiProvider** — *UI poke only.* `update(/update)` fires internal LocalBroadcasts that start/cancel
+  **voice recording** / raise the floating assistant UI. **No text prompt param, no result returned.**
+- **ShareContentProvider** — *generic file read.* `openFile(path)` RO; not AI-specific.
+- **ChatRecordProvider** — *near-useless.* `query(/voice_assistant_status)` with a known
+  `voiceAssistantID` → one `voiceAssistantStatus` string. Not chat content.
+- **ChatDataProvider** — *read full AI chat history (permission-gated).* Requires `READ_CHAT_DATA`.
+  Opens `…/com.wisky.wiskyai/databases/ChatDBFactory.db` RO: `chat_repository` →
+  `ChatRepositoryBean` (`id,userId,seesionId,title,content,createTime,isSelected,classifyStyle,
+  classifyName`); `content_blocks[?chatId=]` → `ContentBlockEntity` (`id,chatId,content,imgUrl`) =
+  the message transcript. Read-only; **no generation path.**
+
+**setting**
+- **UserInfoContentProvider** — ⚠️ *reads the account identity + auth token, unauthenticated.*
+  `query(Login_user_info)` → `{user_id,user_mail,user_phone,user_phone_areacode,user_token}` where
+  `user_token` is the session auth token from `SPFUtil("TOKEN")`. **Security flag: `exported=true`, no
+  permission → any installed app can read the Viwoods account token.** (Not something to *use* — worth
+  knowing the device leaks it.)
+- **ChangeServerContentProvider** — *read-only* current backend base URL (name is a misnomer; no write).
+- **FlashModeContentProvider** — *read + real device write.* `query` returns the e-ink flash/refresh-mode
+  table; `update()` changes the refresh mode **and adjusts front-light brightness** (`setBrightness`).
+  Caveat: `onCreate()` returns `false` — may not load; verify on-device.
+- **SettingImeProvider** — *read/write* the keyboard/IME language pref (benign).
+- **SettingOtaProvider** — *read-only* one boolean: has-successful-OTA-history.
+
+**WiskyLauncher**
+- **FloatBarViewProvider** — *launcher UI control via `query`.* `query(subtype/<n>)` shows/hides the
+  launcher floating bar (`10000` = hide). Returns null; pure side-effect RPC. No data.
+- **FloatWindowContentProvider** — *dead.* Not an exported manifest provider, and its toggle handler is
+  an empty no-op. Nothing.
+
+> **The AI generation engine is NOT reachable through any ContentProvider.** wiskyAi's providers only
+> poke the voice UI (`AiProvider`) or read stored chat history (`ChatDataProvider`). There is no
+> "send prompt → get answer" provider/`call()` anywhere. The real programmatic AI/recognition path is
+> the **`com.wisky.ocr` bound service** (§2), still pending an off-device pull to verify bindability.
 
 ## 2. The OCR / recognition bound service (cross-process AIDL) — the lead worth chasing
 
@@ -137,8 +211,7 @@ not interop-relevant.)
 ## Verification gaps / next steps
 1. **Pull `com.wisky.ocr`** off the device and decode its manifest + `ImageProcessingService` —
    decides whether on-device OCR reuse is feasible for a non-system-signed app. (Highest value.)
-2. **Read the open providers' `query()`** in the jadx trees to document their actual columns/paths
-   before designing any import feature.
+2. ~~Read the open providers' `query()` to document columns/paths~~ — **done, see §1.1.**
 3. Optionally pull `com.wisky.ocr`'s AIDL `.aidl`/stubs to reuse verbatim if binding proves allowed.
 
 See [[viwoods-app-dev-project]] for project state, [[device-access]] for the device pull loop, and
