@@ -293,4 +293,55 @@ class ToolBarLogicTest {
         assertEquals(PenVariant.FOUNTAIN, logic.activePenVariant(),
             "Pen variant is remembered while another tool is active")
     }
+
+    // ========== Erase group tests (A3) ==========
+    // library-and-tools.AC1.4 (erase variants), AC1.5 (per-group last-used across switches)
+
+    @Test
+    fun `defaultEraseVariantIsStrokeEraser`() {
+        assertEquals(Tool.StrokeEraser, ToolSelectionLogic().activeEraseVariant(),
+            "Default erase variant should be StrokeEraser")
+    }
+
+    @Test
+    fun `selectingEraseVariantSetsVariantAndActivatesIt`() {
+        val logic = ToolSelectionLogic()
+        logic.selectEraseVariant(Tool.PixelEraser)
+
+        assertEquals(Tool.PixelEraser, logic.activeEraseVariant(),
+            "Selected erase variant becomes active")
+        assertEquals(Tool.PixelEraser, logic.getActiveTool(),
+            "Selecting an erase variant activates that eraser")
+    }
+
+    @Test
+    fun `eraseGroupActivatesLastUsedEraseVariant`() {
+        val logic = ToolSelectionLogic()
+        logic.selectEraseVariant(Tool.PixelEraser)
+        logic.selectTool(Tool.Pen)
+
+        logic.selectEraseGroup()
+
+        assertEquals(Tool.PixelEraser, logic.getActiveTool(),
+            "Erase group restores the last-used erase variant")
+    }
+
+    @Test
+    fun `penAndEraseGroupsEachRememberTheirLastVariantAcrossSwitches`() {
+        // AC1.5: Pen → Erase → Pen restores the previous pen variant (and vice versa).
+        val logic = ToolSelectionLogic()
+
+        logic.selectPenVariant(PenVariant.FINELINER)
+        logic.selectEraseVariant(Tool.PixelEraser)
+
+        logic.selectPenGroup()
+        assertEquals(Tool.Pen, logic.getActiveTool(), "pen group activates Pen")
+        assertEquals(PenVariant.FINELINER, logic.activePenVariant(),
+            "pen group restores last pen variant")
+
+        logic.selectEraseGroup()
+        assertEquals(Tool.PixelEraser, logic.getActiveTool(),
+            "erase group restores last erase variant")
+        assertEquals(Tool.PixelEraser, logic.activeEraseVariant())
+    }
 }

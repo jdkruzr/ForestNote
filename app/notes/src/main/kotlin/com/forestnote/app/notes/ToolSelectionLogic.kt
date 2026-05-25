@@ -50,6 +50,29 @@ class ToolSelectionLogic(
     /** The currently-remembered pen variant. */
     fun activePenVariant(): PenVariant = penVariant
 
+    /** Last-used variant of the erase group (StrokeEraser or PixelEraser). */
+    private var eraseVariant: Tool = Tool.StrokeEraser
+
+    /**
+     * Activate the erase group with its last-used variant (e.g. tapping the
+     * Erase cell). Does not change the remembered variant.
+     */
+    fun selectEraseGroup() {
+        selectTool(eraseVariant)
+    }
+
+    /**
+     * Choose a specific erase variant (StrokeEraser or PixelEraser). Remembers
+     * it and activates that eraser.
+     */
+    fun selectEraseVariant(variant: Tool) {
+        eraseVariant = variant
+        selectTool(variant)
+    }
+
+    /** The currently-remembered erase variant. */
+    fun activeEraseVariant(): Tool = eraseVariant
+
     /**
      * Trigger a clear action without changing the active tool.
      * Invokes the clear callback.
