@@ -84,6 +84,34 @@ class NotebookStoreTest {
         store.shutdown()
     }
 
+    // AC2.4: deleteStrokes removes exactly the given ids from the page (cut/delete path).
+    @Test
+    fun deleteStrokesRemovesOnlyTheGivenIds() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+        val keep = horizontalStroke()
+        val dropA = horizontalStroke()
+        val dropB = horizontalStroke()
+        store.save(keep); store.save(dropA); store.save(dropB)
+
+        var doneCalled = false
+        store.deleteStrokes(listOf(dropA.id, dropB.id)) { doneCalled = true }
+
+        // Single-thread FIFO: this load runs after the delete completes.
+        var remaining: List<Stroke>? = null
+        val latch = CountDownLatch(1)
+        store.load { remaining = it; latch.countDown() }
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "load callback should fire")
+        assertEquals(setOf(keep.id), remaining!!.map { it.id }.toSet(),
+            "only the complement of the deleted ids remains on the page")
+        assertTrue(doneCalled, "deleteStrokes invokes its onDone callback")
+        store.shutdown()
+    }
+
     // AC6.1: a save enqueued immediately before shutdown() completes before the driver closes.
     @Test
     fun saveDrainsBeforeShutdownCloses() {

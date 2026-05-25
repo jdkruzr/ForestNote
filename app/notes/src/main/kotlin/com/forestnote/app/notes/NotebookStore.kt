@@ -58,6 +58,19 @@ class NotebookStore(
     }
 
     /**
+     * Delete a set of strokes (lasso Cut/Delete) off-thread via the same transactional
+     * delete-and-insert as the eraser (added = none). `applyErase` bumps the notebook's
+     * modified_at inside the transaction, so cut/delete keeps the "Nh ago" label honest.
+     */
+    fun deleteStrokes(ids: List<String>, onDone: () -> Unit = {}) {
+        executor.execute {
+            runCatching { repo?.applyErase(ids, emptyList()) }
+                .onFailure { android.util.Log.e(TAG, "failed to delete strokes", it) }
+            poster { onDone() }
+        }
+    }
+
+    /**
      * Reconcile an erase gesture (geometry + transaction) off-thread, then post the
      * resulting diff (removed ids + surviving fragments) to the main thread.
      */
