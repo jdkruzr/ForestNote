@@ -50,7 +50,7 @@
     </LinearLayout>
 
     <LinearLayout
-        android:id="@+id/cell_stroke_eraser"
+        android:id="@+id/cell_erase"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
@@ -58,11 +58,11 @@
         android:gravity="center"
         android:clickable="true"
         android:focusable="true"
-        android:contentDescription="Stroke Eraser"
+        android:contentDescription="Erase"
         android:background="?attr/selectableItemBackground">
 
         <ImageButton
-            android:id="@+id/btn_stroke_eraser"
+            android:id="@+id/btn_erase"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
@@ -76,42 +76,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Stroke"
-            android:gravity="center"
-            android:textSize="9sp"
-            android:textColor="@color/black"
-            android:maxLines="1"
-            android:paddingBottom="2dp" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/cell_pixel_eraser"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:clickable="true"
-        android:focusable="true"
-        android:contentDescription="Pixel Eraser"
-        android:background="?attr/selectableItemBackground">
-
-        <ImageButton
-            android:id="@+id/btn_pixel_eraser"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:src="@drawable/ic_pixel_eraser"
-            android:clickable="false"
-            android:focusable="false"
-            android:importantForAccessibility="no"
-            android:background="@null"
-            android:scaleType="fitCenter" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Pixel"
+            android:text="Erase ▾"
             android:gravity="center"
             android:textSize="9sp"
             android:textColor="@color/black"
