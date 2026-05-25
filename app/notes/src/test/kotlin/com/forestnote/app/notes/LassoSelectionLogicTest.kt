@@ -123,4 +123,30 @@ class LassoSelectionLogicTest {
         // the accepted, documented tradeoff (library-and-tools.AC2.2).
         assertEquals(setOf("u"), LassoSelectionLogic.selectedIds(listOf(u), hollowLasso))
     }
+
+    // --- A7 Task 3: bounds (menu positioning input) ---
+
+    @Test
+    fun boundsOverMultipleStrokesIsTheMinMaxRect() {
+        val a = stroke("a", 10 to 20, 30 to 40)
+        val b = stroke("b", 5 to 100, 80 to 25)
+        assertEquals(
+            LassoSelectionLogic.Bounds(minX = 5, minY = 20, maxX = 80, maxY = 100),
+            LassoSelectionLogic.bounds(listOf(a, b))
+        )
+    }
+
+    @Test
+    fun boundsOfEmptyListIsNull() {
+        assertEquals(null, LassoSelectionLogic.bounds(emptyList()))
+    }
+
+    @Test
+    fun boundsOfSinglePointIsZeroAreaRect() {
+        val s = stroke("a", 42 to 17)
+        assertEquals(
+            LassoSelectionLogic.Bounds(42, 17, 42, 17),
+            LassoSelectionLogic.bounds(listOf(s))
+        )
+    }
 }

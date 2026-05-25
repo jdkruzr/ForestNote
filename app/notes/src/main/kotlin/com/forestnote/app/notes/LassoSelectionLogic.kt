@@ -16,6 +16,9 @@ object LassoSelectionLogic {
     /** A point in virtual coordinate space. */
     data class Point(val x: Int, val y: Int)
 
+    /** Axis-aligned bounding box over a set of strokes, in virtual coordinates. */
+    data class Bounds(val minX: Int, val minY: Int, val maxX: Int, val maxY: Int)
+
     /**
      * Ray-casting (even-odd) point-in-polygon test. A polygon with fewer than 3
      * vertices encloses no area, so nothing is ever "inside" it.
@@ -60,5 +63,24 @@ object LassoSelectionLogic {
         return strokes.filter { pointInPolygon(centroid(it), polygon) }
             .map { it.id }
             .toSet()
+    }
+
+    /** Min/max virtual rect over every point of every stroke; null when there are no points. */
+    fun bounds(strokes: List<Stroke>): Bounds? {
+        var minX = Int.MAX_VALUE
+        var minY = Int.MAX_VALUE
+        var maxX = Int.MIN_VALUE
+        var maxY = Int.MIN_VALUE
+        var any = false
+        for (s in strokes) {
+            for (p in s.points) {
+                any = true
+                if (p.x < minX) minX = p.x
+                if (p.y < minY) minY = p.y
+                if (p.x > maxX) maxX = p.x
+                if (p.y > maxY) maxY = p.y
+            }
+        }
+        return if (any) Bounds(minX, minY, maxX, maxY) else null
     }
 }
