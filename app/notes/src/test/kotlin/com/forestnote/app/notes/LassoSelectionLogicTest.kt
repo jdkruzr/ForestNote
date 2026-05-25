@@ -149,4 +149,68 @@ class LassoSelectionLogicTest {
             LassoSelectionLogic.bounds(listOf(s))
         )
     }
+
+    // --- A8 Task 1: pasteOffset (per-axis in-bounds clamp) ---
+
+    @Test
+    fun pasteOffsetWellWithinPageIsThreeHundredEachAxis() {
+        val b = LassoSelectionLogic.Bounds(100, 100, 200, 200)
+        assertEquals(300 to 300, LassoSelectionLogic.pasteOffset(b, maxX = 10_000, maxY = 13_333))
+    }
+
+    @Test
+    fun pasteOffsetShrinksXNearRightEdgeIndependentOfY() {
+        // maxX + 300 would overflow: only 100 units of room on X; Y has plenty.
+        val b = LassoSelectionLogic.Bounds(100, 100, 9_900, 200)
+        assertEquals(100 to 300, LassoSelectionLogic.pasteOffset(b, maxX = 10_000, maxY = 13_333))
+    }
+
+    @Test
+    fun pasteOffsetShrinksYNearBottomEdgeIndependentOfX() {
+        val b = LassoSelectionLogic.Bounds(100, 13_200, 200, 13_300)
+        assertEquals(300 to 33, LassoSelectionLogic.pasteOffset(b, maxX = 10_000, maxY = 13_333))
+    }
+
+    @Test
+    fun pasteOffsetIsZeroWhenFlushToEdge() {
+        val b = LassoSelectionLogic.Bounds(100, 100, 10_000, 13_333)
+        assertEquals(0 to 0, LassoSelectionLogic.pasteOffset(b, maxX = 10_000, maxY = 13_333))
+    }
+
+    // --- A8 Task 2: translate (clone with fresh ids + shifted points) ---
+
+    @Test
+    fun translateClonesWithFreshIdsAndShiftsAllPoints() {
+        val s = Stroke(
+            id = "orig",
+            points = listOf(
+                StrokePoint(10, 20, 400, 5L),
+                StrokePoint(30, 40, 700, 9L),
+                StrokePoint(50, 60, 900, 11L)
+            ),
+            color = 0xFF112233.toInt(),
+            penWidthMin = 4,
+            penWidthMax = 22
+        )
+        var n = 0
+        val out = LassoSelectionLogic.translate(listOf(s), dx = 7, dy = -3) { "new${n++}" }
+        assertEquals(1, out.size)
+        val r = out[0]
+        assertEquals("new0", r.id, "fresh id from the factory")
+        assertEquals(s.color, r.color, "colour preserved")
+        assertEquals(s.penWidthMin, r.penWidthMin, "min width preserved")
+        assertEquals(s.penWidthMax, r.penWidthMax, "max width preserved")
+        assertEquals(
+            listOf(17 to 17, 37 to 37, 57 to 57),
+            r.points.map { it.x to it.y },
+            "every point shifted by (dx, dy)"
+        )
+        assertEquals(listOf(400, 700, 900), r.points.map { it.pressure }, "pressure preserved")
+        assertEquals(listOf(5L, 9L, 11L), r.points.map { it.timestampMs }, "timestamp preserved")
+    }
+
+    @Test
+    fun translateEmptyIsEmpty() {
+        assertEquals(emptyList(), LassoSelectionLogic.translate(emptyList(), 1, 1) { "x" })
+    }
 }
