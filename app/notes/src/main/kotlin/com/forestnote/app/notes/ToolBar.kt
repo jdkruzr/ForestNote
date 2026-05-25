@@ -32,17 +32,19 @@ class ToolBar(
     // Each tool's clickable hitbox is the whole cell (icon + word), not just the icon.
     private val btnFountain: View = root.findViewById(R.id.cell_fountain)
     private val lblFountain: TextView = root.findViewById(R.id.label_fountain)
+    private val btnLasso: View = root.findViewById(R.id.cell_lasso)
     private val btnErase: View = root.findViewById(R.id.cell_erase)
     private val lblErase: TextView = root.findViewById(R.id.label_erase)
     private val btnClear: View = root.findViewById(R.id.cell_clear)
     private val btnRefresh: View = root.findViewById(R.id.cell_refresh)
 
-    // Group cells whose active state is highlighted (Fountain = Pen group; Erase = erasers).
-    private val highlightCells = listOf(btnFountain, btnErase)
+    // Group cells whose active state is highlighted (Fountain = Pen group; Lasso; Erase = erasers).
+    private val highlightCells = listOf(btnFountain, btnLasso, btnErase)
 
     /** Is the given group cell's tool group currently active? */
     private fun isCellActive(cell: View, activeTool: Tool): Boolean = when (cell) {
         btnFountain -> activeTool is Tool.Pen
+        btnLasso -> activeTool is Tool.Lasso
         btnErase -> activeTool is Tool.StrokeEraser || activeTool is Tool.PixelEraser
         else -> false
     }
@@ -68,6 +70,8 @@ class ToolBar(
             logic.selectPenGroup()
             showPenVariantDropdown(btnFountain)
         }
+        // Lasso is a single top-level tool (no variant dropdown).
+        btnLasso.setOnClickListener { logic.selectTool(Tool.Lasso) }
         btnErase.setOnClickListener {
             logic.selectEraseGroup()
             showEraseVariantDropdown(btnErase)

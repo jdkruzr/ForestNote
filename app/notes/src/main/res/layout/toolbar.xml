@@ -52,6 +52,41 @@
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/cell_lasso"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="Lasso"
+        android:background="?attr/selectableItemBackground">
+
+        <ImageButton
+            android:id="@+id/btn_lasso"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:src="@drawable/ic_lasso"
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="no"
+            android:background="@null"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Lasso"
+            android:gravity="center"
+            android:textSize="9sp"
+            android:textColor="@color/black"
+            android:maxLines="1"
+            android:paddingBottom="2dp" />
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/cell_erase"
         android:layout_width="0dp"
         android:layout_height="match_parent"

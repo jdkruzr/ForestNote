@@ -344,4 +344,47 @@ class ToolBarLogicTest {
             "erase group restores last erase variant")
         assertEquals(Tool.PixelEraser, logic.activeEraseVariant())
     }
+
+    // ========== Lasso tool tests (A6) ==========
+    // library-and-tools.AC1.1 (Lasso is a top-level tool)
+
+    @Test
+    fun `selectingLassoSetsActiveTool`() {
+        val logic = ToolSelectionLogic()
+        logic.selectTool(Tool.Lasso)
+        assertEquals(Tool.Lasso, logic.getActiveTool(), "Active tool should be Lasso after selection")
+    }
+
+    @Test
+    fun `lassoThenPenRestoresPen`() {
+        val logic = ToolSelectionLogic()
+        logic.selectTool(Tool.Lasso)
+        assertEquals(Tool.Lasso, logic.getActiveTool())
+
+        logic.selectTool(Tool.Pen)
+        assertEquals(Tool.Pen, logic.getActiveTool(), "Selecting Pen after Lasso restores the pen")
+    }
+
+    @Test
+    fun `lassoIsMutuallyExclusiveWithOtherTools`() {
+        val logic = ToolSelectionLogic()
+        logic.selectTool(Tool.Lasso)
+
+        assertTrue(logic.isToolSelected(Tool.Lasso), "Lasso should be the active tool")
+        assertFalse(logic.isToolSelected(Tool.Pen), "Pen should not be active while Lasso is")
+        assertFalse(logic.isToolSelected(Tool.StrokeEraser), "Eraser should not be active while Lasso is")
+    }
+
+    @Test
+    fun `selectingLassoDoesNotDisturbRememberedVariants`() {
+        // AC1.5: switching to Lasso must not clobber the pen/erase last-used variants.
+        val logic = ToolSelectionLogic()
+        logic.selectPenVariant(PenVariant.FINELINER)
+        logic.selectEraseVariant(Tool.PixelEraser)
+
+        logic.selectTool(Tool.Lasso)
+
+        assertEquals(PenVariant.FINELINER, logic.activePenVariant(), "pen variant remembered")
+        assertEquals(Tool.PixelEraser, logic.activeEraseVariant(), "erase variant remembered")
+    }
 }

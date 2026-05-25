@@ -12,4 +12,7 @@ sealed class Tool {
 
     /** Erase only the touched region, splitting strokes at boundaries. */
     data object PixelEraser : Tool()
+
+    /** Select strokes by drawing a freehand lasso polygon (no ink is written). */
+    data object Lasso : Tool()
 }
