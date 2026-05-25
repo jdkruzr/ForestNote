@@ -22,7 +22,9 @@ data class PageMeta(val id: String, val createdAt: Long)
  */
 class NotebookRepository private constructor(
     private val driver: SqlDriver,
-    private val db: NotebookDatabase
+    private val db: NotebookDatabase,
+    /** Wall-clock source (injectable for deterministic tests; matches Ulid.generate(now=…)). */
+    private val clock: () -> Long
 ) {
     private var currentNotebookId: String = ""
     private var currentPageId: String = ""
@@ -35,7 +37,7 @@ class NotebookRepository private constructor(
          * and restoring the active context from `app_state`.
          * If the file is corrupted, deletes it and starts fresh.
          */
-        fun open(context: Context): NotebookRepository {
+        fun open(context: Context, now: () -> Long = { System.currentTimeMillis() }): NotebookRepository {
             return try {
                 val driver = AndroidSqliteDriver(
                     schema = NotebookDatabase.Schema,
@@ -43,7 +45,7 @@ class NotebookRepository private constructor(
                     name = DEFAULT_FILENAME
                 )
                 val db = NotebookDatabase(driver)
-                NotebookRepository(driver, db).also { it.bootstrap() }
+                NotebookRepository(driver, db, now).also { it.bootstrap() }
             } catch (e: Throwable) {
                 // Corrupted database — delete and recreate.
                 context.deleteDatabase(DEFAULT_FILENAME)
@@ -53,26 +55,32 @@ class NotebookRepository private constructor(
                     name = DEFAULT_FILENAME
                 )
                 val db = NotebookDatabase(driver)
-                NotebookRepository(driver, db).also { it.bootstrap() }
+                NotebookRepository(driver, db, now).also { it.bootstrap() }
             }
         }
 
         /**
          * Create a new repository with schema creation (for testing new databases).
          */
-        fun forTesting(driver: SqlDriver): NotebookRepository {
+        fun forTesting(
+            driver: SqlDriver,
+            now: () -> Long = { System.currentTimeMillis() }
+        ): NotebookRepository {
             NotebookDatabase.Schema.create(driver)
             val db = NotebookDatabase(driver)
-            return NotebookRepository(driver, db).also { it.bootstrap() }
+            return NotebookRepository(driver, db, now).also { it.bootstrap() }
         }
 
         /**
          * Open an existing database without running schema creation (for testing
          * persistence across driver instances on a shared in-memory/file driver).
          */
-        fun openExisting(driver: SqlDriver): NotebookRepository {
+        fun openExisting(
+            driver: SqlDriver,
+            now: () -> Long = { System.currentTimeMillis() }
+        ): NotebookRepository {
             val db = NotebookDatabase(driver)
-            return NotebookRepository(driver, db).also { it.bootstrap() }
+            return NotebookRepository(driver, db, now).also { it.bootstrap() }
         }
     }
 
@@ -82,7 +90,7 @@ class NotebookRepository private constructor(
      * the first available when the recorded ids no longer exist.
      */
     private fun bootstrap() {
-        val now = System.currentTimeMillis()
+        val now = clock()
         // Ensure at least one notebook.
         var notebooks = db.notebookQueries.listNotebooks().executeAsList()
         if (notebooks.isEmpty()) {
@@ -115,6 +123,15 @@ class NotebookRepository private constructor(
     fun currentNotebookId(): String = currentNotebookId
     fun currentPageId(): String = currentPageId
 
+    /** Bump the current notebook's modified_at to now. Call within ink mutations. */
+    private fun touchCurrentNotebook() {
+        db.notebookQueries.touchNotebook(clock(), currentNotebookId)
+    }
+
+    /** The notebook's last-modified timestamp (for the Library + tests). */
+    fun modifiedAtOf(notebookId: String): Long =
+        db.notebookQueries.selectNotebookModifiedAt(notebookId).executeAsOne()
+
     fun listNotebooks(): List<NotebookMeta> =
         db.notebookQueries.listNotebooks().executeAsList().map { NotebookMeta(it.id, it.name) }
 
@@ -144,7 +161,7 @@ class NotebookRepository private constructor(
     /** Create a notebook appended at sort_order = max+1, with one initial page (AC2.1). */
     fun createNotebook(name: String): String {
         val nid = Ulid.generate()
-        val now = System.currentTimeMillis()
+        val now = clock()
         val so = db.notebookQueries.nextNotebookSortOrder().executeAsOne()
         db.transaction {
             db.notebookQueries.insertNotebook(nid, name, so, now, now)
@@ -216,17 +233,20 @@ class NotebookRepository private constructor(
      * paint order for the current page.
      */
     fun saveStroke(stroke: Stroke) {
-        val z = db.notebookQueries.nextZForPage(currentPageId).executeAsOne()
-        db.notebookQueries.insertStroke(
-            id = stroke.id,
-            page_id = currentPageId,
-            color = stroke.color.toLong(),
-            pen_width_min = stroke.penWidthMin.toLong(),
-            pen_width_max = stroke.penWidthMax.toLong(),
-            points = StrokeSerializer.encode(stroke.points),
-            z = z,
-            created_at = System.currentTimeMillis()
-        )
+        db.transaction {
+            val z = db.notebookQueries.nextZForPage(currentPageId).executeAsOne()
+            db.notebookQueries.insertStroke(
+                id = stroke.id,
+                page_id = currentPageId,
+                color = stroke.color.toLong(),
+                pen_width_min = stroke.penWidthMin.toLong(),
+                pen_width_max = stroke.penWidthMax.toLong(),
+                points = StrokeSerializer.encode(stroke.points),
+                z = z,
+                created_at = clock()
+            )
+            touchCurrentNotebook()
+        }
     }
 
     /**
@@ -252,7 +272,10 @@ class NotebookRepository private constructor(
      * Delete a single stroke by its stable ULID. Used by stroke eraser.
      */
     fun deleteStroke(strokeId: String) {
-        db.notebookQueries.deleteStroke(strokeId)
+        db.transaction {
+            db.notebookQueries.deleteStroke(strokeId)
+            touchCurrentNotebook()
+        }
     }
 
     /**
@@ -275,9 +298,10 @@ class NotebookRepository private constructor(
                     pen_width_max = stroke.penWidthMax.toLong(),
                     points = StrokeSerializer.encode(stroke.points),
                     z = z,
-                    created_at = System.currentTimeMillis()
+                    created_at = clock()
                 )
             }
+            touchCurrentNotebook()
         }
     }
 
@@ -285,7 +309,10 @@ class NotebookRepository private constructor(
      * Delete all strokes on the current page. Used by Clear tool.
      */
     fun clearPage() {
-        db.notebookQueries.deleteStrokesForPage(currentPageId)
+        db.transaction {
+            db.notebookQueries.deleteStrokesForPage(currentPageId)
+            touchCurrentNotebook()
+        }
     }
 
     /**
