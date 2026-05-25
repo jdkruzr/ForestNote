@@ -150,33 +150,6 @@ class LassoSelectionLogicTest {
         )
     }
 
-    // --- A8 Task 1: pasteOffset (per-axis in-bounds clamp) ---
-
-    @Test
-    fun pasteOffsetWellWithinPageIsThreeHundredEachAxis() {
-        val b = LassoSelectionLogic.Bounds(100, 100, 200, 200)
-        assertEquals(300 to 300, LassoSelectionLogic.pasteOffset(b, maxX = 10_000, maxY = 13_333))
-    }
-
-    @Test
-    fun pasteOffsetShrinksXNearRightEdgeIndependentOfY() {
-        // maxX + 300 would overflow: only 100 units of room on X; Y has plenty.
-        val b = LassoSelectionLogic.Bounds(100, 100, 9_900, 200)
-        assertEquals(100 to 300, LassoSelectionLogic.pasteOffset(b, maxX = 10_000, maxY = 13_333))
-    }
-
-    @Test
-    fun pasteOffsetShrinksYNearBottomEdgeIndependentOfX() {
-        val b = LassoSelectionLogic.Bounds(100, 13_200, 200, 13_300)
-        assertEquals(300 to 33, LassoSelectionLogic.pasteOffset(b, maxX = 10_000, maxY = 13_333))
-    }
-
-    @Test
-    fun pasteOffsetIsZeroWhenFlushToEdge() {
-        val b = LassoSelectionLogic.Bounds(100, 100, 10_000, 13_333)
-        assertEquals(0 to 0, LassoSelectionLogic.pasteOffset(b, maxX = 10_000, maxY = 13_333))
-    }
-
     // --- A8 Task 2: translate (clone with fresh ids + shifted points) ---
 
     @Test

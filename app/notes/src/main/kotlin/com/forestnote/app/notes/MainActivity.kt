@@ -14,7 +14,6 @@ import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.ink.BackendDetector
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
-import com.forestnote.core.ink.Ulid
 import com.forestnote.core.ink.ViwoodsBackend
 import java.io.FileWriter
 import java.io.PrintWriter
@@ -167,18 +166,18 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Paste the clipboard's strokes onto the current page with fresh ULIDs and a single
-     * in-bounds offset (AC1.6). No-op when the clipboard is empty.
+     * Tapping Paste arms placement (AC1.6): the cell shows "Pasting…" and the next canvas
+     * tap drops the clipboard centred there. Tapping Paste again cancels. No-op when empty.
      */
     private fun paste() {
+        if (drawView.isPasteArmed) {
+            drawView.cancelPaste() // toggle off (its onEnded resets the caption)
+            return
+        }
         val src = clipboard.get()
         if (src.isEmpty()) return
-        val b = LassoSelectionLogic.bounds(src) ?: return
-        val (dx, dy) = LassoSelectionLogic.pasteOffset(
-            b, PageTransform.VIRTUAL_SHORT_AXIS, pageTransform.virtualLongAxis
-        )
-        val pasted = LassoSelectionLogic.translate(src, dx, dy) { Ulid.generate() }
-        drawView.addPastedStrokes(pasted)
+        toolBar.setPasteArmed(true)
+        drawView.armPaste(src) { toolBar.setPasteArmed(false) }
     }
 
     /**

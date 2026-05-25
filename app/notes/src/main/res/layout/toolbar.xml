@@ -148,6 +148,7 @@
             android:scaleType="fitCenter" />
 
         <TextView
+            android:id="@+id/label_paste"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Paste"

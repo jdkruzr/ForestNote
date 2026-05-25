@@ -22,6 +22,7 @@ import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeBuilder
 import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.Tool
+import com.forestnote.core.ink.Ulid
 import kotlin.math.max
 import kotlin.math.min
 
@@ -87,7 +88,10 @@ class DrawView @JvmOverloads constructor(
         // Switching away from the lasso clears any in-progress polygon + selection
         // (AC2.6). Kept here (single chokepoint) so every caller is covered.
         set(value) {
-            if (value != field) clearLassoState()
+            if (value != field) {
+                clearLassoState()
+                cancelPaste() // a tool switch abandons a pending paste
+            }
             field = value
         }
     /** Active pen variant; set by MainActivity when a variant is picked. */
@@ -113,6 +117,55 @@ class DrawView @JvmOverloads constructor(
         onSelectionChanged?.invoke(emptyList(), null)
         invalidate()
     }
+
+    // ===== Paste-placement mode (A8): tap Paste, then tap the canvas to drop =====
+    private var pendingPaste: List<Stroke>? = null
+    private var onPasteModeEnded: (() -> Unit)? = null
+
+    /**
+     * Arm paste placement: the next canvas tap drops [strokes] centred on it (clamped
+     * on-page), with fresh ULIDs. [onEnded] fires when the mode ends (placed OR cancelled)
+     * so the caller can reset the Paste cell caption.
+     */
+    fun armPaste(strokes: List<Stroke>, onEnded: () -> Unit) {
+        if (strokes.isEmpty()) return
+        pendingPaste = strokes
+        onPasteModeEnded = onEnded
+    }
+
+    val isPasteArmed: Boolean get() = pendingPaste != null
+
+    /** Leave paste mode without placing (tool switch / second Paste tap). */
+    fun cancelPaste() = endPasteMode()
+
+    private fun endPasteMode() {
+        if (pendingPaste == null && onPasteModeEnded == null) return
+        pendingPaste = null
+        val cb = onPasteModeEnded
+        onPasteModeEnded = null
+        cb?.invoke()
+    }
+
+    /** Drop the pending paste centred on a tapped screen point, clamped fully on-page. */
+    private fun placePasteAt(screenX: Float, screenY: Float) {
+        val strokes = pendingPaste ?: return
+        val b = LassoSelectionLogic.bounds(strokes)
+        if (b == null) { endPasteMode(); return }
+        val tapVx = transform.toVirtualX(screenX)
+        val tapVy = transform.toVirtualY(screenY)
+        val centreX = (b.minX + b.maxX) / 2
+        val centreY = (b.minY + b.maxY) / 2
+        // Offset to centre the selection on the tap, clamped so the bbox stays on-page.
+        val dx = clampOffset(tapVx - centreX, -b.minX, PageTransform.VIRTUAL_SHORT_AXIS - b.maxX)
+        val dy = clampOffset(tapVy - centreY, -b.minY, transform.virtualLongAxis - b.maxY)
+        val pasted = LassoSelectionLogic.translate(strokes, dx, dy) { Ulid.generate() }
+        endPasteMode()
+        addPastedStrokes(pasted)
+    }
+
+    /** Coerce into [lo, hi]; if the content is wider than the page (lo > hi), pin to lo. */
+    private fun clampOffset(value: Int, lo: Int, hi: Int): Int =
+        if (lo > hi) lo else value.coerceIn(lo, hi)
 
     // Rendering
     private val strokePaint = Paint().apply {
@@ -299,6 +352,11 @@ class DrawView @JvmOverloads constructor(
         // Tool-type filtering (AC1.3): stylus/eraser draw, finger ignored
         if (!shouldAcceptToolType(event.getToolType(0))) {
             return false
+        }
+        // Paste-placement mode (A8): the next tap drops the clipboard here, not ink.
+        if (pendingPaste != null) {
+            if (event.actionMasked == MotionEvent.ACTION_UP) placePasteAt(event.x, event.y)
+            return true
         }
         return when (event.getToolType(0)) {
             MotionEvent.TOOL_TYPE_STYLUS -> handleStylus(event)

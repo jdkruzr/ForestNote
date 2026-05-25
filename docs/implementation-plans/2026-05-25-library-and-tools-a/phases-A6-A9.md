@@ -32,6 +32,7 @@ This plan implements and tests:
 - **library-and-tools.AC2.2 Success:** Strokes whose **centroid** lies inside the closed polygon become selected. Strokes whose centroid is outside are not. *(A6.)*
 - **library-and-tools.AC2.3 Success:** A floating action pill appears above the selection's bounding box (or below if there's no room above). It shows the selection count and Cut / Copy / Recognize / To-do / Delete actions. *(A7 — see Caveat 1 re: Recognize/To-do.)*
 - **library-and-tools.AC2.4 Success:** Cut removes the strokes from the page AND copies them to the in-process clipboard. Copy only copies. Delete only removes. *(A7.)*
+- **library-and-tools.AC2.5 — DEFERRED (out of scope for A6–A9):** Recognize/To-do open dialogs referencing a Settings URL. A7 renders the Recognize/To-do **buttons** in the pill (so the action set is final), but full URL-driven behavior is deferred to F1/F2 and depends on B1 (Settings store) — until then they show a "configure a URL in Settings" stub. See Caveat 1. No network in this plan.
 - **library-and-tools.AC2.6 Success:** Switching to any other tool clears the selection + lasso outline. *(A6 establishes clear-on-tool-switch; A7 also clears the menu.)*
 - **library-and-tools.AC2.7 Edge:** A lasso closed before the user moves (e.g. a fast tap) with < 3 points dismisses with no selection and no error. *(A6.)*
 
@@ -79,7 +80,7 @@ A9 has no standalone AC in the design; AC4.5 (long-press card → Properties) is
   - point clearly outside → false
   - point outside a concave polygon's hollow → false
   - degenerate polygon (`< 3` vertices) → false (never "inside")
-- Use a simple local `data class Point(val x: Int, val y: Int)` in `LassoSelectionLogic`, OR reuse `StrokePoint` — decide in Task 4's impl; the test should reference whatever the impl exposes. Prefer a minimal `Point(Int, Int)` to keep geometry independent of pressure/time.
+- Commit to the type up front (FIX M2): `LassoSelectionLogic` exposes `data class Point(val x: Int, val y: Int)` (kept minimal — geometry independent of pressure/time). Tests reference `LassoSelectionLogic.Point`; no type decision is deferred to Task 4.
 - Run the test; confirm it FAILS to compile/assert (class/method not yet present). **Verifies: AC2.2 foundation.**
 <!-- END_TASK_1 -->
 
@@ -141,7 +142,7 @@ A9 has no standalone AC in the design; AC4.5 (long-press card → Properties) is
 <!-- START_SUBCOMPONENT_C (tasks 8-11) -->
 <!-- START_TASK_8 -->
 ### Task 8: DrawView — lasso point accumulation (off fast-ink)
-- In `DrawView.kt`, add a lasso state: `private val lassoPoints = mutableListOf<LassoSelectionLogic.Point>()`, `private var selectedStrokeIds: Set<String> = emptySet()`, `private var lassoClosed = false`.
+- In `DrawView.kt`, add a lasso state: `private val lassoPoints = mutableListOf<LassoSelectionLogic.Point>()`, `private var selectedStrokeIds: Set<String> = emptySet()`, `private var lassoClosed = false`. Also declare the nullable selection callback field now so `clearLassoState()` (Task 9) compiles: `var onSelectionChanged: ((strokes: List<Stroke>, screenBounds: RectF?) -> Unit)? = null` (A7 T7 sets it and fires it on lasso-close; in A6 it stays null/no-op).
 - Add `handleLasso(event)`:
   - ACTION_DOWN: clear `lassoPoints`, `selectedStrokeIds`, `lassoClosed=false`; add first point in **virtual** coords (`transform.toVirtualX/Y`).
   - ACTION_MOVE: append each historical+current point in virtual coords; `invalidate()`.
@@ -152,9 +153,19 @@ A9 has no standalone AC in the design; AC4.5 (long-press card → Properties) is
 
 <!-- START_TASK_9 -->
 ### Task 9: DrawView — route lasso + clear-on-tool-switch
-- In `handleStylus`, add branch: `Tool.Lasso -> handleLasso(event)`.
+- In `handleStylus`, add branch: `Tool.Lasso -> handleLasso(event)`. (`handleStylus`'s `when` over the sealed `Tool` is exhaustive, so this branch is compiler-forced once `Tool.Lasso` exists.)
 - Confirm `shouldAcceptToolType` accepts the stylus for lasso (lasso is drawn with the pen); adjust only if it would reject.
-- When `activeTool` changes (the setter MainActivity uses), clear `lassoPoints`, `selectedStrokeIds`, `lassoClosed` and `invalidate()` — establishes AC2.6 (full menu-clear is completed in A7).
+- **Clear-on-tool-switch mechanism (FIX C1):** `DrawView.activeTool` is currently a plain `var activeTool: Tool = Tool.Pen` (`DrawView.kt:83`) assigned directly from `MainActivity.kt:112` — there is **no setter** to hang clearing off. Convert it to a custom-setter property and add a private `clearLassoState()`:
+  ```kotlin
+  var activeTool: Tool = Tool.Pen
+      set(value) { if (value != field) clearLassoState(); field = value }
+  private fun clearLassoState() {
+      lassoPoints.clear(); selectedStrokeIds = emptySet(); lassoClosed = false
+      onSelectionChanged?.invoke(emptyList(), null)   // A7 wires this to dismiss the menu
+      invalidate()
+  }
+  ```
+  Keep the clear inside DrawView (single chokepoint, also catches future callers) rather than at the MainActivity call site. The `onSelectionChanged` callback is introduced in A7 T7; in A6 the invoke is a no-op (callback null).
 - **Verifies: AC2.1, AC2.6 (selection clears on tool switch).**
 <!-- END_TASK_9 -->
 
@@ -162,7 +173,7 @@ A9 has no standalone AC in the design; AC4.5 (long-press card → Properties) is
 ### Task 10: DrawView — render dashed polygon + selection overlay
 - In `onDraw`, after `canvas.drawBitmap(writingBitmap...)`:
   - If `activeTool is Tool.Lasso` and `lassoPoints` non-empty: draw the polyline (and closing segment if `lassoClosed`) in **screen** coords (`transform.toScreenX/Y`) using a dashed `Paint` (`PathEffect = DashPathEffect`), thin stroke, black.
-  - For each stroke whose id ∈ `selectedStrokeIds`: draw a highlight outline (e.g. re-stroke its path in a distinct width/inverted tint) so selection is visibly correct on e-ink.
+  - Highlight selection by iterating **`completedStrokes`** and drawing an outline for any stroke whose id ∈ `selectedStrokeIds` (iterate the live list, not the id-set — this defensively skips ids that no longer exist after a delete/paste; never look a stroke up by id and risk a null). Re-stroke its path in a distinct width/inverted tint so selection reads on e-ink.
 - Keep paints as fields (don't allocate in `onDraw`).
 - **Verifies: AC2.1 (preview), AC2.2 (visible correct selection).**
 <!-- END_TASK_10 -->
@@ -237,7 +248,8 @@ A9 has no standalone AC in the design; AC4.5 (long-press card → Properties) is
 <!-- START_TASK_5 -->
 ### Task 5: RED — `deleteStrokes` repo/store test
 - In `core/format` repo tests (in-memory `JdbcSqliteDriver`, per existing convention), add a failing test: after saving N strokes to a page, `applyErase(subsetIds, emptyList())` leaves exactly the complement on the page (re-load and assert). (If a direct repo test already covers `applyErase`, add the delete-set assertion there.)
-- Run `:core:format:test`; RED. **Verifies: AC2.4 (page removal, persisted).**
+- **`modified_at` bump (FIX I2):** A5 made `applyErase` call `touchCurrentNotebook()` (verified at `NotebookRepository.kt:288-306` — it bumps inside the transaction). Add an assertion using the injected clock: capture `modifiedAtOf(nb)` before, advance the test clock, delete, assert `modifiedAtOf(nb)` advanced. Since `deleteStrokes` (Task 6) routes through `applyErase`, it inherits the bump — no separate bump needed. (Paste's bump is covered in A8: `saveStroke` also calls `touchCurrentNotebook`.)
+- Run `:core:format:test`; RED. **Verifies: AC2.4 (page removal, persisted) + A5 modified_at bump on cut/delete.**
 <!-- END_TASK_5 -->
 
 <!-- START_TASK_6 -->
@@ -254,7 +266,7 @@ A9 has no standalone AC in the design; AC4.5 (long-press card → Properties) is
   - `fun getSelectedStrokes(): List<Stroke>` — filter `completedStrokes` by `selectedStrokeIds`.
   - `fun setOnSelectionChanged(cb: (strokes: List<Stroke>, screenBounds: RectF?) -> Unit)` — invoked when a lasso closes with a non-empty selection (compute screen bounds via `LassoSelectionLogic.bounds` + `transform.toScreenX/Y`) and when selection clears (empty list, null bounds).
   - `fun copySelection(clipboard: Clipboard)` — `clipboard.set(getSelectedStrokes())`.
-  - `fun deleteSelection()` — capture ids, `store.deleteStrokes(ids)`, `completedStrokes.removeAll{ it.id in ids }`, clear selection, `redrawBitmap()`/`invalidate()`.
+  - `fun deleteSelection()` — capture ids, `store.deleteStrokes(ids)`, `completedStrokes.removeAll{ it.id in ids }`, then **clear `selectedStrokeIds` (and notify `onSelectionChanged(emptyList(), null)`) BEFORE `redrawBitmap()`/`invalidate()`** (FIX I4) so the highlight loop never references a removed stroke. (T10's highlight already iterates `completedStrokes`, so this is belt-and-suspenders.)
   - `fun cutSelection(clipboard: Clipboard)` — copy then delete.
 - Fire `onSelectionChanged` from the A6 lasso-close path and from the clear path. **Verifies: AC2.4.**
 <!-- END_TASK_7 -->
@@ -302,7 +314,7 @@ A9 has no standalone AC in the design; AC4.5 (long-press card → Properties) is
 
 **AC coverage:** library-and-tools.AC1.6; completes library-and-tools.AC1.1 (final toolbar order Fountain / Lasso / Erase / Paste / Clear / Refresh).
 
-**Design decision (judgment, 2026-05-25):** offset is computed **per-axis independently** — X clamped against `VIRTUAL_SHORT_AXIS`, Y against `virtualLongAxis` — keeping the paste as near +300/+300 as each axis allows, rather than one uniform scale. Never clamp individual points (that deforms the stroke); only shrink the offset vector.
+**Design decision (REVISED 2026-05-25 on-device):** Paste is **tap-to-place**, not a fixed offset. Tapping the Paste cell arms placement (caption → "Pasting…"); the next canvas tap drops the clipboard **centred on that point**, clamped so the bounding box stays fully on-page (clamp the uniform translation vector, never individual points). Switching tools or tapping Paste again cancels. (The original auto +300/+300 `pasteOffset` was removed — superseded by `DrawView.clampOffset` + tap point; `translate()` is retained.)
 
 **Verified facts (codebase-investigator, 2026-05-25):**
 - `Ulid.generate(now = …, random = …): String` at `core/ink/.../Ulid.kt` — injectable; `Stroke` is a data class so `copy(id = …, points = …)` works.
@@ -319,7 +331,7 @@ A9 has no standalone AC in the design; AC4.5 (long-press card → Properties) is
 - Add to `LassoSelectionLogicTest`: `pasteOffset(bounds: Bounds, maxX: Int, maxY: Int): Pair<Int,Int>`:
   - bounds well within page → `(300, 300)`.
   - bounds whose `maxX + 300 > maxX_page` → X offset shrinks so `bounds.maxX + dx == maxX_page`; Y unaffected (independent axes).
-  - bounds already flush to right/bottom edge → 0 on that axis.
+  - bounds already flush to right/bottom edge → 0 on that axis (clamp lower bound is 0; per-axis maxima are `bounds.maxX`/`bounds.maxY`).
   - symmetric for Y.
 - Run; RED. **Verifies: AC1.6 (in-bounds paste).**
 <!-- END_TASK_1 -->
@@ -328,7 +340,7 @@ A9 has no standalone AC in the design; AC4.5 (long-press card → Properties) is
 ### Task 2: RED — `translate` tests
 - Add: `translate(strokes: List<Stroke>, dx: Int, dy: Int, idFactory: () -> String): List<Stroke>`:
   - each result stroke has a fresh id from `idFactory` (inject a counter for determinism), original color/widths preserved.
-  - every point shifted by `(dx, dy)`; pressure + timestamp unchanged.
+  - every point shifted by `(dx, dy)`; pressure + timestamp unchanged. Use a **multi-point** stroke fixture so the test proves all points move, not just the first (FIX M4).
   - empty input → empty output.
 - Run; RED. **Verifies: AC1.6 (clone with new ids + offset).**
 <!-- END_TASK_2 -->
@@ -363,15 +375,105 @@ A9 has no standalone AC in the design; AC4.5 (long-press card → Properties) is
   - `val (dx, dy) = LassoSelectionLogic.pasteOffset(b, PageTransform.VIRTUAL_SHORT_AXIS, transform.virtualLongAxis)`
   - `val pasted = LassoSelectionLogic.translate(src, dx, dy) { Ulid.generate() }`
   - hand to DrawView (add a `fun addPastedStrokes(strokes: List<Stroke>)`: for each → `completedStrokes.add` + `store.save`; then `redrawBitmap()`/`invalidate()`), keeping persistence off-thread via `store.save`.
+- **`modified_at` bump (FIX I2):** `store.save` → `repo.saveStroke` already calls `touchCurrentNotebook()` (A5), so paste bumps the notebook's `modified_at` for free — no extra work, just noted so AC4.3's "Nh ago" stays correct for paste-only edits.
 - **Verifies: AC1.6.**
 <!-- END_TASK_6 -->
 
 <!-- START_TASK_7 -->
 ### Task 7: Build, on-device verify, commit
 - `./gradlew :app:notes:test` (green) + `:app:notes:assembleDebug`; deploy + manual: Copy (or Cut) then tap Paste → strokes appear at a small offset; Paste greyed before any copy, enabled after; pasting a selection near the right/bottom edge stays fully on-page; confirm toolbar order Fountain / Lasso / Erase / Paste / Clear / Refresh.
+- **Hit-target check (FIX I3):** the bar went 4→6 equal-weight cells, so each cell's **width** is now the constrained axis (~bar_width/6; height stays the fixed 30dp root). On-device, measure/estimate rendered cell width at Mini width and confirm each tap target is ≥30dp per AC1.1. (Caveat: the Mini misreports `densityDpi=320` vs true 293 PPI — see [[aipaper-mini-density]] — so dp math is ~9% optimistic; if a cell is borderline, the design's mm-token/px path may be needed.) If under 30dp, flag before merging Area A.
 - Commit `feat(paste): Paste cell clones clipboard strokes with new ULIDs + in-bounds offset`. Tag `phase-A8-paste`.
 <!-- END_TASK_7 -->
 <!-- END_SUBCOMPONENT_B -->
 
 **Done when:** Cut → Paste on the same page shows the strokes at an offset (in-bounds near edges); Paste cell greys when nothing copied and enables live when the clipboard fills; `pasteOffset`/`translate` unit-tested; toolbar order matches AC1.1. Automated tests green.
 <!-- END_PHASE_A8 -->
+
+<!-- START_PHASE_A9 -->
+### Phase A9: Long-press → Notebook Properties dialog
+
+**Goal:** Long-pressing a notebook row in the picker opens a Properties dialog showing Created / Modified / Pages with editable name (Rename) and Delete.
+
+**Touches schema:** No (uses A5's `modified_at`; reuses the existing `countPagesForNotebook` query).
+
+**Depends on:** A5 (`modified_at` / `modifiedAtOf`).
+
+**AC coverage:** None dedicated. Verified by this phase's "Done when". The dialog is **reused** by library-and-tools.AC4.5 (long-press a Library card) once C3a lands — keep `NotebookPropertiesDialog` decoupled from the picker so C3a can open it from a card.
+
+**Resolved discrepancies (codebase-investigator, 2026-05-25):**
+- **Picker is a string-array dialog, not a ListView** (`MainActivity.kt:210-224` uses `AlertDialog.Builder.setItems(names)`). → **Refactor to `ListView` + `ArrayAdapter`** so a per-row `setOnItemLongClickListener` is possible (the design's stated UX). Tap still switches via `goToNotebook`.
+- **`NotebookMeta(id, name)`** (`NotebookRepository.kt:11`) carries no timestamps and there is **no `createdAtOf`**. → **Extend `NotebookMeta` to `(id, name, createdAt, modifiedAt)`** and project all four in `listNotebooks`. Only MainActivity consumes `NotebookMeta` (call sites ~`MainActivity.kt:193, 211`).
+- **`countPagesForNotebook` query exists (`notebook.sq:75-76`) but has no repo wrapper.** → add `NotebookRepository.countPages(id): Long` + `NotebookStore.countPages(id, onResult)`.
+- **No custom-layout dialog or timestamp formatter precedent.** → new `res/layout/dialog_notebook_properties.xml` + a small `formatTimestamp(epochMs)` helper (`java.text.SimpleDateFormat` or `android.text.format.DateFormat`).
+- Existing reusable methods: `renameNotebook(id, name)` (`:175`), `deleteNotebook(id)` (`:184-198`), `modifiedAtOf(id)` (`:132`); store wrappers `renameNotebook`/`deleteNotebook` (`NotebookStore.kt:166-181`), `listNotebooks` (`:87`). Existing "Edit Current" → `showEditNotebook`/`promptRenameNotebook`/`confirmDeleteNotebook` (`MainActivity.kt:239-276`) is **superseded** by the Properties dialog and removed (active notebook is reachable by long-pressing its row).
+- Threading: all reads off-thread via the `NotebookStore` executor + `poster` callback (page-count read happens on dialog open).
+
+<!-- START_SUBCOMPONENT_A (tasks 1-2) -->
+<!-- START_TASK_1 -->
+### Task 1: RED — `NotebookMeta` timestamps + `countPages`
+- In `:core:format` repo tests (in-memory `JdbcSqliteDriver`, `NotebookRepository.forTesting(driver, now=…)` per convention):
+  - failing test: `listNotebooks()` returns `NotebookMeta` whose `createdAt`/`modifiedAt` match what was inserted (use injected clock for determinism).
+  - failing test: `countPages(notebookId)` returns the number of pages created under that notebook (and 0 for an empty/other notebook).
+- Run `:core:format:test`; RED. **Verifies: A9 data plumbing (Created/Modified/Pages).**
+<!-- END_TASK_1 -->
+
+<!-- START_TASK_2 -->
+### Task 2: GREEN — extend `NotebookMeta`, add `countPages`, widen store + fix call sites
+- Extend `data class NotebookMeta(id, name, createdAt: Long, modifiedAt: Long)`; project `created_at`/`modified_at` in the `listNotebooks` query mapping.
+- Add `NotebookRepository.countPages(notebookId): Long` over `countPagesForNotebook`.
+- Add `NotebookStore.countPages(notebookId: String, onResult: (Long) -> Unit)` (executor → poster).
+- Update MainActivity's `listNotebooks` consumers for the new `NotebookMeta` shape (label refresh + picker).
+- Run `:core:format:test` + `:app:notes:test`; GREEN. Commit `feat(notebook): NotebookMeta carries created/modified; countPages wrapper`.
+<!-- END_TASK_2 -->
+<!-- END_SUBCOMPONENT_A -->
+
+<!-- START_SUBCOMPONENT_B (tasks 3-6) -->
+<!-- START_TASK_3 -->
+### Task 3: Picker refactor → ListView + long-press
+- Refactor `showNotebookPicker()` to build a `ListView` with an `ArrayAdapter` over `List<NotebookMeta>` (display `name`), shown via `AlertDialog.Builder.setView(listView)` + "New Notebook" button.
+- Row tap → `goToNotebook(meta.id)` + dismiss (unchanged behavior).
+- Row long-press (`setOnItemLongClickListener`) → **dismiss the picker, then** `openNotebookProperties(meta)` as a standalone dialog (FIX M5 — chosen over layering so the dialog doesn't depend on the picker being open; this is what AC4.5's C3a card-reuse needs too).
+- Remove the now-redundant "Edit Current" neutral button and `showEditNotebook` (keep `promptRenameNotebook`/`confirmDeleteNotebook` logic only if reused by the dialog; otherwise fold into the dialog).
+<!-- END_TASK_3 -->
+
+<!-- START_TASK_4 -->
+### Task 4: Properties dialog layout + timestamp helper
+- Create `res/layout/dialog_notebook_properties.xml`: a name `EditText`, three labeled `TextView`s (Created, Modified, Pages), matching app styling.
+- Add `formatTimestamp(epochMs: Long): String` helper (e.g. `SimpleDateFormat("MMM d, yyyy h:mm a", Locale.getDefault())`), placed alongside other small UI helpers.
+<!-- END_TASK_4 -->
+
+<!-- START_TASK_5 -->
+### Task 5: `NotebookPropertiesDialog` + wiring
+- New `NotebookPropertiesDialog` (or a private `openNotebookProperties(meta)` in MainActivity) that:
+  - inflates the layout; pre-fills name = `meta.name`, Created = `formatTimestamp(meta.createdAt)`, Modified = `formatTimestamp(meta.modifiedAt)`; Pages = "…" until `store.countPages(meta.id) { n -> set "N" }` returns.
+  - Save/positive → if name changed, `store.renameNotebook(meta.id, newName) { refresh label + re-open/refresh picker }`.
+  - Delete → confirmation → `store.deleteNotebook(meta.id) { refresh }` (reuse existing guard: don't delete the last notebook / handle active-notebook switch as `deleteNotebook` already does).
+  - Keep the dialog independent of the picker so AC4.5 (C3a) can open it from a card.
+- **Verifies: A9 "Done when".**
+<!-- END_TASK_5 -->
+
+<!-- START_TASK_6 -->
+### Task 6: Build, on-device verify, commit
+- `./gradlew :core:format:test :app:notes:test` (green) + `:app:notes:assembleDebug`; deploy + manual: long-press a notebook row → dialog shows correct Created/Modified/Pages; rename persists and the top-bar label updates; Delete removes the notebook and the picker refreshes; deleting the active notebook switches correctly.
+- Commit `feat(notebook): long-press → Notebook Properties dialog (metadata + rename + delete)`. Tag `phase-A9-notebook-properties`.
+<!-- END_TASK_6 -->
+<!-- END_SUBCOMPONENT_B -->
+
+**Done when:** Long-press a notebook in the picker → dialog shows metadata (Created/Modified/Pages) + editable name + Delete; all flows work on device; `NotebookMeta` timestamps + `countPages` unit-tested. Automated tests green.
+<!-- END_PHASE_A9 -->
+
+---
+
+## Phase order & verification summary
+
+| Phase | Depends on | Schema | Tag | Key ACs |
+|-------|-----------|--------|-----|---------|
+| A6 Lasso geometry | — | No | `phase-A6-lasso` | AC2.1, AC2.2, AC2.7 |
+| A7 Selection menu + clipboard | A6 | No | `phase-A7-selection-menu` | AC2.3, AC2.4, AC2.6 |
+| A8 Paste cell | A7 | No | `phase-A8-paste` | AC1.6, AC1.1 |
+| A9 Notebook Properties | A5 | No | `phase-A9-notebook-properties` | (phase "Done when"; reused by AC4.5) |
+
+**Planned addition (post-A8, decided 2026-05-25 on-device):** A new phase **A8.5 — drag-to-move selection**. After a lasso closes with a non-empty selection, an ACTION_DOWN inside the selection bbox starts a live drag that translates the selected strokes (preview in `onDraw`), committing on lift (reuse `LassoSelectionLogic.translate` + per-stroke `store.save`/in-place update + `modified_at` bump). NOT in the original `library-and-tools` design — added to match WiNote/Supernote tap-drag muscle memory. Scheduled after A7 (pill) + A8 (Paste) at the user's direction; build it before merging Area A.
+
+**None of A6–A9 touch the schema** (v4 stays). Pure-logic suites (`LassoSelectionLogic`, `Clipboard`, repo metadata) run green in `:app:notes:test` / `:core:format:test`; `:core:ink` *backend* tests remain pre-existing-fail under Mockito (unrelated). On-device validation per phase via the SFTP deploy loop. After A9, refresh CLAUDE.md (toolbar now Fountain/Lasso/Erase/Paste/Clear/Refresh; lasso selection + clipboard; NotebookMeta carries timestamps) and open the Area A PR.

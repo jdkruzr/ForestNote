@@ -85,18 +85,6 @@ object LassoSelectionLogic {
     }
 
     /**
-     * Paste offset (library-and-tools.AC1.6): aim for +300/+300 virtual units, but shrink
-     * each axis independently so the pasted copy stays fully on-page — never deform the
-     * stroke by clamping individual points, only the (uniform) translation vector. A copy
-     * flush to an edge gets 0 on that axis. [maxX]/[maxY] are the page's virtual extents.
-     */
-    fun pasteOffset(bounds: Bounds, maxX: Int, maxY: Int): Pair<Int, Int> {
-        val dx = 300.coerceIn(0, (maxX - bounds.maxX).coerceAtLeast(0))
-        val dy = 300.coerceIn(0, (maxY - bounds.maxY).coerceAtLeast(0))
-        return dx to dy
-    }
-
-    /**
      * Clone [strokes] shifted by ([dx], [dy]), each with a fresh id from [idFactory].
      * Colour, widths, pressure and timestamps are preserved — only positions move.
      */

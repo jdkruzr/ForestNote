@@ -36,6 +36,7 @@ class ToolBar(
     private val btnErase: View = root.findViewById(R.id.cell_erase)
     private val lblErase: TextView = root.findViewById(R.id.label_erase)
     private val btnPaste: View = root.findViewById(R.id.cell_paste)
+    private val lblPaste: TextView = root.findViewById(R.id.label_paste)
     private val btnClear: View = root.findViewById(R.id.cell_clear)
     private val btnRefresh: View = root.findViewById(R.id.cell_refresh)
 
@@ -166,6 +167,11 @@ class ToolBar(
     fun setPasteEnabled(enabled: Boolean) {
         pasteEnabled = enabled
         btnPaste.alpha = if (enabled) 1f else 0.3f
+    }
+
+    /** Reflect paste-placement mode: caption shows "Pasting…" until the next canvas tap. */
+    fun setPasteArmed(armed: Boolean) {
+        lblPaste.text = if (armed) "Pasting…" else "Paste"
     }
 
     /** Human-readable label for a pen variant (UI concern, kept out of core:ink). */
