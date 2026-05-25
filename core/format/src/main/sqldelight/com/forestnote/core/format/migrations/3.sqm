@@ -1,0 +1,5 @@
+-- v3 -> v4: add notebook.modified_at so the Library can sort/display "last modified".
+-- NON-destructive (unlike 1.sqm/2.sqm): real notebooks may now exist. Backfill the
+-- new column from created_at so pre-existing notebooks sort sensibly.
+ALTER TABLE notebook ADD COLUMN modified_at INTEGER NOT NULL DEFAULT 0;
+UPDATE notebook SET modified_at = created_at;

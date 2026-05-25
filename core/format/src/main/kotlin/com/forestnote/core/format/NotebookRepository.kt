@@ -87,7 +87,7 @@ class NotebookRepository private constructor(
         var notebooks = db.notebookQueries.listNotebooks().executeAsList()
         if (notebooks.isEmpty()) {
             val nid = Ulid.generate()
-            db.notebookQueries.insertNotebook(nid, "Notebook 1", 0, now)
+            db.notebookQueries.insertNotebook(nid, "Notebook 1", 0, now, now)
             notebooks = db.notebookQueries.listNotebooks().executeAsList()
         }
         val state = db.notebookQueries.getAppState().executeAsOneOrNull()
@@ -147,7 +147,7 @@ class NotebookRepository private constructor(
         val now = System.currentTimeMillis()
         val so = db.notebookQueries.nextNotebookSortOrder().executeAsOne()
         db.transaction {
-            db.notebookQueries.insertNotebook(nid, name, so, now)
+            db.notebookQueries.insertNotebook(nid, name, so, now, now)
             // A notebook always has at least one page.
             db.notebookQueries.insertPage(Ulid.generate(), nid, 0, now)
         }
