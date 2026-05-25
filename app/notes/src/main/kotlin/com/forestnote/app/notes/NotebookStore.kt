@@ -145,6 +145,16 @@ class NotebookStore(
         }
     }
 
+    /** Count the pages under a notebook off-thread; posts the count (0 on failure/unknown). */
+    fun countPages(notebookId: String, onResult: (Long) -> Unit) {
+        executor.execute {
+            val n = runCatching { repo?.countPages(notebookId) ?: 0L }
+                .onFailure { android.util.Log.e(TAG, "failed to count pages", it) }
+                .getOrDefault(0L)
+            poster { onResult(n) }
+        }
+    }
+
     /** Append a page to the current notebook; posts the new page id. Does not switch. */
     fun createPage(onCreated: (newPageId: String) -> Unit) {
         executor.execute {

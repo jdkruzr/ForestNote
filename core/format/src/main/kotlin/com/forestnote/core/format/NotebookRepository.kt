@@ -8,7 +8,12 @@ import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.Ulid
 
 /** Public notebook metadata so the UI never touches generated row types. */
-data class NotebookMeta(val id: String, val name: String)
+data class NotebookMeta(
+    val id: String,
+    val name: String,
+    val createdAt: Long,
+    val modifiedAt: Long
+)
 
 /** Public page metadata so the UI never touches generated row types. */
 data class PageMeta(val id: String, val createdAt: Long)
@@ -133,7 +138,12 @@ class NotebookRepository private constructor(
         db.notebookQueries.selectNotebookModifiedAt(notebookId).executeAsOne()
 
     fun listNotebooks(): List<NotebookMeta> =
-        db.notebookQueries.listNotebooks().executeAsList().map { NotebookMeta(it.id, it.name) }
+        db.notebookQueries.listNotebooks().executeAsList()
+            .map { NotebookMeta(it.id, it.name, it.created_at, it.modified_at) }
+
+    /** Number of pages under [notebookId] (0 for an unknown notebook). */
+    fun countPages(notebookId: String): Long =
+        db.notebookQueries.countPagesForNotebook(notebookId).executeAsOne()
 
     fun listPagesForCurrentNotebook(): List<PageMeta> =
         db.notebookQueries.listPagesForNotebook(currentNotebookId).executeAsList()
