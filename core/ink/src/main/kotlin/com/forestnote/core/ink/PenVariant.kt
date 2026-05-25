@@ -9,5 +9,11 @@ package com.forestnote.core.ink
  */
 enum class PenVariant {
     /** The v1 pen: logarithmic pressure curve, full-width range. */
-    FOUNTAIN
+    FOUNTAIN,
+
+    /** Constant-width pen: pressure ignored, width = average of the preset. */
+    FINELINER,
+
+    /** Wide, opaque muted gray, composited behind ink (DST_OVER). */
+    HIGHLIGHTER
 }
