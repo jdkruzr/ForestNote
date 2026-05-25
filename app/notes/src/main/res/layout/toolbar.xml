@@ -39,6 +39,7 @@
             android:scaleType="fitCenter" />
 
         <TextView
+            android:id="@+id/label_fountain"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Fountain ▾"
@@ -46,6 +47,7 @@
             android:textSize="9sp"
             android:textColor="@color/black"
             android:maxLines="1"
+            android:ellipsize="end"
             android:paddingBottom="2dp" />
     </LinearLayout>
 
@@ -74,13 +76,15 @@
             android:scaleType="fitCenter" />
 
         <TextView
+            android:id="@+id/label_erase"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Erase ▾"
+            android:text="Stroke ▾"
             android:gravity="center"
             android:textSize="9sp"
             android:textColor="@color/black"
             android:maxLines="1"
+            android:ellipsize="end"
             android:paddingBottom="2dp" />
     </LinearLayout>
 

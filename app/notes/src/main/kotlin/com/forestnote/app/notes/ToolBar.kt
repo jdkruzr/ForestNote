@@ -2,6 +2,7 @@ package com.forestnote.app.notes
 
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
@@ -30,7 +31,9 @@ class ToolBar(
 
     // Each tool's clickable hitbox is the whole cell (icon + word), not just the icon.
     private val btnFountain: View = root.findViewById(R.id.cell_fountain)
+    private val lblFountain: TextView = root.findViewById(R.id.label_fountain)
     private val btnErase: View = root.findViewById(R.id.cell_erase)
+    private val lblErase: TextView = root.findViewById(R.id.label_erase)
     private val btnClear: View = root.findViewById(R.id.cell_clear)
     private val btnRefresh: View = root.findViewById(R.id.cell_refresh)
 
@@ -83,6 +86,18 @@ class ToolBar(
 
         // Set initial visual state
         updateButtonAppearance()
+        updatePenCellLabel()
+        updateEraseCellLabel()
+    }
+
+    /** The Fountain cell label reflects the active pen variant (e.g. "Fineliner ▾"). */
+    private fun updatePenCellLabel() {
+        lblFountain.text = "${penVariantLabel(logic.activePenVariant())} ▾"
+    }
+
+    /** The Erase cell label reflects the active erase variant (e.g. "Pixel ▾"). */
+    private fun updateEraseCellLabel() {
+        lblErase.text = "${eraseVariantLabel(logic.activeEraseVariant())} ▾"
     }
 
     /**
@@ -176,15 +191,27 @@ class ToolBar(
         popup.isOutsideTouchable = true
         if (isEInk) popup.elevation = 0f
 
+        // A fixed-width marker column keeps labels aligned in any (proportional) font;
+        // the active row shows a ● there. A per-row box border was avoided on purpose —
+        // in a stacked list it reads as a divider that moves with the selection.
+        val markerWidth = (18 * density).toInt()
         labels.forEachIndexed { i, label ->
-            val row = TextView(ctx).apply {
-                // Active row is marked with a leading ● (not a box border): in a stacked
-                // list a per-row border reads as a divider that appears/moves with the
-                // selection. Inactive rows indent to keep the labels aligned.
-                text = if (i == activeIndex) "●  $label" else "      $label"
-                textSize = 14f
-                setTextColor(Color.BLACK)
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
                 setPadding(padH, padV, padH, padV)
+                isClickable = true
+                addView(TextView(ctx).apply {
+                    text = if (i == activeIndex) "●" else ""
+                    textSize = 14f
+                    setTextColor(Color.BLACK)
+                    width = markerWidth
+                })
+                addView(TextView(ctx).apply {
+                    text = label
+                    textSize = 14f
+                    setTextColor(Color.BLACK)
+                })
                 setOnClickListener {
                     onPick(i)
                     popup.dismiss()
@@ -205,6 +232,7 @@ class ToolBar(
             val variant = variants[i]
             logic.selectPenVariant(variant)
             penVariantCallback?.invoke(variant)
+            updatePenCellLabel()
         }
     }
 
@@ -223,6 +251,7 @@ class ToolBar(
         showDropdown(anchor, eraseVariants.map { eraseVariantLabel(it) }, eraseVariants.indexOf(active)) { i ->
             // selectEraseVariant activates the eraser; onToolSelected propagates it.
             logic.selectEraseVariant(eraseVariants[i])
+            updateEraseCellLabel()
         }
     }
 
