@@ -85,17 +85,18 @@ object LassoSelectionLogic {
     }
 
     /**
-     * Clone [strokes] shifted by ([dx], [dy]), each with a fresh id from [idFactory].
-     * Colour, widths, pressure and timestamps are preserved — only positions move.
+     * Clone [strokes] shifted by ([dx], [dy]); [idFor] supplies each result's id from the
+     * source stroke — `{ Ulid.generate() }` for paste (fresh ids), `{ it.id }` for an
+     * in-place move (same ids). Colour, widths, pressure and timestamps are preserved.
      */
     fun translate(
         strokes: List<Stroke>,
         dx: Int,
         dy: Int,
-        idFactory: () -> String
+        idFor: (Stroke) -> String
     ): List<Stroke> = strokes.map { s ->
         s.copy(
-            id = idFactory(),
+            id = idFor(s),
             points = s.points.map { p -> p.copy(x = p.x + dx, y = p.y + dy) }
         )
     }

@@ -71,6 +71,19 @@ class NotebookStore(
     }
 
     /**
+     * Replace a set of strokes with [added] in one transaction (lasso drag-to-move:
+     * [removedIds] are the originals, [added] the moved copies carrying the same ids).
+     * Routes through applyErase, so it also bumps the notebook's modified_at.
+     */
+    fun replaceStrokes(removedIds: List<String>, added: List<Stroke>, onDone: () -> Unit = {}) {
+        executor.execute {
+            runCatching { repo?.applyErase(removedIds, added) }
+                .onFailure { android.util.Log.e(TAG, "failed to replace strokes", it) }
+            poster { onDone() }
+        }
+    }
+
+    /**
      * Reconcile an erase gesture (geometry + transaction) off-thread, then post the
      * resulting diff (removed ids + surviving fragments) to the main thread.
      */

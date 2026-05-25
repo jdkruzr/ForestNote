@@ -167,6 +167,7 @@ class LassoSelectionLogicTest {
         )
         var n = 0
         val out = LassoSelectionLogic.translate(listOf(s), dx = 7, dy = -3) { "new${n++}" }
+        // (idFor receives the source stroke; this test ignores it and mints sequential ids)
         assertEquals(1, out.size)
         val r = out[0]
         assertEquals("new0", r.id, "fresh id from the factory")
@@ -185,5 +186,13 @@ class LassoSelectionLogicTest {
     @Test
     fun translateEmptyIsEmpty() {
         assertEquals(emptyList(), LassoSelectionLogic.translate(emptyList(), 1, 1) { "x" })
+    }
+
+    @Test
+    fun translateKeepingIdsForInPlaceMove() {
+        val s = Stroke(id = "keep", points = listOf(StrokePoint(10, 10, 500, 0L)))
+        val out = LassoSelectionLogic.translate(listOf(s), dx = 5, dy = 5) { it.id }
+        assertEquals("keep", out[0].id, "move keeps the original id (it's an update, not a copy)")
+        assertEquals(15 to 15, out[0].points[0].let { it.x to it.y })
     }
 }
