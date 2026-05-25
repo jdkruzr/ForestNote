@@ -6,9 +6,11 @@ import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.ListView
 import android.widget.TextView
 import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.ink.BackendDetector
@@ -265,22 +267,38 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Notebook picker: list notebooks, switch on tap; New Notebook / Edit Current. */
+    /** Notebook picker: tap a row to switch, long-press a row for its Properties dialog. */
     private fun showNotebookPicker() {
-        store.listNotebooks { notebooks, activeId ->
-            val names = Array(notebooks.size) { i -> notebooks[i].name }
-            AlertDialog.Builder(this)
+        store.listNotebooks { notebooks, _ ->
+            val listView = ListView(this)
+            listView.adapter = ArrayAdapter(
+                this, android.R.layout.simple_list_item_1, notebooks.map { it.name }
+            )
+            val dialog = AlertDialog.Builder(this)
                 .setTitle("Notebooks")
-                .setItems(names) { _, which -> goToNotebook(notebooks[which].id) }
+                .setView(listView)
                 .setPositiveButton("New Notebook") { _, _ -> promptNewNotebook() }
-                .setNeutralButton("Edit Current") { _, _ ->
-                    val current = notebooks.firstOrNull { it.id == activeId }
-                    if (current != null) showEditNotebook(current, canDelete = notebooks.size > 1)
-                }
                 .setNegativeButton("Cancel", null)
-                .show()
+                .create()
+            listView.setOnItemClickListener { _, _, which, _ ->
+                dialog.dismiss()
+                goToNotebook(notebooks[which].id)
+            }
+            listView.setOnItemLongClickListener { _, _, which, _ ->
+                // Dismiss the picker first so Properties is a standalone dialog (it's the
+                // same entry point AC4.5's Library card will reuse once C3a lands).
+                dialog.dismiss()
+                openNotebookProperties(notebooks[which], canDelete = notebooks.size > 1)
+                true
+            }
+            dialog.show()
         }
     }
+
+    /** Format an epoch-ms timestamp for the Properties dialog (device locale). */
+    private fun formatTimestamp(epochMs: Long): String =
+        java.text.SimpleDateFormat("MMM d, yyyy h:mm a", java.util.Locale.getDefault())
+            .format(java.util.Date(epochMs))
 
     private fun promptNewNotebook() {
         val input = EditText(this).apply { hint = "Notebook name" }
@@ -295,28 +313,38 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun showEditNotebook(notebook: NotebookMeta, canDelete: Boolean) {
+    /**
+     * Notebook Properties (A9): Created / Modified / Pages metadata, editable name (Save
+     * renames), and Delete (when more than one notebook exists). Standalone — not nested
+     * in the picker — so AC4.5's Library card can open the same dialog once C3a lands.
+     */
+    private fun openNotebookProperties(notebook: NotebookMeta, canDelete: Boolean) {
+        val view = layoutInflater.inflate(R.layout.dialog_notebook_properties, null)
+        val nameInput = view.findViewById<EditText>(R.id.input_notebook_name)
+        val createdText = view.findViewById<TextView>(R.id.text_created)
+        val modifiedText = view.findViewById<TextView>(R.id.text_modified)
+        val pagesText = view.findViewById<TextView>(R.id.text_pages)
+
+        nameInput.setText(notebook.name)
+        createdText.text = "Created: ${formatTimestamp(notebook.createdAt)}"
+        modifiedText.text = "Modified: ${formatTimestamp(notebook.modifiedAt)}"
+        pagesText.text = "Pages: …"
+        store.countPages(notebook.id) { n -> pagesText.text = "Pages: $n" }
+
         val builder = AlertDialog.Builder(this)
-            .setTitle(notebook.name)
-            .setPositiveButton("Rename") { _, _ -> promptRenameNotebook(notebook) }
+            .setTitle("Notebook Properties")
+            .setView(view)
+            .setPositiveButton("Save") { _, _ ->
+                val name = nameInput.text.toString().trim().ifEmpty { notebook.name }
+                if (name != notebook.name) {
+                    store.renameNotebook(notebook.id, name) { refreshNotebookLabel() }
+                }
+            }
             .setNegativeButton("Cancel", null)
         if (canDelete) {
             builder.setNeutralButton("Delete") { _, _ -> confirmDeleteNotebook(notebook) }
         }
         builder.show()
-    }
-
-    private fun promptRenameNotebook(notebook: NotebookMeta) {
-        val input = EditText(this).apply { setText(notebook.name) }
-        AlertDialog.Builder(this)
-            .setTitle("Rename Notebook")
-            .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                val name = input.text.toString().trim().ifEmpty { notebook.name }
-                store.renameNotebook(notebook.id, name) { refreshNotebookLabel() }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
     }
 
     private fun confirmDeleteNotebook(notebook: NotebookMeta) {
