@@ -67,9 +67,12 @@ class SelectionMenuView(private val isEInk: Boolean) {
             container,
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
-            true // focusable: tap-outside dismisses
+            false // non-focusable: touches outside the pill reach the canvas (drag-to-move)
         )
-        pop.isOutsideTouchable = true
+        // Not outside-touchable either, so a touch inside the selection starts a drag rather
+        // than being swallowed to dismiss the pill. We dismiss explicitly (tool switch, new
+        // lasso, drag start, cut/delete) via the caller's onSelectionChanged.
+        pop.isOutsideTouchable = false
         if (isEInk) pop.elevation = 0f
         popup = pop
 

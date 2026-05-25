@@ -103,6 +103,14 @@ class DrawView @JvmOverloads constructor(
     private var selectedStrokeIds: Set<String> = emptySet()
     private var lassoClosed = false
 
+    // Drag-to-move state (A8.5): touching inside a closed selection drags it live.
+    private var draggingSelection = false
+    private var dragStartVx = 0
+    private var dragStartVy = 0
+    private var dragDx = 0
+    private var dragDy = 0
+    private var dragBounds: LassoSelectionLogic.Bounds? = null
+
     /**
      * Fired when the lasso closes over a non-empty selection (strokes + screen bbox)
      * and when the selection clears (empty list, null bounds). A7's selection menu
@@ -114,6 +122,10 @@ class DrawView @JvmOverloads constructor(
         lassoPoints.clear()
         selectedStrokeIds = emptySet()
         lassoClosed = false
+        draggingSelection = false
+        dragDx = 0
+        dragDy = 0
+        dragBounds = null
         onSelectionChanged?.invoke(emptyList(), null)
         invalidate()
     }
@@ -158,7 +170,7 @@ class DrawView @JvmOverloads constructor(
         // Offset to centre the selection on the tap, clamped so the bbox stays on-page.
         val dx = clampOffset(tapVx - centreX, -b.minX, PageTransform.VIRTUAL_SHORT_AXIS - b.maxX)
         val dy = clampOffset(tapVy - centreY, -b.minY, transform.virtualLongAxis - b.maxY)
-        val pasted = LassoSelectionLogic.translate(strokes, dx, dy) { Ulid.generate() }
+        val pasted = LassoSelectionLogic.translate(strokes, dx, dy) { Ulid.generate() }  // fresh ids
         endPasteMode()
         addPastedStrokes(pasted)
     }
@@ -381,20 +393,47 @@ class DrawView @JvmOverloads constructor(
     private fun handleLasso(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                // Starting a new lasso clears any prior selection + dismisses its menu.
+                val vx = transform.toVirtualX(event.x)
+                val vy = transform.toVirtualY(event.y)
+                // Touch inside an existing closed selection → drag-to-move it (A8.5),
+                // rather than starting a new lasso.
+                if (lassoClosed && selectedStrokeIds.isNotEmpty() &&
+                    LassoSelectionLogic.pointInPolygon(LassoSelectionLogic.Point(vx, vy), lassoPoints)
+                ) {
+                    draggingSelection = true
+                    dragStartVx = vx
+                    dragStartVy = vy
+                    dragDx = 0
+                    dragDy = 0
+                    dragBounds = LassoSelectionLogic.bounds(getSelectedStrokes())
+                    onSelectionChanged?.invoke(emptyList(), null) // hide the pill while dragging
+                    return true
+                }
+                // Otherwise start a new lasso (clears any prior selection + dismisses its menu).
                 val hadSelection = selectedStrokeIds.isNotEmpty()
                 lassoPoints.clear()
                 selectedStrokeIds = emptySet()
                 lassoClosed = false
                 if (hadSelection) onSelectionChanged?.invoke(emptyList(), null)
-                lassoPoints.add(
-                    LassoSelectionLogic.Point(
-                        transform.toVirtualX(event.x), transform.toVirtualY(event.y)
-                    )
-                )
+                lassoPoints.add(LassoSelectionLogic.Point(vx, vy))
             }
 
             MotionEvent.ACTION_MOVE -> {
+                if (draggingSelection) {
+                    val vx = transform.toVirtualX(event.x)
+                    val vy = transform.toVirtualY(event.y)
+                    val b = dragBounds
+                    if (b != null) {
+                        // Clamp the move so the selection bbox stays fully on-page.
+                        dragDx = clampOffset(vx - dragStartVx, -b.minX, PageTransform.VIRTUAL_SHORT_AXIS - b.maxX)
+                        dragDy = clampOffset(vy - dragStartVy, -b.minY, transform.virtualLongAxis - b.maxY)
+                    } else {
+                        dragDx = vx - dragStartVx
+                        dragDy = vy - dragStartVy
+                    }
+                    invalidate()
+                    return true
+                }
                 // Capture batched historical samples plus the current point.
                 for (h in 0 until event.historySize) {
                     lassoPoints.add(
@@ -413,6 +452,16 @@ class DrawView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_UP -> {
+                if (draggingSelection) {
+                    draggingSelection = false
+                    commitSelectionMove(dragDx, dragDy)
+                    dragDx = 0
+                    dragDy = 0
+                    val selected = getSelectedStrokes()
+                    onSelectionChanged?.invoke(selected, selectionScreenBounds(selected))
+                    invalidate()
+                    return true
+                }
                 lassoClosed = true
                 // A fast tap (< 3 points) closes with no selection and no error (AC2.7).
                 selectedStrokeIds = if (lassoPoints.size >= 3) {
@@ -427,6 +476,24 @@ class DrawView @JvmOverloads constructor(
             }
         }
         return true
+    }
+
+    /**
+     * Commit a drag-to-move: replace the selected strokes with moved copies (same ids) in
+     * one transaction, update the in-memory model, and shift the lasso outline to follow.
+     */
+    private fun commitSelectionMove(dx: Int, dy: Int) {
+        if (dx == 0 && dy == 0) return
+        val ids = selectedStrokeIds.toList()
+        val moved = LassoSelectionLogic.translate(getSelectedStrokes(), dx, dy) { it.id } // keep ids
+        store?.replaceStrokes(ids, moved)
+        val idSet = ids.toHashSet()
+        completedStrokes.removeAll { it.id in idSet }
+        completedStrokes.addAll(moved)
+        val shifted = lassoPoints.map { LassoSelectionLogic.Point(it.x + dx, it.y + dy) }
+        lassoPoints.clear()
+        lassoPoints.addAll(shifted)
+        redrawBitmap()
     }
 
     /** Screen-space bounding box of [strokes], or null if empty (used to anchor the menu). */
@@ -788,6 +855,14 @@ class DrawView @JvmOverloads constructor(
 
     /** Draw the selection highlight and the dashed lasso polygon (screen coordinates). */
     private fun drawLassoOverlay(canvas: Canvas) {
+        // While dragging, shift the whole overlay (highlight + outline) by the live offset
+        // so the selection visibly follows the pen; the originals stay in the bitmap until
+        // the move commits on pen-up (redrawBitmap then shows them only at the new spot).
+        val restore = draggingSelection && (dragDx != 0 || dragDy != 0)
+        if (restore) {
+            canvas.save()
+            canvas.translate(transform.toScreenSize(dragDx.toFloat()), transform.toScreenSize(dragDy.toFloat()))
+        }
         // Highlight by re-stroking selected ink. Iterate the live list (not the id set)
         // so ids that no longer exist after a delete/paste are simply skipped — never
         // look a stroke up by id and risk a miss.
@@ -819,6 +894,8 @@ class DrawView @JvmOverloads constructor(
             if (lassoClosed) lassoPath.close()
             canvas.drawPath(lassoPath, lassoPaint)
         }
+
+        if (restore) canvas.restore()
     }
 
     /**
