@@ -3,6 +3,11 @@ package com.forestnote.app.notes
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.view.View
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.PopupWindow
+import android.widget.TextView
+import com.forestnote.core.ink.PenVariant
 import com.forestnote.core.ink.Tool
 
 /**
@@ -23,17 +28,21 @@ class ToolBar(
     private var activeRefreshCallback: (() -> Unit)? = null
 
     // Each tool's clickable hitbox is the whole cell (icon + word), not just the icon.
-    private val btnPen: View = root.findViewById(R.id.cell_pen)
+    private val btnFountain: View = root.findViewById(R.id.cell_fountain)
     private val btnStrokeEraser: View = root.findViewById(R.id.cell_stroke_eraser)
     private val btnPixelEraser: View = root.findViewById(R.id.cell_pixel_eraser)
     private val btnClear: View = root.findViewById(R.id.cell_clear)
     private val btnRefresh: View = root.findViewById(R.id.cell_refresh)
 
+    // The Pen tool's active highlight lives on the Fountain group cell.
     private val buttonMap = mapOf(
-        btnPen to Tool.Pen,
+        btnFountain to Tool.Pen,
         btnStrokeEraser to Tool.StrokeEraser,
         btnPixelEraser to Tool.PixelEraser
     )
+
+    /** Currently-open variant dropdown, if any. */
+    private var openPopup: PopupWindow? = null
 
     // Delegate tool selection logic to ToolSelectionLogic
     private val logic = ToolSelectionLogic(
@@ -47,8 +56,12 @@ class ToolBar(
     )
 
     init {
-        // Wire up click listeners for tool buttons
-        btnPen.setOnClickListener { logic.selectTool(Tool.Pen) }
+        // Wire up click listeners for tool buttons. The Fountain cell selects the
+        // pen group (with its last-used variant) and opens the variant dropdown.
+        btnFountain.setOnClickListener {
+            logic.selectPenGroup()
+            showPenVariantDropdown(btnFountain)
+        }
         btnStrokeEraser.setOnClickListener { logic.selectTool(Tool.StrokeEraser) }
         btnPixelEraser.setOnClickListener { logic.selectTool(Tool.PixelEraser) }
         btnClear.setOnClickListener { logic.triggerClear() }
@@ -110,6 +123,65 @@ class ToolBar(
      */
     fun setOnRefreshClicked(callback: () -> Unit) {
         activeRefreshCallback = callback
+    }
+
+    /** Human-readable label for a pen variant (UI concern, kept out of core:ink). */
+    private fun penVariantLabel(variant: PenVariant): String = when (variant) {
+        PenVariant.FOUNTAIN -> "Fountain"
+    }
+
+    /**
+     * Show the pen-variant dropdown anchored under the Fountain cell. Each row
+     * selects a variant and dismisses; the active variant is highlighted. Built
+     * programmatically (no shadow/animation) to stay e-ink friendly.
+     */
+    private fun showPenVariantDropdown(anchor: View) {
+        openPopup?.dismiss()
+        val ctx = anchor.context
+        val density = ctx.resources.displayMetrics.density
+        val padH = (12 * density).toInt()
+        val padV = (8 * density).toInt()
+
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                setColor(Color.WHITE)
+                setStroke(1, Color.BLACK)
+            }
+        }
+
+        val popup = PopupWindow(
+            container,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true // focusable: tap-outside dismisses
+        )
+        popup.isOutsideTouchable = true
+        if (isEInk) popup.elevation = 0f
+
+        val active = logic.activePenVariant()
+        for (variant in PenVariant.entries) {
+            val row = TextView(ctx).apply {
+                text = penVariantLabel(variant)
+                textSize = 14f
+                setTextColor(Color.BLACK)
+                setPadding(padH, padV, padH, padV)
+                if (variant == active) {
+                    background = GradientDrawable().apply {
+                        setColor(Color.WHITE)
+                        setStroke(1, Color.BLACK)
+                    }
+                }
+                setOnClickListener {
+                    logic.selectPenVariant(variant)
+                    popup.dismiss()
+                }
+            }
+            container.addView(row)
+        }
+
+        openPopup = popup
+        popup.showAsDropDown(anchor)
     }
 
     /**

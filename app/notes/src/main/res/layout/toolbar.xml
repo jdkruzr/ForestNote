@@ -15,7 +15,7 @@
     android:elevation="0dp">
 
     <LinearLayout
-        android:id="@+id/cell_pen"
+        android:id="@+id/cell_fountain"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
@@ -23,15 +23,15 @@
         android:gravity="center"
         android:clickable="true"
         android:focusable="true"
-        android:contentDescription="Pen"
+        android:contentDescription="Fountain"
         android:background="?attr/selectableItemBackground">
 
         <ImageButton
-            android:id="@+id/btn_pen"
+            android:id="@+id/btn_fountain"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:src="@drawable/ic_pen"
+            android:src="@drawable/ic_fountain"
             android:clickable="false"
             android:focusable="false"
             android:importantForAccessibility="no"
@@ -41,7 +41,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Pen"
+            android:text="Fountain ▾"
             android:gravity="center"
             android:textSize="9sp"
             android:textColor="@color/black"
