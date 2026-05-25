@@ -81,6 +81,7 @@ unreviewed change.
 | A7 | Lasso selection menu (Cut / Copy / Delete) | M | No | A6 |
 | A8 | Paste cell (clipboard → page) | S | No | A7 |
 | A9 | Long-press → Notebook Properties dialog | S | No | A5 |
+| A10 | Pen width levels (5, per-variant, persisted) | M | No | A2, B1 |
 | B1 | Settings + per-page template schema + repo | S | **Yes (v5)** | — |
 | B2 | Settings view UI | M | No | B1 |
 | B3 | Default template + pitch rendering (net-new) | M | No | B1 |
@@ -102,10 +103,11 @@ unreviewed change.
 | F1 | Lasso → Recognize stub (URL only, no network) | S | B1 | A7, B1 |
 | F2 | Lasso → To-do stub (URL only, no network) | S | B1 | A7, B1 |
 
-Effort total: roughly 10–14 weeks of focused work for a single engineer
+Effort total: roughly 10–15 weeks of focused work for a single engineer
 (up from the original 8–12 after splitting C3 into C3a/C3b, raising B3 to M
-for net-new template rendering, and adding B4 for per-page overrides),
-assuming reasonable test coverage and time on-device between phases.
+for net-new template rendering, and adding B4 per-page overrides + A10 pen
+width levels), assuming reasonable test coverage and time on-device between
+phases.
 **A**, **B**, and **C** are the structural backbone. **D** and **E** require
 the schema work that **C** establishes. **F1**/**F2** are placeholder UIs
 for separately-planned integrations.
@@ -114,13 +116,16 @@ for separately-planned integrations.
 
 This design has ~28 sub-phases — far beyond the 8-phase limit of a single
 implementation plan. **Generate one implementation plan per lettered area**,
-in dependency order: A (toolbar + tools, 9 phases — itself split A1–A5 then
-A6–A9 to stay ≤8), B (settings + templates), C (library + folders, ≤8),
+in dependency order: A (toolbar + tools, A1–A9 — split A1–A5 then A6–A9 to
+stay ≤8), B (settings + templates), C (library + folders, ≤8),
 D (select + bulk ops), E (recycle bin), F (AI stubs). Each lettered area is
 independently shippable per the Rollout Strategy; each becomes its own
 `docs/implementation-plans/<date>-<area>/` set. The HTML phase markers
 (`<!-- START_PHASE_A1 -->` …) let the implementation-plan writer parse phases
-individually. Start with area **A** (Phase A1).
+individually. **A10 (pen width) is the exception to pure area ordering** — it
+lives in area A but depends on **B1**, so it ships after B1 lands (group it
+with the B-area implementation plan, or a small standalone plan after B1).
+Start with area **A** (A1–A5 are already implemented).
 
 ### What this plan deliberately does NOT include
 
@@ -340,6 +345,24 @@ This plan is complete when:
   Phase A — if you can't justify why a number is in `dp` not `mm`,
   convert it.
 
+### library-and-tools.AC10: Pen width levels
+
+- **library-and-tools.AC10.1 Success:** The Fountain dropdown shows a 5-level width
+  strip (`XS / S / M / L / XL`), rendered as actual thickness samples, with the
+  active variant's level highlighted. Tapping a chip sets that level.
+- **library-and-tools.AC10.2 Success:** Width is per-variant: Fountain, Fineliner and
+  Highlighter each remember their own level. Switching variant brings its
+  remembered width forward (and the strip highlight follows).
+- **library-and-tools.AC10.3 Success:** A higher level widens the stroke per variant —
+  Fountain's pressure range, Fineliner's constant width, and Highlighter's band
+  all scale from one base scale via `PenParams`. `M` equals the v1 default
+  `(7, 35)` so default rendering is unchanged.
+- **library-and-tools.AC10.4 Success:** The per-variant width selection persists across
+  app restart (stored in `settings_json`); on a fresh install every variant
+  defaults to `M`.
+- **library-and-tools.AC10.5 Edge:** Erasers are out of scope — their widths stay fixed
+  (Stroke 40 px / Pixel 16 px).
+
 ## Glossary
 
 - **Library:** the home screen, replacing v1's notebook-picker-as-home.
@@ -364,6 +387,11 @@ This plan is complete when:
   `PorterDuff.DST_OVER` (paints behind ink; cannot darken on overlap since
   it's opaque). DST_OVER mirrors WiNote's `HighlighterPen`; the opacity
   diverges from WiNote to guarantee no-darkening.
+- **Pen width level:** one of 5 discrete thicknesses (`XS/S/M/L/XL`) from a
+  single base scale mapping each level to a `(min,max)` virtual-width pair
+  (`M` = the v1 `(7,35)` default). `PenParams` transforms the level's pair per
+  variant. Chosen per-variant, persisted in `settings_json`. Mirrors WiNote's
+  5 width levels (count + shape), not its per-pen tables.
 - **Lasso:** freehand selection tool. Drag draws a polyline boundary;
   pen-up closes the polygon; strokes whose centroid is inside become
   selected.
@@ -890,6 +918,45 @@ the same Properties dialog reuses from card long-presses.)
 **Done when:** Long-press a notebook in the picker → dialog shows
 metadata + editable name + Delete. All flows tested on device.
 <!-- END_PHASE_A9 -->
+
+<!-- START_PHASE_A10 -->
+### Phase A10: Pen width levels
+**Effort:** M
+**Touches schema:** No (persists via B1's `settings_json`)
+**Depends on:** A2 (PenParams/variants), B1 (settings persistence)
+
+**Goal:** Let the user pick one of 5 discrete pen widths per variant, from a
+dropdown strip, persisted across restart. Sequencing note: **B1 must land
+before A10** (A10 stores its selection in `settings_json`).
+
+**Components:**
+- `core/ink`: `PenWidthLevel` enum (`XS, S, M, L, XL`) + `PenWidthScale`
+  mapping each level → `(minVirtual, maxVirtual)`, anchored so `M = (7, 35)`
+  (v1 default; other levels scale around it, shape informed by WiNote's
+  `steel_pen_width` progression — exact numbers tuned on-device).
+- `PenParams.of(...)` evolves from `(variant, baseMin, baseMax)` to
+  `(variant, level: PenWidthLevel)`: looks up the level's base pair, then
+  applies the existing per-variant transform. Update A2's call site in
+  `DrawView`.
+- `ToolSelectionLogic` (pure): per-variant width map
+  `Map<PenVariant, PenWidthLevel>` (default all `M`); `selectPenWidth(level)`
+  sets the active variant's level; `activePenWidth()` reads it; switching
+  variant brings its remembered width forward.
+- `ToolBar`: the Fountain dropdown gains a horizontal width strip — 5 chips
+  drawn as thickness samples, active level highlighted; tap → set level +
+  persist + update `DrawView.activePenWidthLevel`.
+- `DrawView`: builds `PenParams.of(activePenVariant, activePenWidthLevel)` at
+  pen-down.
+- Persistence (B1): `Settings` gains `penWidthLevels` (per-variant, default
+  `M`); load into `ToolSelectionLogic` on launch, write back via
+  `SettingsRepository` on change.
+
+**Done when:** Picking a width changes new-stroke thickness for the active
+variant; each variant keeps its own width; selection survives restart;
+default (`M`) renders identically to v1. Unit tests: `PenWidthScale` values
+(`M == (7,35)`), `PenParams.of(variant, level)` per-variant transforms,
+`ToolSelectionLogic` per-variant width memory.
+<!-- END_PHASE_A10 -->
 
 <!-- START_PHASE_B1 -->
 ### Phase B1: Settings schema + per-page template schema + repository
