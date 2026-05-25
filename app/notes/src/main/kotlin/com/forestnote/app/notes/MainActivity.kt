@@ -39,6 +39,7 @@ class MainActivity : Activity() {
     private lateinit var toolBar: ToolBar
     private lateinit var pageIndicator: TextView
     private lateinit var btnNotebooks: TextView
+    private lateinit var btnNext: ImageButton
     private var isEInk = false
 
     // Cache of the current notebook's pages + active id, refreshed off the store.
@@ -78,12 +79,18 @@ class MainActivity : Activity() {
         // Wire the page navigation bar (prev / indicator / next).
         pageIndicator = findViewById(R.id.page_indicator)
         val btnPrev: ImageButton = findViewById(R.id.btn_prev_page)
-        val btnNext: ImageButton = findViewById(R.id.btn_next_page)
+        btnNext = findViewById(R.id.btn_next_page)
         btnPrev.setOnClickListener {
             PageNavigationLogic.prevId(pageIds, activePageId)?.let { goToPage(it) }
         }
         btnNext.setOnClickListener {
-            PageNavigationLogic.nextId(pageIds, activePageId)?.let { goToPage(it) }
+            // On the last page the arrow appends a new page (and switches to it);
+            // otherwise it navigates forward (AC3.1–AC3.3).
+            if (PageNavigationLogic.nextCreatesPage(pageIds, activePageId)) {
+                store.createPage { newId -> goToPage(newId) }
+            } else {
+                PageNavigationLogic.nextId(pageIds, activePageId)?.let { goToPage(it) }
+            }
         }
         pageIndicator.setOnClickListener { showPagePicker() }
 
@@ -148,6 +155,14 @@ class MainActivity : Activity() {
             pageIds = pages.map { it.id }
             activePageId = activeId
             pageIndicator.text = PageNavigationLogic.label(pageIds, activePageId)
+            // On the last page the next arrow grows a "+" badge (AC3.1).
+            btnNext.setImageResource(
+                if (PageNavigationLogic.nextCreatesPage(pageIds, activePageId)) {
+                    R.drawable.ic_arrow_right_plus
+                } else {
+                    R.drawable.ic_arrow_right
+                }
+            )
         }
     }
 
