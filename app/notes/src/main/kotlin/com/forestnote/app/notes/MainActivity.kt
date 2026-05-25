@@ -42,6 +42,10 @@ class MainActivity : Activity() {
     private lateinit var btnNext: ImageButton
     private var isEInk = false
 
+    // In-process clipboard for lasso Cut/Copy/Paste (held across A7 selection + A8 paste).
+    private val clipboard = InProcessClipboard()
+    private lateinit var selectionMenu: SelectionMenuView
+
     // Cache of the current notebook's pages + active id, refreshed off the store.
     private var pageIds: List<String> = emptyList()
     private var activePageId: String = ""
@@ -116,6 +120,26 @@ class MainActivity : Activity() {
             drawView.activePenVariant = variant
         }
 
+        // Lasso selection menu: show the action pill over a closed selection, dismiss
+        // it when the selection clears (tool switch / new lasso / cut / delete).
+        selectionMenu = SelectionMenuView(isEInk)
+        drawView.onSelectionChanged = { strokes, bounds ->
+            if (strokes.isEmpty() || bounds == null) {
+                selectionMenu.dismiss()
+            } else {
+                selectionMenu.show(
+                    drawView, strokes.size, bounds,
+                    SelectionMenuView.Callbacks(
+                        onCut = { drawView.cutSelection(clipboard) },
+                        onCopy = { drawView.copySelection(clipboard) },
+                        onRecognize = { showSelectionActionStub("Recognize") },
+                        onTodo = { showSelectionActionStub("To-do") },
+                        onDelete = { drawView.deleteSelection() }
+                    )
+                )
+            }
+        }
+
         // Wire Clear button
         toolBar.setOnClearClicked {
             showClearConfirmation()
@@ -131,6 +155,18 @@ class MainActivity : Activity() {
             window.setWindowAnimations(0)
             drawView.overScrollMode = View.OVER_SCROLL_NEVER
         }
+    }
+
+    /**
+     * Stub for the lasso pill's Recognize / To-do actions (Caveat 1): both need a
+     * server URL from Settings (a later phase), so for now they explain that. No network.
+     */
+    private fun showSelectionActionStub(action: String) {
+        AlertDialog.Builder(this)
+            .setTitle(action)
+            .setMessage("$action needs a server URL configured in Settings, which is coming in a later version.")
+            .setPositiveButton("OK", null)
+            .show()
     }
 
     /**

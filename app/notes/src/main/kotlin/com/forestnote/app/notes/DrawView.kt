@@ -323,9 +323,12 @@ class DrawView @JvmOverloads constructor(
     private fun handleLasso(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                // Starting a new lasso clears any prior selection + dismisses its menu.
+                val hadSelection = selectedStrokeIds.isNotEmpty()
                 lassoPoints.clear()
                 selectedStrokeIds = emptySet()
                 lassoClosed = false
+                if (hadSelection) onSelectionChanged?.invoke(emptyList(), null)
                 lassoPoints.add(
                     LassoSelectionLogic.Point(
                         transform.toVirtualX(event.x), transform.toVirtualY(event.y)
@@ -359,10 +362,55 @@ class DrawView @JvmOverloads constructor(
                 } else {
                     emptySet()
                 }
+                // Notify the selection menu: show over the selection bbox, or dismiss.
+                val selected = getSelectedStrokes()
+                onSelectionChanged?.invoke(selected, selectionScreenBounds(selected))
                 invalidate()
             }
         }
         return true
+    }
+
+    /** Screen-space bounding box of [strokes], or null if empty (used to anchor the menu). */
+    private fun selectionScreenBounds(strokes: List<Stroke>): RectF? {
+        val b = LassoSelectionLogic.bounds(strokes) ?: return null
+        return RectF(
+            transform.toScreenX(b.minX), transform.toScreenY(b.minY),
+            transform.toScreenX(b.maxX), transform.toScreenY(b.maxY)
+        )
+    }
+
+    // ===== Lasso selection actions (A7) =====
+
+    /** The strokes currently selected by the lasso (live lookup against the model). */
+    fun getSelectedStrokes(): List<Stroke> =
+        completedStrokes.filter { it.id in selectedStrokeIds }
+
+    /** Copy the current selection to [clipboard] (leaves the strokes on the page). */
+    fun copySelection(clipboard: Clipboard) {
+        clipboard.set(getSelectedStrokes())
+    }
+
+    /** Remove the current selection from the page (persisted off-thread) without stashing. */
+    fun deleteSelection() {
+        val ids = selectedStrokeIds.toList()
+        if (ids.isEmpty()) return
+        store?.deleteStrokes(ids)
+        val idSet = ids.toHashSet()
+        completedStrokes.removeAll { it.id in idSet }
+        // Clear selection + dismiss the menu BEFORE redrawing so the highlight loop
+        // never references a removed stroke (the loop iterates completedStrokes anyway).
+        selectedStrokeIds = emptySet()
+        lassoPoints.clear()
+        lassoClosed = false
+        onSelectionChanged?.invoke(emptyList(), null)
+        redrawBitmap()
+    }
+
+    /** Cut = copy then delete. */
+    fun cutSelection(clipboard: Clipboard) {
+        copySelection(clipboard)
+        deleteSelection()
     }
 
     private fun handleEraser(event: MotionEvent): Boolean {
