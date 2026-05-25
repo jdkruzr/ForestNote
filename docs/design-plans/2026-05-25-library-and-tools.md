@@ -176,11 +176,14 @@ This plan is complete when:
 - **library-and-tools.AC1.3 Success:** Fountain renders with the existing log pressure curve.
   Fineliner renders constant-width (pressure ignored, set to the average
   of the current preset's min/max). Highlighter renders wide and
-  fixed-width in a translucent gray, composited with `PorterDuff.Mode.DST_OVER`
-  so it paints *behind* existing ink (writing stays legible) and overlapping
-  highlighter does not darken (DST_OVER only fills still-transparent pixels).
-  This matches WiNote's `HighlighterPen` — see
-  `docs/research/winote-pen-rendering.md`.
+  fixed-width in an **opaque muted gray (no alpha)**, composited with
+  `PorterDuff.Mode.DST_OVER` so it paints *behind* existing ink (writing
+  stays legible) and overlapping highlighter **does not darken** — opaque
+  over opaque is unchanged, and DST_OVER only fills still-transparent
+  pixels. No-darkening-on-overlap is a hard requirement, so we use opaque
+  gray rather than WiNote's translucent alpha (a deliberate divergence —
+  see Open Questions); DST_OVER (behind-ink) still mirrors WiNote's
+  `HighlighterPen`. See `docs/research/winote-pen-rendering.md`.
 - **library-and-tools.AC1.4 Success:** Tapping Erase opens a dropdown with Stroke and Pixel.
   Behaviour of each variant is unchanged from v1.
 - **library-and-tools.AC1.5 Success:** Last-used variant per group is remembered across tool
@@ -357,9 +360,10 @@ This plan is complete when:
   `ln(3p+1)/ln(4)` pressure curve.
 - **Fineliner:** constant-width pen variant; pressure ignored, width set
   to the average of the active preset's `wMin`/`wMax`.
-- **Highlighter:** wide fixed-width pen in translucent gray, composited
-  `PorterDuff.DST_OVER` (paints behind ink; self-overlap doesn't darken),
-  matching WiNote's `HighlighterPen`.
+- **Highlighter:** wide fixed-width pen in opaque muted gray, composited
+  `PorterDuff.DST_OVER` (paints behind ink; cannot darken on overlap since
+  it's opaque). DST_OVER mirrors WiNote's `HighlighterPen`; the opacity
+  diverges from WiNote to guarantee no-darkening.
 - **Lasso:** freehand selection tool. Drag draws a polyline boundary;
   pen-up closes the polygon; strokes whose centroid is inside become
   selected.
@@ -684,14 +688,15 @@ based on the active variant at commit time.
   `params(variant: PenVariant, preset: PresetSize): PenParams`
   returning `(color, wMin, wMax)`.
 - Fineliner: `wMin = wMax = (preset.wMin + preset.wMax) / 2`.
-- Highlighter: fixed width (`wMin = wMax`, wide — WiNote's
-  `highlight_pen_width` is ~25 units at the M level), translucent gray,
-  drawn with `Paint.xfermode = PorterDuff.Mode.DST_OVER` + alpha so it
-  composites *behind* ink and self-overlap doesn't darken. Mirror WiNote's
-  `HighlighterPen` (see `docs/research/winote-pen-rendering.md`). NOTE: this
-  requires the per-stroke paint to set the xfermode; verify it survives the
-  z-order replay in `redrawBitmap()` (DST_OVER drawn after ink still lands
-  beneath it because ink pixels are already present).
+- Highlighter: fixed width (`wMin = wMax`, wide — ~2.5× `preset.wMax`),
+  **opaque muted gray (no alpha)**, drawn with `Paint.xfermode =
+  PorterDuff.Mode.DST_OVER` so it composites *behind* ink and overlap
+  cannot darken (opaque). Opaque (not WiNote's alpha) is required to
+  guarantee no-darkening; DST_OVER still mirrors WiNote's behind-ink
+  `HighlighterPen` (see `docs/research/winote-pen-rendering.md`). NOTE:
+  the per-stroke paint sets the xfermode; verify it survives the z-order
+  replay in `redrawBitmap()` (DST_OVER drawn after ink still lands beneath
+  it because ink pixels are already present).
 - `DrawView` uses `PenParams` instead of bare preset.
 - Two new icons.
 
@@ -1411,12 +1416,15 @@ need to revisit:
   pastes into any notebook. In-process at the A-phase, persisted after B1
   (the `Clipboard` interface swaps backing store transparently). The
   clipboard clears only on an explicit new Cut/Copy, not on notebook switch.
-- **Highlighter rendering.** RESOLVED (2026-05-25): match WiNote —
-  `PorterDuff.DST_OVER` + alpha, wide, fixed-width, round cap. DST_OVER paints
-  behind existing ink (writing stays legible) and inherently prevents
-  self-overlap darkening, so no off-screen union layer is needed. The original
-  "opaque muted-gray" spec was dropped because opaque ink would hide the text it
-  highlights. See `docs/research/winote-pen-rendering.md` line ~83.
+- **Highlighter rendering.** RESOLVED (2026-05-25, refined): **opaque muted
+  gray + `PorterDuff.DST_OVER`**, wide, fixed-width, round cap.
+  No-darkening-on-overlap is a **hard requirement**, which rules out alpha
+  (translucent strokes accumulate where separate strokes cross). DST_OVER makes
+  the gray paint *behind* existing ink, so opaque gray does NOT hide writing
+  (the earlier worry) — ink composites on top. This **diverges from WiNote**,
+  which uses translucent alpha (`docs/research/winote-pen-rendering.md` line
+  ~83); we keep WiNote's DST_OVER behind-ink trick but drop its alpha to
+  guarantee uniform highlight. No off-screen union layer needed.
 - **Recycle Bin retention.** RESOLVED (2026-05-25): default **never
   auto-purge**; expose an opt-in setting offering 30 / 60 / 90 days (and
   Never). Auto-deleting irreplaceable notes on a timer is opt-in only;
