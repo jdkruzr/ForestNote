@@ -413,6 +413,20 @@ class DrawView @JvmOverloads constructor(
         deleteSelection()
     }
 
+    /**
+     * Insert already-offset, fresh-id strokes onto the page (lasso Paste, AC1.6). Mirrors
+     * the pen-up path: add to the in-memory model + persist each off-thread, then redraw.
+     * Persistence bumps the notebook's modified_at via saveStroke→touchCurrentNotebook.
+     */
+    fun addPastedStrokes(strokes: List<Stroke>) {
+        if (strokes.isEmpty()) return
+        for (s in strokes) {
+            completedStrokes.add(s)
+            store?.save(s)
+        }
+        redrawBitmap()
+    }
+
     private fun handleEraser(event: MotionEvent): Boolean {
         // Hardware eraser (TOOL_TYPE_ERASER) always triggers erase.
         // If activeTool is Pen, default to StrokeEraser. Otherwise use activeTool.

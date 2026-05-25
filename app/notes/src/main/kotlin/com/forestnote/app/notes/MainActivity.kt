@@ -14,6 +14,7 @@ import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.ink.BackendDetector
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
+import com.forestnote.core.ink.Ulid
 import com.forestnote.core.ink.ViwoodsBackend
 import java.io.FileWriter
 import java.io.PrintWriter
@@ -45,6 +46,9 @@ class MainActivity : Activity() {
     // In-process clipboard for lasso Cut/Copy/Paste (held across A7 selection + A8 paste).
     private val clipboard = InProcessClipboard()
     private lateinit var selectionMenu: SelectionMenuView
+    // Shared with DrawView (same instance); DrawView updates its extents on layout, so
+    // virtualLongAxis is current by the time paste() reads it for the in-bounds offset.
+    private val pageTransform = PageTransform()
 
     // Cache of the current notebook's pages + active id, refreshed off the store.
     private var pageIds: List<String> = emptyList()
@@ -74,7 +78,7 @@ class MainActivity : Activity() {
         drawView.apply {
             setBackend(backend)
             setStore(store)
-            setTransform(PageTransform())
+            setTransform(pageTransform)
             onStrokeSaved = { stroke ->
                 // Notification-only callback
             }
@@ -150,11 +154,31 @@ class MainActivity : Activity() {
             drawView.fullRefresh()
         }
 
+        // Paste cell: enabled live whenever the clipboard is non-empty (AC1.6).
+        toolBar.setOnPasteClicked { paste() }
+        clipboard.addListener { strokes -> toolBar.setPasteEnabled(strokes.isNotEmpty()) }
+        toolBar.setPasteEnabled(!clipboard.isEmpty())
+
         // E-ink optimizations
         if (isEInk) {
             window.setWindowAnimations(0)
             drawView.overScrollMode = View.OVER_SCROLL_NEVER
         }
+    }
+
+    /**
+     * Paste the clipboard's strokes onto the current page with fresh ULIDs and a single
+     * in-bounds offset (AC1.6). No-op when the clipboard is empty.
+     */
+    private fun paste() {
+        val src = clipboard.get()
+        if (src.isEmpty()) return
+        val b = LassoSelectionLogic.bounds(src) ?: return
+        val (dx, dy) = LassoSelectionLogic.pasteOffset(
+            b, PageTransform.VIRTUAL_SHORT_AXIS, pageTransform.virtualLongAxis
+        )
+        val pasted = LassoSelectionLogic.translate(src, dx, dy) { Ulid.generate() }
+        drawView.addPastedStrokes(pasted)
     }
 
     /**

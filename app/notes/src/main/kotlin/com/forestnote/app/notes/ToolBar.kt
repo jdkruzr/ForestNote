@@ -35,8 +35,12 @@ class ToolBar(
     private val btnLasso: View = root.findViewById(R.id.cell_lasso)
     private val btnErase: View = root.findViewById(R.id.cell_erase)
     private val lblErase: TextView = root.findViewById(R.id.label_erase)
+    private val btnPaste: View = root.findViewById(R.id.cell_paste)
     private val btnClear: View = root.findViewById(R.id.cell_clear)
     private val btnRefresh: View = root.findViewById(R.id.cell_refresh)
+
+    private var activePasteCallback: (() -> Unit)? = null
+    private var pasteEnabled = false
 
     // Group cells whose active state is highlighted (Fountain = Pen group; Lasso; Erase = erasers).
     private val highlightCells = listOf(btnFountain, btnLasso, btnErase)
@@ -78,15 +82,19 @@ class ToolBar(
         }
         btnClear.setOnClickListener { logic.triggerClear() }
         btnRefresh.setOnClickListener { activeRefreshCallback?.invoke() }
+        // Paste is an action cell, gated on a non-empty clipboard (greyed when empty).
+        btnPaste.setOnClickListener { if (pasteEnabled) activePasteCallback?.invoke() }
 
         // On e-ink, remove ripple background to prevent ghosting
         if (isEInk) {
             for (cell in highlightCells) {
                 cell.background = null
             }
+            btnPaste.background = null
             btnClear.background = null
             btnRefresh.background = null
         }
+        setPasteEnabled(false)
 
         // Set initial visual state
         updateButtonAppearance()
@@ -147,6 +155,17 @@ class ToolBar(
      */
     fun setOnRefreshClicked(callback: () -> Unit) {
         activeRefreshCallback = callback
+    }
+
+    /** Set the callback to invoke when the Paste cell is tapped (only fires when enabled). */
+    fun setOnPasteClicked(callback: () -> Unit) {
+        activePasteCallback = callback
+    }
+
+    /** Enable/disable the Paste cell: greyed (alpha 0.3) + no-op when the clipboard is empty. */
+    fun setPasteEnabled(enabled: Boolean) {
+        pasteEnabled = enabled
+        btnPaste.alpha = if (enabled) 1f else 0.3f
     }
 
     /** Human-readable label for a pen variant (UI concern, kept out of core:ink). */
