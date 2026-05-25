@@ -1,5 +1,6 @@
 package com.forestnote.app.notes
 
+import com.forestnote.core.ink.PenVariant
 import com.forestnote.core.ink.Tool
 
 /**
@@ -18,6 +19,9 @@ class ToolSelectionLogic(
 ) {
     private var activeTool: Tool = Tool.Pen
 
+    /** Last-used variant of the pen group; remembered across tool switches. */
+    private var penVariant: PenVariant = PenVariant.FOUNTAIN
+
     /**
      * Select a tool and invoke the tool selection callback.
      */
@@ -25,6 +29,26 @@ class ToolSelectionLogic(
         activeTool = tool
         onToolSelected(tool)
     }
+
+    /**
+     * Activate the pen group with its last-used variant (e.g. tapping the
+     * Fountain cell). Does not change the remembered variant.
+     */
+    fun selectPenGroup() {
+        selectTool(Tool.Pen)
+    }
+
+    /**
+     * Choose a specific pen variant (e.g. tapping a dropdown entry). Remembers
+     * the variant and activates the pen tool.
+     */
+    fun selectPenVariant(variant: PenVariant) {
+        penVariant = variant
+        selectTool(Tool.Pen)
+    }
+
+    /** The currently-remembered pen variant. */
+    fun activePenVariant(): PenVariant = penVariant
 
     /**
      * Trigger a clear action without changing the active tool.

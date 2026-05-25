@@ -1,5 +1,6 @@
 package com.forestnote.app.notes
 
+import com.forestnote.core.ink.PenVariant
 import com.forestnote.core.ink.Tool
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -243,5 +244,53 @@ class ToolBarLogicTest {
         logic.selectTool(Tool.StrokeEraser)
         assertFalse(logic.isToolSelected(Tool.Pen), "Pen should no longer be selected")
         assertTrue(logic.isToolSelected(Tool.StrokeEraser), "StrokeEraser should be selected")
+    }
+
+    // ========== Pen group / variant tests (A1) ==========
+    // library-and-tools.AC1.2 (group mechanism), AC1.5 (variant remembered across tool switch)
+
+    @Test
+    fun `defaultPenVariantIsFountain`() {
+        val logic = ToolSelectionLogic()
+        assertEquals(PenVariant.FOUNTAIN, logic.activePenVariant(),
+            "Default pen variant should be Fountain")
+    }
+
+    @Test
+    fun `selectingPenGroupActivatesPenTool`() {
+        var callbackTool: Tool? = null
+        val logic = ToolSelectionLogic(onToolSelected = { callbackTool = it })
+        logic.selectTool(Tool.StrokeEraser)
+
+        logic.selectPenGroup()
+
+        assertEquals(Tool.Pen, logic.getActiveTool(), "Pen group activates the Pen tool")
+        assertEquals(Tool.Pen, callbackTool,
+            "Selecting the pen group fires the tool callback with Pen")
+    }
+
+    @Test
+    fun `selectingPenVariantSetsVariantAndActivatesPen`() {
+        var callbackTool: Tool? = null
+        val logic = ToolSelectionLogic(onToolSelected = { callbackTool = it })
+
+        logic.selectPenVariant(PenVariant.FOUNTAIN)
+
+        assertEquals(PenVariant.FOUNTAIN, logic.activePenVariant(),
+            "Selected variant becomes active")
+        assertEquals(Tool.Pen, logic.getActiveTool(),
+            "Selecting a pen variant activates the Pen tool")
+        assertEquals(Tool.Pen, callbackTool,
+            "Selecting a pen variant fires the tool callback with Pen")
+    }
+
+    @Test
+    fun `penVariantPersistsAcrossToolSwitch`() {
+        val logic = ToolSelectionLogic()
+        logic.selectPenVariant(PenVariant.FOUNTAIN)
+        logic.selectTool(Tool.PixelEraser)
+
+        assertEquals(PenVariant.FOUNTAIN, logic.activePenVariant(),
+            "Pen variant is remembered while another tool is active")
     }
 }
