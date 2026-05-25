@@ -67,4 +67,31 @@ class PageNavigationLogicTest {
         assertNull(PageNavigationLogic.nextId(pages, "zzz"), "no next id for absent active")
         assertEquals("0 / 3", PageNavigationLogic.label(pages, "zzz"), "absent active shows 0 / N")
     }
+
+    // ========== Tap-past-end creates page (A4) ==========
+    // library-and-tools.AC3.1/3.2/3.3: the right arrow creates a page only on the last page.
+
+    @Test
+    fun `nextCreatesPage_onlyOnLastPage`() {
+        assertTrue(PageNavigationLogic.nextCreatesPage(pages, "c"),
+            "on the last page, the next arrow creates a page")
+        assertFalse(PageNavigationLogic.nextCreatesPage(pages, "b"),
+            "on a middle page, the next arrow navigates (does not create)")
+        assertFalse(PageNavigationLogic.nextCreatesPage(pages, "a"),
+            "on the first page (of many), the next arrow navigates")
+    }
+
+    @Test
+    fun `nextCreatesPage_singlePageIsAlsoLastPage`() {
+        assertTrue(PageNavigationLogic.nextCreatesPage(listOf("a"), "a"),
+            "a lone page is the last page, so next creates")
+    }
+
+    @Test
+    fun `nextCreatesPage_falseWhenActiveAbsentOrEmpty`() {
+        assertFalse(PageNavigationLogic.nextCreatesPage(pages, "zzz"),
+            "absent active id does not create a page")
+        assertFalse(PageNavigationLogic.nextCreatesPage(emptyList(), "a"),
+            "empty page list does not create a page")
+    }
 }
