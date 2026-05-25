@@ -12,6 +12,8 @@ import android.view.MotionEvent
 import android.view.View
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
+import com.forestnote.core.ink.PenParams
+import com.forestnote.core.ink.PenVariant
 import com.forestnote.core.ink.PressureCurve
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeBuilder
@@ -79,6 +81,8 @@ class DrawView @JvmOverloads constructor(
     private var store: NotebookStore? = null
     private var transform = PageTransform()
     var activeTool: Tool = Tool.Pen
+    /** Active pen variant; set by MainActivity when a variant is picked. */
+    var activePenVariant: PenVariant = PenVariant.FOUNTAIN
     var onStrokeSaved: ((Stroke) -> Unit)? = null
 
     // Rendering
@@ -88,6 +92,20 @@ class DrawView @JvmOverloads constructor(
         isAntiAlias = true
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
+    }
+
+    /** Composite-behind mode for the highlighter (paints under existing ink). */
+    private val dstOverXfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OVER)
+
+    /**
+     * Set [strokePaint]'s colour + xfermode for a stroke. Highlighter strokes
+     * (carrying [PenParams.HIGHLIGHTER_GRAY]) composite DST_OVER so they land
+     * behind ink and, being opaque, never darken on overlap.
+     */
+    private fun configureStrokePaintFor(color: Int) {
+        strokePaint.color = color
+        strokePaint.xfermode =
+            if (color == PenParams.HIGHLIGHTER_GRAY) dstOverXfermode else null
     }
 
     // Eraser paint — clears pixels with PorterDuff CLEAR, same as WiNote
@@ -270,7 +288,12 @@ class DrawView @JvmOverloads constructor(
                 val vy = transform.toVirtualY(event.y)
                 val mp = transform.toMillipressure(event.pressure)
 
-                currentStroke = StrokeBuilder().also {
+                // Resolve per-variant colour/width, configure the live paint.
+                val params = PenParams.of(
+                    activePenVariant, Stroke.DEFAULT_WIDTH_MIN, Stroke.DEFAULT_WIDTH_MAX
+                )
+                configureStrokePaintFor(params.color)
+                currentStroke = StrokeBuilder(params.color, params.wMin, params.wMax).also {
                     it.addPoint(StrokePoint(vx, vy, mp, System.currentTimeMillis()))
                 }
 
@@ -548,6 +571,11 @@ class DrawView @JvmOverloads constructor(
         val points = stroke.points
         if (points.size < 2) return
 
+        // Per-stroke colour + composite mode (highlighter → DST_OVER, behind ink).
+        // During z-order replay this still lands highlighter beneath ink because
+        // ink pixels are already present when the (later-z) highlighter draws.
+        configureStrokePaintFor(stroke.color)
+
         for (i in 1 until points.size) {
             val prev = points[i - 1]
             val curr = points[i]
@@ -559,5 +587,8 @@ class DrawView @JvmOverloads constructor(
                 strokePaint
             )
         }
+
+        // Leave the shared paint in a clean (normal-composite) state.
+        strokePaint.xfermode = null
     }
 }

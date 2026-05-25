@@ -26,6 +26,7 @@ class ToolBar(
 ) {
     private var activeClearCallback: (() -> Unit)? = null
     private var activeRefreshCallback: (() -> Unit)? = null
+    private var penVariantCallback: ((PenVariant) -> Unit)? = null
 
     // Each tool's clickable hitbox is the whole cell (icon + word), not just the icon.
     private val btnFountain: View = root.findViewById(R.id.cell_fountain)
@@ -128,6 +129,13 @@ class ToolBar(
     /** Human-readable label for a pen variant (UI concern, kept out of core:ink). */
     private fun penVariantLabel(variant: PenVariant): String = when (variant) {
         PenVariant.FOUNTAIN -> "Fountain"
+        PenVariant.FINELINER -> "Fineliner"
+        PenVariant.HIGHLIGHTER -> "Highlighter"
+    }
+
+    /** Set the callback invoked when a pen variant is chosen from the dropdown. */
+    fun setOnPenVariantSelected(callback: (PenVariant) -> Unit) {
+        penVariantCallback = callback
     }
 
     /**
@@ -174,6 +182,7 @@ class ToolBar(
                 }
                 setOnClickListener {
                     logic.selectPenVariant(variant)
+                    penVariantCallback?.invoke(variant)
                     popup.dismiss()
                 }
             }

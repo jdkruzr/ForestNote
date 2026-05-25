@@ -104,6 +104,10 @@ class MainActivity : Activity() {
         toolBar = ToolBar(toolBarRoot, isEInk) { tool ->
             drawView.activeTool = tool
         }
+        // Propagate pen-variant choice to the canvas (affects width/colour/compositing).
+        toolBar.setOnPenVariantSelected { variant ->
+            drawView.activePenVariant = variant
+        }
 
         // Wire Clear button
         toolBar.setOnClearClicked {
