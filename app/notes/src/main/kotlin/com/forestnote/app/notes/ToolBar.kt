@@ -178,16 +178,13 @@ class ToolBar(
 
         labels.forEachIndexed { i, label ->
             val row = TextView(ctx).apply {
-                text = label
+                // Active row is marked with a leading ● (not a box border): in a stacked
+                // list a per-row border reads as a divider that appears/moves with the
+                // selection. Inactive rows indent to keep the labels aligned.
+                text = if (i == activeIndex) "●  $label" else "      $label"
                 textSize = 14f
                 setTextColor(Color.BLACK)
                 setPadding(padH, padV, padH, padV)
-                if (i == activeIndex) {
-                    background = GradientDrawable().apply {
-                        setColor(Color.WHITE)
-                        setStroke(1, Color.BLACK)
-                    }
-                }
                 setOnClickListener {
                     onPick(i)
                     popup.dismiss()
