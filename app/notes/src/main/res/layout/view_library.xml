@@ -201,7 +201,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Folder"
+                android:text="Folder ▾"
                 android:textSize="9sp"
                 android:textColor="@color/black"
                 android:maxLines="1"
@@ -234,7 +234,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Notebook"
+                android:text="Notebook ▾"
                 android:textSize="9sp"
                 android:textColor="@color/black"
                 android:maxLines="1"
