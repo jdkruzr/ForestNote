@@ -252,11 +252,23 @@ class NotebookRepository private constructor(
         }
     }
 
-    /** Append a page to the current notebook; returns its id. Caller decides whether to switch (AC3.1). */
+    /**
+     * Append a page to the current notebook; returns its id. Caller decides whether to
+     * switch (AC3.1). The new page inherits the previous last page's template override
+     * (verbatim, NULL included) so it matches the rest of the notebook — the global
+     * default only seeds a notebook's very first page (which has no predecessor).
+     */
     fun createPage(): String {
         val pid = Ulid.generate()
+        // Snapshot the existing pages (ordered by sort_order) BEFORE inserting the new one.
+        val last = db.notebookQueries.listPagesForNotebook(currentNotebookId).executeAsList().lastOrNull()
         val so = db.notebookQueries.nextPageSortOrder(currentNotebookId).executeAsOne()
-        db.notebookQueries.insertPage(pid, currentNotebookId, so, System.currentTimeMillis())
+        db.transaction {
+            db.notebookQueries.insertPage(pid, currentNotebookId, so, System.currentTimeMillis())
+            if (last != null) {
+                db.notebookQueries.setPageTemplate(last.template, last.template_pitch_mm, pid)
+            }
+        }
         return pid
     }
 
