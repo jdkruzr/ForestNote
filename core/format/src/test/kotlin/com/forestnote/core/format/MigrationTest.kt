@@ -181,9 +181,10 @@ class MigrationTest {
     fun repositoryUsableAfterMigration() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV1Schema(driver)
-        // Schema.version is now 4; openExisting → bootstrap queries the current tables
-        // (notebook incl. modified_at, app_state), so migrate all the way to the current version.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 4L)
+        // Schema.version is now 5; openExisting → bootstrap queries the current tables
+        // (notebook incl. modified_at, app_state incl. settings_json), so migrate all
+        // the way to the current version.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 5L)
 
         // openExisting (no schema.create) must work against the migrated DB.
         val repo = NotebookRepository.openExisting(driver)
@@ -206,8 +207,8 @@ class MigrationTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV2Schema(driver)
 
-        // Migrate to the current version (4); this still runs the v2->v3 step plus v3->v4.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 4L)
+        // Migrate to the current version (5); this still runs the v2->v3 step plus v3->v4, v4->v5.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 5L)
 
         assertTrue(tableExists(driver, "notebook"), "notebook table exists after v2->v3")
         assertTrue(tableExists(driver, "app_state"), "app_state table exists after v2->v3")
@@ -273,6 +274,73 @@ class MigrationTest {
             0
         )
         assertEquals(12345L, modified, "existing notebook's modified_at is backfilled from created_at")
+
+        driver.close()
+    }
+
+    /**
+     * library-and-tools B1: migrating v4 -> v5 adds the Settings blob + clipboard
+     * columns on app_state and the per-page template-override columns on page.
+     * Existing pages get NULL template / template_pitch_mm (= inherit the global
+     * default, AC8.4).
+     */
+    @Test
+    fun v4ToV5AddsSettingsAndPerPageTemplateColumns() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        // Minimal v4 page + app_state, with one pre-existing page.
+        driver.execute(
+            null,
+            """
+            CREATE TABLE page (
+                id TEXT PRIMARY KEY NOT NULL,
+                notebook_id TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+            0
+        )
+        driver.execute(
+            null,
+            """
+            CREATE TABLE app_state (
+                id INTEGER PRIMARY KEY NOT NULL CHECK (id = 0),
+                active_notebook_id TEXT,
+                active_page_id TEXT
+            )
+            """.trimIndent(),
+            0
+        )
+        driver.execute(null, "INSERT INTO page(id, notebook_id, sort_order, created_at) VALUES ('p1', 'n1', 0, 0)", 0)
+        driver.execute(null, "INSERT INTO app_state(id, active_notebook_id, active_page_id) VALUES (0, 'n1', 'p1')", 0)
+        driver.execute(null, "PRAGMA user_version = 4", 0)
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 4L, newVersion = 5L)
+
+        assertTrue(columnNames(driver, "app_state").contains("settings_json"), "app_state gains settings_json")
+        assertTrue(columnNames(driver, "app_state").contains("clipboard_json"), "app_state gains clipboard_json")
+        assertTrue(columnNames(driver, "page").contains("template"), "page gains template")
+        assertTrue(columnNames(driver, "page").contains("template_pitch_mm"), "page gains template_pitch_mm")
+
+        // Existing app_state row gets the DEFAULT '{}' blob (decodes to default Settings).
+        var settingsJson: String? = null
+        driver.executeQuery(
+            null,
+            "SELECT settings_json FROM app_state WHERE id = 0",
+            { cursor -> cursor.next(); settingsJson = cursor.getString(0); QueryResult.Value(Unit) },
+            0
+        )
+        assertEquals("{}", settingsJson, "existing app_state row backfills settings_json to an empty object")
+
+        // Existing page inherits the default (template IS NULL).
+        var templateWasNull = false
+        driver.executeQuery(
+            null,
+            "SELECT template IS NULL FROM page WHERE id = 'p1'",
+            { cursor -> cursor.next(); templateWasNull = (cursor.getLong(0) ?: 0L) == 1L; QueryResult.Value(Unit) },
+            0
+        )
+        assertTrue(templateWasNull, "existing page has NULL template = inherit global default")
 
         driver.close()
     }

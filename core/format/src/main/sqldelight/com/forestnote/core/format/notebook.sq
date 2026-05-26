@@ -12,7 +12,9 @@ CREATE TABLE page (
     id TEXT PRIMARY KEY NOT NULL,
     notebook_id TEXT NOT NULL REFERENCES notebook(id) ON DELETE CASCADE,
     sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    template TEXT,             -- NULL = inherit Settings.defaultTemplate; else a PageTemplate name
+    template_pitch_mm INTEGER  -- NULL = inherit Settings.defaultPitchMm
 );
 CREATE INDEX page_notebook_id ON page(notebook_id);
 
@@ -35,7 +37,9 @@ CREATE INDEX stroke_page_id ON stroke(page_id);
 CREATE TABLE app_state (
     id INTEGER PRIMARY KEY NOT NULL CHECK (id = 0),
     active_notebook_id TEXT,
-    active_page_id TEXT
+    active_page_id TEXT,
+    settings_json TEXT NOT NULL DEFAULT '{}',  -- the Settings JSON blob
+    clipboard_json TEXT                        -- persisted cross-notebook clipboard (NULL = empty); wired in a later phase
 );
 
 -- notebooks --
@@ -107,5 +111,20 @@ DELETE FROM stroke WHERE page_id = ?;
 getAppState:
 SELECT * FROM app_state WHERE id = 0;
 
+-- Persist only the active notebook/page. Uses an ON CONFLICT upsert (NOT
+-- INSERT OR REPLACE) so it never clobbers settings_json / clipboard_json on the
+-- existing row. First call inserts the row; settings_json takes its DEFAULT.
 upsertAppState:
-INSERT OR REPLACE INTO app_state(id, active_notebook_id, active_page_id) VALUES (0, ?, ?);
+INSERT INTO app_state(id, active_notebook_id, active_page_id) VALUES (0, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    active_notebook_id = excluded.active_notebook_id,
+    active_page_id = excluded.active_page_id;
+
+getSettingsJson:
+SELECT settings_json FROM app_state WHERE id = 0;
+
+setSettingsJson:
+UPDATE app_state SET settings_json = ? WHERE id = 0;
+
+setPageTemplate:
+UPDATE page SET template = ?, template_pitch_mm = ? WHERE id = ?;

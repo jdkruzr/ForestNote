@@ -1,0 +1,12 @@
+-- v4 -> v5: Settings storage + per-page template overrides.
+-- NON-destructive: real notebooks/pages exist by now.
+--  * app_state.settings_json  — the Settings JSON blob (defaults to an empty
+--    object so existing rows decode to all-default Settings).
+--  * app_state.clipboard_json — persisted cross-notebook clipboard (NULL = empty;
+--    wired in a later phase, column added now so v5 is forward-complete).
+--  * page.template / page.template_pitch_mm — per-page override; NULL on every
+--    existing page means "inherit the global default" (AC8.4).
+ALTER TABLE app_state ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE app_state ADD COLUMN clipboard_json TEXT;
+ALTER TABLE page ADD COLUMN template TEXT;
+ALTER TABLE page ADD COLUMN template_pitch_mm INTEGER;

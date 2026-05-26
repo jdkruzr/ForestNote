@@ -2,6 +2,9 @@ package com.forestnote.app.notes
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.forestnote.core.format.NotebookRepository
+import com.forestnote.core.format.PageMeta
+import com.forestnote.core.format.PageTemplate
+import com.forestnote.core.format.Settings
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
 import org.junit.Test
@@ -325,6 +328,63 @@ class NotebookStoreTest {
             "the save enqueued before the switch landed on the original page"
         )
 
+        store.shutdown()
+    }
+
+    // B1: settings load returns defaults on a fresh DB, off-thread.
+    @Test
+    fun loadSettingsReturnsDefaultsOnFreshDb() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+
+        val settings = awaitResult<Settings> { cb -> store.loadSettings(cb) }
+
+        assertEquals(Settings(), settings)
+        store.shutdown()
+    }
+
+    // B1: updateSettings applies the transform off-thread, persists, and posts the new value.
+    @Test
+    fun updateSettingsPersistsAndPostsNewValue() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+
+        val updated = awaitResult<Settings> { cb ->
+            store.updateSettings({ it.copy(defaultTemplate = PageTemplate.GRID, syncServerUrl = "https://s") }, cb)
+        }
+        assertEquals(PageTemplate.GRID, updated.defaultTemplate)
+
+        // Re-read proves it persisted, not just echoed.
+        val reread = awaitResult<Settings> { cb -> store.loadSettings(cb) }
+        assertEquals("https://s", reread.syncServerUrl)
+        store.shutdown()
+    }
+
+    // B1: setPageTemplate persists the per-page override (visible via listPages PageMeta).
+    @Test
+    fun setPageTemplatePersistsOnThePage() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+        val pageId = awaitResult<String> { cb -> store.listPages { _, active -> cb(active) } }
+
+        awaitResult<Unit> { cb -> store.setPageTemplate(pageId, PageTemplate.RULED, 6) { cb(Unit) } }
+
+        val pages = awaitResult<List<PageMeta>> { cb -> store.listPages { p, _ -> cb(p) } }
+        val page = pages.first { it.id == pageId }
+        assertEquals(PageTemplate.RULED, page.template)
+        assertEquals(6, page.templatePitchMm)
         store.shutdown()
     }
 
