@@ -3,6 +3,7 @@ package com.forestnote.app.notes
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.forestnote.core.format.NotebookCard
@@ -17,6 +18,7 @@ import com.forestnote.core.format.NotebookCard
  * [RelativeTime]). Tap opens the notebook; long-press opens its Properties dialog.
  */
 class NotebookCardAdapter(
+    private val loader: ThumbnailLoader,
     private val onOpen: (NotebookCard) -> Unit,
     private val onLongPress: (NotebookCard) -> Unit
 ) : RecyclerView.Adapter<NotebookCardAdapter.VH>() {
@@ -30,6 +32,7 @@ class NotebookCardAdapter(
     }
 
     class VH(view: View) : RecyclerView.ViewHolder(view) {
+        val thumb: ImageView = view.findViewById(R.id.card_thumb)
         val datestamp: TextView = view.findViewById(R.id.card_datestamp)
         val name: TextView = view.findViewById(R.id.card_name)
         val meta: TextView = view.findViewById(R.id.card_meta)
@@ -53,6 +56,8 @@ class NotebookCardAdapter(
             holder.name.text = card.name
         }
         holder.meta.text = "${card.pageCount}p · ${RelativeTime.format(card.modifiedAt, System.currentTimeMillis())}"
+        // Async first-page thumbnail (placeholder first, swapped in when rendered; recycling-safe).
+        loader.load(card.id, holder.thumb)
         holder.itemView.setOnClickListener { onOpen(card) }
         holder.itemView.setOnLongClickListener { onLongPress(card); true }
     }

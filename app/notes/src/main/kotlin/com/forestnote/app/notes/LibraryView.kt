@@ -29,6 +29,7 @@ class LibraryView {
 
     private var root: View? = null
     private var host: ViewGroup? = null
+    private var loader: ThumbnailLoader? = null
     val isShowing: Boolean get() = root != null
 
     fun show(host: ViewGroup, store: NotebookStore, callbacks: Callbacks) {
@@ -38,9 +39,13 @@ class LibraryView {
         host.addView(view)
         root = view
 
+        val thumbnailLoader = ThumbnailLoader(store, host.context.cacheDir, R.color.card_placeholder)
+        loader = thumbnailLoader
+
         val grid = view.findViewById<RecyclerView>(R.id.library_grid)
         grid.layoutManager = GridLayoutManager(host.context, COLUMNS)
         val adapter = NotebookCardAdapter(
+            loader = thumbnailLoader,
             onOpen = callbacks.onOpenNotebook,
             onLongPress = callbacks.onNotebookProperties
         )
@@ -67,6 +72,8 @@ class LibraryView {
     }
 
     fun hide() {
+        loader?.shutdown()
+        loader = null
         root?.let { host?.removeView(it) }
         root = null
         host = null
