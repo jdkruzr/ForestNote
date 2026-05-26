@@ -160,6 +160,22 @@ class MigrationTest {
         return exists
     }
 
+    /** Whether an index exists in the schema. */
+    private fun indexExists(driver: JdbcSqliteDriver, name: String): Boolean {
+        var exists = false
+        driver.executeQuery(
+            null,
+            "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+            { cursor ->
+                cursor.next()
+                exists = (cursor.getLong(0) ?: 0L) > 0L
+                QueryResult.Value(Unit)
+            },
+            1
+        ) { bindString(0, name) }
+        return exists
+    }
+
     @Test
     fun destructiveMigrationRecreatesV2SchemaAndDropsData() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
@@ -360,6 +376,97 @@ class MigrationTest {
             "page has notebook_id after v1->v3"
         )
         assertEquals("TEXT", strokeColumnTypes(driver)["id"], "stroke.id is TEXT after v1->v3")
+
+        driver.close()
+    }
+
+    /**
+     * library-and-tools AC5.1/AC5.2: migrating v5 -> v6 adds the folder table (with its
+     * full column set + parent index) and notebook.folder_id (+ its index). FKs are off,
+     * so the folder<->notebook relationship is verified by round-trip query, not cascade.
+     */
+    @Test
+    fun v5ToV6AddsFolderTableAndNotebookFolderId() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        // Minimal v5 notebook table with one pre-existing row; only notebook is needed
+        // since the migration only touches notebook + adds folder.
+        driver.execute(
+            null,
+            """
+            CREATE TABLE notebook (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                modified_at INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent(),
+            0
+        )
+        driver.execute(
+            null,
+            "INSERT INTO notebook(id, name, sort_order, created_at, modified_at) VALUES ('n0', 'N', 0, 0, 0)",
+            0
+        )
+        driver.execute(null, "PRAGMA user_version = 5", 0)
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 5L, newVersion = 6L)
+
+        // AC5.1: folder table + its columns.
+        assertTrue(tableExists(driver, "folder"), "folder table exists after v5->v6")
+        assertTrue(
+            columnNames(driver, "folder").containsAll(
+                setOf("id", "name", "sort_order", "created_at", "modified_at", "parent_folder_id")
+            ),
+            "folder has the full column set after v5->v6"
+        )
+
+        // AC5.2: notebook gains folder_id.
+        assertTrue(
+            columnNames(driver, "notebook").contains("folder_id"),
+            "notebook gains folder_id after v5->v6"
+        )
+
+        // Indexes exist.
+        assertTrue(indexExists(driver, "folder_parent_folder_id"), "folder parent index exists")
+        assertTrue(indexExists(driver, "notebook_folder_id"), "notebook folder_id index exists")
+
+        // Round-trip: a notebook can point at a folder, and folder_id reads back.
+        driver.execute(
+            null,
+            "INSERT INTO folder(id, name, sort_order, created_at, modified_at, parent_folder_id) " +
+                "VALUES ('f1', 'F', 0, 0, 0, NULL)",
+            0
+        )
+        driver.execute(
+            null,
+            "INSERT INTO notebook(id, name, sort_order, created_at, modified_at, folder_id) " +
+                "VALUES ('n1', 'N1', 0, 0, 0, 'f1')",
+            0
+        )
+        var folderId: String? = "unset"
+        driver.executeQuery(
+            null,
+            "SELECT folder_id FROM notebook WHERE id = 'n1'",
+            { cursor -> cursor.next(); folderId = cursor.getString(0); QueryResult.Value(Unit) },
+            0
+        )
+        assertEquals("f1", folderId, "notebook.folder_id round-trips to the folder it points at")
+
+        // A notebook inserted without folder_id reads back NULL (= root, AC5.2).
+        driver.execute(
+            null,
+            "INSERT INTO notebook(id, name, sort_order, created_at, modified_at) VALUES ('n2', 'N2', 0, 0, 0)",
+            0
+        )
+        var rootFolderId: String? = "unset"
+        driver.executeQuery(
+            null,
+            "SELECT folder_id FROM notebook WHERE id = 'n2'",
+            { cursor -> cursor.next(); rootFolderId = cursor.getString(0); QueryResult.Value(Unit) },
+            0
+        )
+        assertEquals(null, rootFolderId, "notebook with no folder_id reads back NULL = root")
 
         driver.close()
     }
