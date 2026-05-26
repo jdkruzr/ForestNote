@@ -1,12 +1,12 @@
 # Ink Domain (core:ink)
 
-Last verified: 2026-05-23
+Last verified: 2026-05-25
 
 ## Purpose
 Abstracts device-specific e-ink rendering behind a common interface and provides the stroke data model, coordinate system, and geometry operations used by all other modules.
 
 ## Contracts
-- **Exposes**: `InkBackend` interface, `BackendDetector.detect()`, `Stroke`/`StrokeBuilder`/`StrokePoint` types, `Tool` sealed class, `PageTransform`, `PressureCurve`, `StrokeGeometry`
+- **Exposes**: `InkBackend` interface, `BackendDetector.detect()`, `Stroke`/`StrokeBuilder`/`StrokePoint` types, `Tool` sealed class (`Pen`/`StrokeEraser`/`PixelEraser`/`Lasso`), `PenVariant` enum, `PageTransform`, `PressureCurve`, `StrokeGeometry`, `Ulid`
 - **Guarantees**: `BackendDetector.detect()` always returns a working backend (GenericBackend fallback). All stroke/point data uses virtual coordinates. PageTransform is the sole virtual-to-screen converter.
 - **Expects**: Android Context for backend init. View dimensions for PageTransform.update().
 

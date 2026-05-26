@@ -1,13 +1,13 @@
 # Notes App (app:notes)
 
-Last verified: 2026-05-24
+Last verified: 2026-05-25
 
 ## Purpose
 Main application module that wires together ink rendering, storage, and user interaction into a single-activity note-taking experience optimized for e-ink. Includes a nav bar for moving between pages and notebooks.
 
 ## Contracts
-- **Exposes**: `MainActivity` (entry point), `DrawView` (drawing surface), `ToolBar` (tool selection), `PageNavigationLogic` (pure page index/bounds/label math)
-- **Guarantees**: Strokes auto-save on pen-up. Strokes restore on app launch (non-blocking async load), reopening the last-active notebook+page. Backend lifecycle managed across pause/resume. Finger input rejected (stylus/eraser only). Page/notebook switching commits the current stroke (via clearAll) and refreshes the canvas to avoid e-ink ghosting.
+- **Exposes**: `MainActivity` (entry point), `DrawView` (drawing surface), `ToolBar` (tool selection), `PageNavigationLogic` (pure page index/bounds/label math), `ToolSelectionLogic` (pure tool/variant state), `LassoSelectionLogic` (pure selection geometry), `Clipboard`/`InProcessClipboard`, `SelectionMenuView`
+- **Guarantees**: Strokes auto-save on pen-up. Strokes restore on app launch (non-blocking async load), reopening the last-active notebook+page. Backend lifecycle managed across pause/resume. Finger input rejected (stylus/eraser only). Page/notebook switching commits the current stroke (via clearAll) and refreshes the canvas to avoid e-ink ghosting. Lasso selects strokes by centroid; Cut/Copy/Delete via a floating pill + in-process clipboard; Paste is tap-to-place (arm, then tap the canvas); a closed selection can be dragged to move it in place.
 - **Expects**: `core:ink` for backend and stroke types, `core:format` for persistence.
 
 ## Dependencies
@@ -36,10 +36,15 @@ Main application module that wires together ink rendering, storage, and user int
 - `MainActivity.kt` - Lifecycle management, backend + NotebookStore wiring, nav-bar wiring (page + notebook pickers), crash handler
 - `NotebookStore.kt` - Single background-thread owner of NotebookRepository; async load/save/erase/clear, notebook/page list-switch-CRUD, drain-on-shutdown
 - `DrawView.kt` - Touch handling, bitmap rendering, stroke/erase logic
-- `ToolBar.kt` - UI toolbar with tool button state management
-- `ToolSelectionLogic.kt` - Pure tool selection state machine
+- `ToolBar.kt` - UI toolbar with tool button state management (incl. Paste enable/armed state)
+- `ToolSelectionLogic.kt` - Pure tool selection state machine (pen/erase variants + Lasso)
+- `LassoSelectionLogic.kt` - Pure selection geometry (ray-cast pointInPolygon, integer centroid, selectedIds, bounds, translate)
+- `Clipboard.kt` - `Clipboard` interface + `InProcessClipboard` (listener-based; B1 re-backs it with `app_state.clipboard_json`)
+- `SelectionMenuView.kt` - Floating action pill (PopupWindow) for a lasso selection; non-focusable so drag-to-move touches reach the canvas
 - `PageNavigationLogic.kt` - Pure page navigation (index, prev/next bounds, "N / M" label, can-delete)
-- `res/layout/navbar.xml` - Unified top bar: notebook label / prev (◀) / "N / M" indicator / next (▶) / `<include>` of `toolbar.xml` (the five tools); a 1dp divider in `activity_main.xml` separates it from the canvas. `toolbar.xml` (root id `@id/toolbar`) is included here rather than placed at the bottom.
+- `res/layout/toolbar.xml` - The six tool cells: Fountain / Lasso / Erase / Paste / Clear / Refresh (each whole cell is the hitbox)
+- `res/layout/navbar.xml` - Unified top bar: notebook label / prev (◀) / "N / M" indicator / next (▶) / `<include>` of `toolbar.xml`; a 1dp divider in `activity_main.xml` separates it from the canvas. `toolbar.xml` (root id `@id/toolbar`) is included here rather than placed at the bottom.
+- `res/layout/dialog_notebook_properties.xml` - Long-press → Notebook Properties (name + Created/Modified/Pages)
 
 ## Gotchas
 - ViwoodsBackend cast in onResume: only safe because isEInk guards it
