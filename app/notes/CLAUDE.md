@@ -36,7 +36,7 @@ Main application module that wires together ink rendering, storage, and user int
 - `MainActivity.kt` - Lifecycle management, backend + NotebookStore wiring, nav-bar wiring (page + notebook pickers), crash handler
 - `NotebookStore.kt` - Single background-thread owner of NotebookRepository; async load/save/erase/clear, notebook/page list-switch-CRUD, settings load/update + per-page setPageTemplate, drain-on-shutdown
 - `DrawView.kt` - Touch handling, bitmap rendering, stroke/erase logic
-- `ToolBar.kt` - UI toolbar with tool button state management (incl. Paste enable/armed state)
+- `ToolBar.kt` - UI toolbar with tool button state management (incl. Paste enable/armed state, Template action cell → per-page template picker)
 - `ToolSelectionLogic.kt` - Pure tool selection state machine (pen/erase variants + Lasso)
 - `LassoSelectionLogic.kt` - Pure selection geometry (ray-cast pointInPolygon, integer centroid, selectedIds, bounds, translate)
 - `Clipboard.kt` - `Clipboard` interface + `InProcessClipboard` (listener-based; B1 re-backs it with `app_state.clipboard_json`)
@@ -46,7 +46,8 @@ Main application module that wires together ink rendering, storage, and user int
 - `TemplateGeometry.kt` - Pure template geometry (interior `lineOffsets(extent,pitch)`) + effective-config resolution (`page override ?: global default`, AC8.4)
 - `res/layout/view_settings.xml` + `res/values/styles.xml` - Settings layout (header Back/title + scrolling sections) and its field styles (black-on-white, e-ink friendly)
 - `PageNavigationLogic.kt` - Pure page navigation (index, prev/next bounds, "N / M" label, can-delete)
-- `res/layout/toolbar.xml` - The six tool cells: Fountain / Lasso / Erase / Paste / Clear / Refresh (each whole cell is the hitbox)
+- `res/layout/toolbar.xml` - The seven tool cells: Fountain / Lasso / Erase / Paste / Clear / Refresh / Template (each whole cell is the hitbox)
+- `res/layout/dialog_page_template.xml` - Per-page template picker (B4): "Use default" (snapshots current default) + Blank/Dot/Ruled/Grid + pitch sub-radio
 - `res/layout/navbar.xml` - Unified top bar: notebook label / prev (◀) / "N / M" indicator / next (▶) / `<include>` of `toolbar.xml`; a 1dp divider in `activity_main.xml` separates it from the canvas. `toolbar.xml` (root id `@id/toolbar`) is included here rather than placed at the bottom.
 - `res/layout/dialog_notebook_properties.xml` - Long-press → Notebook Properties (name + Created/Modified/Pages)
 
