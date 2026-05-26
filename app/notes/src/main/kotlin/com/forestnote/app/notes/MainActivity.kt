@@ -42,7 +42,7 @@ class MainActivity : Activity() {
     private lateinit var store: NotebookStore
     private lateinit var toolBar: ToolBar
     private lateinit var pageIndicator: TextView
-    private lateinit var btnNotebooks: TextView
+    private lateinit var btnNotebooks: ImageButton
     private lateinit var btnNext: ImageButton
     private var isEInk = false
 
@@ -127,7 +127,6 @@ class MainActivity : Activity() {
         store.load { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             refreshPageIndicator()
-            refreshNotebookLabel()
         }
 
         // AC4.1: cold launch resumes the editor on the last-active notebook; if there is no
@@ -267,7 +266,6 @@ class MainActivity : Activity() {
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()       // clears e-ink ghosting on switch (AC6.4)
             refreshPageIndicator()
-            refreshNotebookLabel()
         }
     }
 
@@ -278,25 +276,16 @@ class MainActivity : Activity() {
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()
             refreshPageIndicator()
-            refreshNotebookLabel()
         }
     }
 
-    /** Reload the notebook list + active id; show the active notebook's name on the label. */
-    private fun refreshNotebookLabel() {
-        store.listNotebooks { notebooks, activeId ->
-            btnNotebooks.text = notebooks.firstOrNull { it.id == activeId }?.name ?: "Notebook"
-        }
-    }
-
-    /** Swap to another notebook: clear canvas, load its active/first page, refresh labels. */
+    /** Swap to another notebook: clear canvas, load its active/first page. */
     private fun goToNotebook(notebookId: String) {
         drawView.clearAll()
         store.switchNotebook(notebookId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()
             refreshPageIndicator()
-            refreshNotebookLabel()
         }
     }
 
@@ -512,7 +501,6 @@ class MainActivity : Activity() {
                 val name = nameInput.text.toString().trim().ifEmpty { notebook.name }
                 if (name != notebook.name) {
                     store.renameNotebook(notebook.id, name) {
-                        refreshNotebookLabel()
                         if (libraryView.isShowing) libraryView.reload()
                     }
                 }
@@ -532,7 +520,6 @@ class MainActivity : Activity() {
                 store.deleteNotebook(notebook.id) {
                     // Repo already switched to a remaining/bootstrapped notebook.
                     reloadCurrentPage()
-                    refreshNotebookLabel()
                     if (libraryView.isShowing) libraryView.reload()
                 }
             }
