@@ -9,6 +9,8 @@ import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.TextView
 import com.forestnote.core.ink.PenVariant
+import com.forestnote.core.ink.PenWidthLevel
+import com.forestnote.core.ink.PenWidthScale
 import com.forestnote.core.ink.Tool
 
 /**
@@ -28,6 +30,7 @@ class ToolBar(
     private var activeClearCallback: (() -> Unit)? = null
     private var activeRefreshCallback: (() -> Unit)? = null
     private var penVariantCallback: ((PenVariant) -> Unit)? = null
+    private var penWidthCallback: ((PenWidthLevel) -> Unit)? = null
 
     // Each tool's clickable hitbox is the whole cell (icon + word), not just the icon.
     private val btnFountain: View = root.findViewById(R.id.cell_fountain)
@@ -75,7 +78,7 @@ class ToolBar(
         // pen group (with its last-used variant) and opens the variant dropdown.
         btnFountain.setOnClickListener {
             logic.selectPenGroup()
-            showPenVariantDropdown(btnFountain)
+            showPenSettingsPopup(btnFountain)
         }
         // Lasso is a single top-level tool (no variant dropdown).
         btnLasso.setOnClickListener { logic.selectTool(Tool.Lasso) }
@@ -196,6 +199,22 @@ class ToolBar(
         penVariantCallback = callback
     }
 
+    /** Set the callback invoked when a pen width level is chosen from the width strip (A10). */
+    fun setOnPenWidthSelected(callback: (PenWidthLevel) -> Unit) {
+        penWidthCallback = callback
+    }
+
+    /** Seed per-variant width levels from persisted settings on launch (A10). */
+    fun loadPenWidths(levels: Map<PenVariant, PenWidthLevel>) {
+        levels.forEach { (variant, level) -> logic.setPenWidthForVariant(variant, level) }
+    }
+
+    /** The active variant's width level (e.g. to seed DrawView at launch). */
+    fun activePenWidthLevel(): PenWidthLevel = logic.activePenWidth()
+
+    /** A snapshot of every variant's width level (for persisting back to Settings). */
+    fun currentPenWidthLevels(): Map<PenVariant, PenWidthLevel> = logic.allPenWidthLevels()
+
     /**
      * Show a variant dropdown anchored under [anchor]. Rows are labelled, the
      * [activeIndex] row is highlighted, and tapping a row calls [onPick] then
@@ -263,16 +282,139 @@ class ToolBar(
         popup.showAsDropDown(anchor)
     }
 
-    /** Pen-variant dropdown under the Fountain cell. */
-    private fun showPenVariantDropdown(anchor: View) {
-        val variants = PenVariant.entries
-        val active = logic.activePenVariant()
-        showDropdown(anchor, variants.map { penVariantLabel(it) }, variants.indexOf(active)) { i ->
-            val variant = variants[i]
-            logic.selectPenVariant(variant)
-            penVariantCallback?.invoke(variant)
-            updatePenCellLabel()
+    /**
+     * Pen-settings popup under the Fountain cell (A10): the variant rows plus a 5-chip width
+     * strip (chips drawn as actual thickness samples) acting on the active variant. Unlike the
+     * generic dropdown, tapping a variant or width updates the popup IN PLACE (no dismiss) so
+     * variant + width can both be adjusted in one session; tap-outside dismisses.
+     */
+    private fun showPenSettingsPopup(anchor: View) {
+        openPopup?.dismiss()
+        val ctx = anchor.context
+        val density = ctx.resources.displayMetrics.density
+
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                setColor(Color.WHITE)
+                setStroke(1, Color.BLACK)
+            }
         }
+        val popup = PopupWindow(
+            container,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true // focusable: tap-outside dismisses
+        )
+        popup.isOutsideTouchable = true
+        if (isEInk) popup.elevation = 0f
+
+        // Rebuild the popup body for the current active variant + its remembered width. Called
+        // again on each in-place selection so the ● marker and the strip highlight track state.
+        fun populate() {
+            container.removeAllViews()
+            val padH = (12 * density).toInt()
+            val padV = (8 * density).toInt()
+            val markerWidth = (18 * density).toInt()
+
+            val variants = PenVariant.entries
+            val activeVariant = logic.activePenVariant()
+            variants.forEach { variant ->
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(padH, padV, padH, padV)
+                    isClickable = true
+                    addView(TextView(ctx).apply {
+                        text = if (variant == activeVariant) "●" else ""
+                        textSize = 14f
+                        setTextColor(Color.BLACK)
+                        width = markerWidth
+                    })
+                    addView(TextView(ctx).apply {
+                        text = penVariantLabel(variant)
+                        textSize = 14f
+                        setTextColor(Color.BLACK)
+                    })
+                    setOnClickListener {
+                        logic.selectPenVariant(variant)
+                        penVariantCallback?.invoke(variant)
+                        updatePenCellLabel()
+                        populate() // refresh marker + strip for the newly-active variant
+                    }
+                }
+                container.addView(row)
+            }
+
+            container.addView(View(ctx).apply {
+                setBackgroundColor(Color.BLACK)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+            })
+            container.addView(buildWidthStrip(ctx, density, logic.activePenWidth()) { level ->
+                logic.selectPenWidth(level)
+                penWidthCallback?.invoke(level)
+                populate() // refresh the highlighted chip
+            })
+        }
+        populate()
+
+        openPopup = popup
+        popup.showAsDropDown(anchor)
+    }
+
+    /**
+     * A horizontal strip of 5 width chips (XS…XL). Each chip shows an actual thickness sample
+     * (a black bar whose height tracks the level's base max width) over its label; the [active]
+     * chip gets a 1dp border. Tapping a chip calls [onPick].
+     */
+    private fun buildWidthStrip(
+        ctx: android.content.Context,
+        density: Float,
+        active: PenWidthLevel,
+        onPick: (PenWidthLevel) -> Unit
+    ): View {
+        val strip = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
+        }
+        val chipW = (40 * density).toInt()
+        val sampleW = (28 * density).toInt()
+        val sampleArea = (24 * density).toInt()
+        PenWidthLevel.entries.forEach { level ->
+            val baseMax = PenWidthScale.pair(level).second
+            // Scale the level's base max into a visible bar height (XL=70 → ~10dp), min 1px.
+            val barH = (baseMax / 70f * 10f * density).toInt().coerceAtLeast(1)
+            val chip = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                isClickable = true
+                layoutParams = LinearLayout.LayoutParams(chipW, ViewGroup.LayoutParams.WRAP_CONTENT)
+                if (level == active) {
+                    background = GradientDrawable().apply {
+                        setColor(Color.WHITE)
+                        setStroke(1, Color.BLACK)
+                    }
+                }
+                // Thickness sample: a centred black bar of height barH inside a fixed sample area.
+                addView(LinearLayout(ctx).apply {
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(sampleW, sampleArea)
+                    addView(View(ctx).apply {
+                        setBackgroundColor(Color.BLACK)
+                        layoutParams = LinearLayout.LayoutParams(sampleW, barH)
+                    })
+                })
+                addView(TextView(ctx).apply {
+                    text = level.name
+                    textSize = 10f
+                    setTextColor(Color.BLACK)
+                    gravity = Gravity.CENTER
+                })
+                setOnClickListener { onPick(level) }
+            }
+            strip.addView(chip)
+        }
+        return strip
     }
 
     /** The erase group's two variants, in dropdown order. */

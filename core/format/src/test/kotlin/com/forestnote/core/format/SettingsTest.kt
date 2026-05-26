@@ -70,4 +70,15 @@ class SettingsTest {
     fun emptyObjectDecodesToDefaults() {
         assertEquals(Settings(), json.decodeFromString(Settings.serializer(), "{}"))
     }
+
+    @Test
+    fun penWidthLevelsRoundTripAndDefaultEmpty() {
+        assertEquals(emptyMap(), Settings().penWidthLevels)
+
+        val original = Settings(penWidthLevels = mapOf("FOUNTAIN" to "L", "HIGHLIGHTER" to "XL"))
+        val decoded = json.decodeFromString(Settings.serializer(), json.encodeToString(Settings.serializer(), original))
+
+        assertEquals(mapOf("FOUNTAIN" to "L", "HIGHLIGHTER" to "XL"), decoded.penWidthLevels)
+        assertEquals(original, decoded)
+    }
 }

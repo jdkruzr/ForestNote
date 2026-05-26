@@ -1,12 +1,12 @@
 # Ink Domain (core:ink)
 
-Last verified: 2026-05-25
+Last verified: 2026-05-26
 
 ## Purpose
 Abstracts device-specific e-ink rendering behind a common interface and provides the stroke data model, coordinate system, and geometry operations used by all other modules.
 
 ## Contracts
-- **Exposes**: `InkBackend` interface, `BackendDetector.detect()`, `Stroke`/`StrokeBuilder`/`StrokePoint` types, `Tool` sealed class (`Pen`/`StrokeEraser`/`PixelEraser`/`Lasso`), `PenVariant` enum, `PageTransform` (virtual↔screen + `ppi`/`pitchPx(mm)` for physical mm→px), `PressureCurve`, `StrokeGeometry`, `Ulid`
+- **Exposes**: `InkBackend` interface, `BackendDetector.detect()`, `Stroke`/`StrokeBuilder`/`StrokePoint` types, `Tool` sealed class (`Pen`/`StrokeEraser`/`PixelEraser`/`Lasso`), `PenVariant` enum, `PenWidthLevel` enum (`XS/S/M/L/XL`) + `PenWidthScale.pair(level)` (level→`(min,max)` virtual pair; `M`=`(7,35)` v1 default), `PenParams.of(variant, level)` (per-variant color/width/behind), `PageTransform` (virtual↔screen + `ppi`/`pitchPx(mm)` for physical mm→px), `PressureCurve`, `StrokeGeometry`, `Ulid`
 - **Guarantees**: `BackendDetector.detect()` always returns a working backend (GenericBackend fallback). All stroke/point data uses virtual coordinates. PageTransform is the sole virtual-to-screen converter.
 - **Expects**: Android Context for backend init. View dimensions for PageTransform.update().
 

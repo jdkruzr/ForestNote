@@ -1,6 +1,7 @@
 package com.forestnote.app.notes
 
 import com.forestnote.core.ink.PenVariant
+import com.forestnote.core.ink.PenWidthLevel
 import com.forestnote.core.ink.Tool
 
 /**
@@ -49,6 +50,32 @@ class ToolSelectionLogic(
 
     /** The currently-remembered pen variant. */
     fun activePenVariant(): PenVariant = penVariant
+
+    /**
+     * Per-variant pen width level (A10). Each variant remembers its own level; default M.
+     * Switching variant needs no extra bookkeeping — [activePenWidth] keys off [penVariant].
+     */
+    private val penWidthLevels: MutableMap<PenVariant, PenWidthLevel> =
+        PenVariant.entries.associateWith { PenWidthLevel.M }.toMutableMap()
+
+    /** Set the active variant's width level (e.g. tapping a width chip). */
+    fun selectPenWidth(level: PenWidthLevel) {
+        penWidthLevels[penVariant] = level
+    }
+
+    /** The active variant's remembered width level. */
+    fun activePenWidth(): PenWidthLevel = penWidthLevels[penVariant] ?: PenWidthLevel.M
+
+    /** The remembered width level for a specific variant. */
+    fun penWidthFor(variant: PenVariant): PenWidthLevel = penWidthLevels[variant] ?: PenWidthLevel.M
+
+    /** Seed a variant's width level (used when loading persisted settings on launch). */
+    fun setPenWidthForVariant(variant: PenVariant, level: PenWidthLevel) {
+        penWidthLevels[variant] = level
+    }
+
+    /** A snapshot of every variant's width level (for persisting back to Settings). */
+    fun allPenWidthLevels(): Map<PenVariant, PenWidthLevel> = penWidthLevels.toMap()
 
     /** Last-used variant of the erase group (StrokeEraser or PixelEraser). */
     private var eraseVariant: Tool = Tool.StrokeEraser

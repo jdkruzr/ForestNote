@@ -136,6 +136,11 @@ class MainActivity : Activity() {
         // user's startView preference is the Library. The Library also opens defensively
         // when there is no active notebook (bootstrap normally prevents that state).
         store.loadSettings { settings ->
+            // A10: seed per-variant pen widths from settings, then prime the canvas with the
+            // active variant's width. (toolBar is assigned below in onCreate; this async
+            // callback runs after onCreate returns, so it's set by the time we get here.)
+            toolBar.loadPenWidths(PenWidthSettings.decode(settings.penWidthLevels))
+            drawView.activePenWidthLevel = toolBar.activePenWidthLevel()
             store.listNotebooks { notebooks, activeId ->
                 val startOnLibrary = settings.startView == StartView.LIBRARY
                 if (LaunchLogic.shouldOpenLibraryOnLaunch(activeId, notebooks.size, startOnLibrary)) {
@@ -149,8 +154,15 @@ class MainActivity : Activity() {
             drawView.activeTool = tool
         }
         // Propagate pen-variant choice to the canvas (affects width/colour/compositing).
+        // Switching variant brings that variant's remembered width level forward (A10).
         toolBar.setOnPenVariantSelected { variant ->
             drawView.activePenVariant = variant
+            drawView.activePenWidthLevel = toolBar.activePenWidthLevel()
+        }
+        // Pen width choice (A10): apply to the canvas and persist the per-variant map.
+        toolBar.setOnPenWidthSelected { level ->
+            drawView.activePenWidthLevel = level
+            store.updateSettings({ it.copy(penWidthLevels = PenWidthSettings.encode(toolBar.currentPenWidthLevels())) })
         }
 
         // Lasso selection menu: show the action pill over a closed selection, dismiss
