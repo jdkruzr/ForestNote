@@ -315,7 +315,14 @@ class MainActivity : Activity() {
             onNewNotebook = { promptNewNotebook(libraryView.currentFolderId) },
             onNewFolder = { promptNewFolder(libraryView.currentFolderId) },
             onFolderProperties = { folder -> openFolderProperties(folder) },
-            onOpenSettings = { openSettings() }
+            onOpenSettings = { openSettings() },
+            // D1 stubs: the Select-mode action bar is wired, but Move/Delete land in D2/D3.
+            onBulkMove = { ids ->
+                android.widget.Toast.makeText(this, "Move ${ids.size} (coming in D2)", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onBulkDelete = { ids ->
+                android.widget.Toast.makeText(this, "Delete ${ids.size} (coming in D3)", android.widget.Toast.LENGTH_SHORT).show()
+            }
         ))
     }
 
@@ -421,7 +428,8 @@ class MainActivity : Activity() {
             return
         }
         if (libraryView.isShowing) {
-            closeLibrary()
+            // In select mode, back exits selection first rather than closing the Library.
+            if (libraryView.isSelectMode) libraryView.exitSelectMode() else closeLibrary()
             return
         }
         @Suppress("DEPRECATION")

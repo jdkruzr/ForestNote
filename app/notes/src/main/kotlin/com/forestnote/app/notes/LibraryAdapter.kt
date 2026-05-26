@@ -23,14 +23,28 @@ class LibraryAdapter(
     private val onOpenFolder: (FolderCard) -> Unit,
     private val onFolderProperties: (FolderCard) -> Unit,
     private val onOpenNotebook: (NotebookCard) -> Unit,
-    private val onNotebookProperties: (NotebookCard) -> Unit
+    private val onNotebookProperties: (NotebookCard) -> Unit,
+    private val onToggleNotebook: (NotebookCard) -> Unit
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     private val items = mutableListOf<LibraryItem>()
 
+    // Select-mode state (D1), pushed from LibraryView. In select mode a notebook tap toggles
+    // its checkbox instead of opening it, and long-press is suppressed; folders are unaffected.
+    private var selectMode: Boolean = false
+    private var selectedIds: Set<String> = emptySet()
+
     fun submit(newItems: List<LibraryItem>) {
         items.clear()
         items.addAll(newItems)
+        notifyDataSetChanged()
+    }
+
+    /** Replace the select-mode state and rebind all cards (grids are small; full rebind avoids
+     *  partial-update flicker on e-ink). */
+    fun setSelectionState(selectMode: Boolean, selectedIds: Set<String>) {
+        this.selectMode = selectMode
+        this.selectedIds = selectedIds
         notifyDataSetChanged()
     }
 
@@ -41,6 +55,7 @@ class LibraryAdapter(
 
     class NotebookVH(view: View) : RecyclerView.ViewHolder(view) {
         val thumb: ImageView = view.findViewById(R.id.card_thumb)
+        val check: ImageView = view.findViewById(R.id.card_check)
         val datestamp: TextView = view.findViewById(R.id.card_datestamp)
         val name: TextView = view.findViewById(R.id.card_name)
         val meta: TextView = view.findViewById(R.id.card_meta)
@@ -88,8 +103,17 @@ class LibraryAdapter(
         holder.meta.text = "${card.pageCount}p · ${RelativeTime.format(card.modifiedAt, System.currentTimeMillis())}"
         // Async first-page thumbnail (placeholder first, swapped in when rendered; recycling-safe).
         loader.load(card.id, holder.thumb)
-        holder.itemView.setOnClickListener { onOpenNotebook(card) }
-        holder.itemView.setOnLongClickListener { onNotebookProperties(card); true }
+        if (selectMode) {
+            // Tap toggles selection; long-press is suppressed so it can't open Properties.
+            holder.check.visibility = if (card.id in selectedIds) View.VISIBLE else View.GONE
+            holder.itemView.setOnClickListener { onToggleNotebook(card) }
+            holder.itemView.setOnLongClickListener(null)
+            holder.itemView.isLongClickable = false
+        } else {
+            holder.check.visibility = View.GONE
+            holder.itemView.setOnClickListener { onOpenNotebook(card) }
+            holder.itemView.setOnLongClickListener { onNotebookProperties(card); true }
+        }
     }
 
     override fun getItemCount(): Int = items.size
