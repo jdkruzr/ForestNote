@@ -316,6 +316,25 @@ class NotebookStore(
         }
     }
 
+    /** Every folder in the library, off-thread — for the D2 bulk-move destination picker. */
+    fun listAllFolders(onResult: (List<FolderMeta>) -> Unit) {
+        executor.execute {
+            val folders = runCatching { repo?.listAllFolders() ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to list all folders", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(folders) }
+        }
+    }
+
+    /** Move [ids] to [destFolderId] (null = root) in one transaction (D2); callback posted when done. */
+    fun bulkMoveNotebooks(ids: List<String>, destFolderId: String?, onDone: () -> Unit) {
+        executor.execute {
+            runCatching { repo?.bulkMoveNotebooks(ids, destFolderId) }
+                .onFailure { android.util.Log.e(TAG, "failed to bulk move notebooks", it) }
+            poster { onDone() }
+        }
+    }
+
     /** Delete a notebook (and everything under it); callback posted when done. */
     fun deleteNotebook(notebookId: String, onDone: () -> Unit) {
         executor.execute {

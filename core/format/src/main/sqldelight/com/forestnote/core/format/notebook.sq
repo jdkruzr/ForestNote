@@ -67,6 +67,9 @@ INSERT INTO notebook(id, name, sort_order, created_at, modified_at, folder_id) V
 renameNotebook:
 UPDATE notebook SET name = ? WHERE id = ?;
 
+setNotebookFolder:
+UPDATE notebook SET folder_id = ? WHERE id = ?;
+
 touchNotebook:
 UPDATE notebook SET modified_at = ? WHERE id = ?;
 

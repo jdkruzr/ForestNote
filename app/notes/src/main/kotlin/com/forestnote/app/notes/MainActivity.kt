@@ -316,10 +316,8 @@ class MainActivity : Activity() {
             onNewFolder = { promptNewFolder(libraryView.currentFolderId) },
             onFolderProperties = { folder -> openFolderProperties(folder) },
             onOpenSettings = { openSettings() },
-            // D1 stubs: the Select-mode action bar is wired, but Move/Delete land in D2/D3.
-            onBulkMove = { ids ->
-                android.widget.Toast.makeText(this, "Move ${ids.size} (coming in D2)", android.widget.Toast.LENGTH_SHORT).show()
-            },
+            onBulkMove = { ids -> showMoveTargetDialog(ids) },
+            // D3 stub: bulk delete lands in D3.
             onBulkDelete = { ids ->
                 android.widget.Toast.makeText(this, "Delete ${ids.size} (coming in D3)", android.widget.Toast.LENGTH_SHORT).show()
             }
@@ -328,6 +326,29 @@ class MainActivity : Activity() {
 
     /** Dismiss the Library overlay and return to the editor. */
     private fun closeLibrary() { libraryView.hide() }
+
+    /**
+     * Bulk-move dialog (D2): pick a destination folder (or Library root) for the selected
+     * notebooks. Destinations come from [MoveTargetLogic] (root first, breadcrumb-labelled);
+     * the move runs in one transaction, then the Library reloads and select mode exits.
+     */
+    private fun showMoveTargetDialog(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        store.listAllFolders { folders ->
+            val targets = MoveTargetLogic.targets(folders)
+            val labels = targets.map { it.label }.toTypedArray()
+            AlertDialog.Builder(this)
+                .setTitle("Move ${ids.size} to…")
+                .setItems(labels) { _, which ->
+                    store.bulkMoveNotebooks(ids.toList(), targets[which].folderId) {
+                        if (libraryView.isShowing) libraryView.reload()
+                        libraryView.exitSelectMode()
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
 
     /** Show the full-screen Settings overlay over the editor (B2). */
     private fun openSettings() {

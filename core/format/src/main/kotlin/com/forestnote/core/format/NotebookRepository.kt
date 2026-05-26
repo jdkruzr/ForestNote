@@ -342,6 +342,18 @@ class NotebookRepository private constructor(
         FolderPathLogic.descendants(rootId, listAllFolders())
 
     /**
+     * Move every notebook in [ids] to [destFolderId] (null = Library root) in one transaction
+     * (D2). Does not bump modified_at — a move isn't a content edit, parallel to renameNotebook.
+     * Empty list, already-in-folder, and unknown ids are all harmless no-ops.
+     */
+    fun bulkMoveNotebooks(ids: List<String>, destFolderId: String?) {
+        if (ids.isEmpty()) return
+        db.transaction {
+            ids.forEach { db.notebookQueries.setNotebookFolder(destFolderId, it) }
+        }
+    }
+
+    /**
      * Delete a notebook and everything under it in one transaction (no FK-cascade
      * reliance, AC2.3). If the active notebook is deleted, switch to a remaining one;
      * if none remain, bootstrap a fresh notebook + page (never zero notebooks, AC2.4).
