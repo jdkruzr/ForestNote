@@ -1,11 +1,25 @@
+-- Folder table: optional hierarchy that contains notebooks. parent_folder_id
+-- NULL = a root-level folder. (library-and-tools AC5.1)
+CREATE TABLE folder (
+    id TEXT PRIMARY KEY NOT NULL,            -- client-minted ULID
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    modified_at INTEGER NOT NULL DEFAULT 0,
+    parent_folder_id TEXT REFERENCES folder(id)  -- NULL = root-level folder
+);
+CREATE INDEX folder_parent_folder_id ON folder(parent_folder_id);
+
 -- Notebook table: a named, ordered collection of pages.
 CREATE TABLE notebook (
     id TEXT PRIMARY KEY NOT NULL,         -- client-minted ULID
     name TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
-    modified_at INTEGER NOT NULL DEFAULT 0  -- bumped on every ink mutation; backfilled = created_at
+    modified_at INTEGER NOT NULL DEFAULT 0,  -- bumped on every ink mutation; backfilled = created_at
+    folder_id TEXT REFERENCES folder(id)     -- NULL = root (no folder)
 );
+CREATE INDEX notebook_folder_id ON notebook(folder_id);
 
 -- Page table: each page belongs to exactly one notebook.
 CREATE TABLE page (
