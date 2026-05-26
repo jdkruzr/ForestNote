@@ -384,3 +384,80 @@ SELECT id FROM page;
 
 allStrokeIds:
 SELECT id FROM stroke;
+
+-- ── Sync (UltraBridge) — Phase 4 apply ───────────────────────────────────────
+-- Applying a RELAYED op (authored by another device): write the decoded wire columns straight
+-- into the base table and re-stamp provenance, WITHOUT touching the outbox or next_op_seq (a
+-- relayed op is not re-authored). Each upsert overwrites only the synced columns; local-only
+-- columns (modified_at, the recycle-bin batch grouping) are left to their own paths. modified_at
+-- is bumped separately to max(current, wall_ts) so "recently edited" stays multi-device correct.
+
+getRowMeta:
+SELECT lww_wall_ts, lww_op_seq, lww_site_id FROM sync_row_meta WHERE table_name = ? AND pk = ?;
+
+-- Pending outbound ops: everything the server has not yet acked (op_seq > acked_op_seq),
+-- in authoring order. The engine sends these, then advances the ack water on success.
+pendingOutbox:
+SELECT op_seq, table_name, pk, wall_ts, payload FROM outbox WHERE op_seq > ? ORDER BY op_seq ASC;
+
+-- Prune acked ops (at/below the contiguous accepted_through high-water).
+pruneOutbox:
+DELETE FROM outbox WHERE op_seq <= ?;
+
+setAckedOpSeq:
+UPDATE sync_state SET acked_op_seq = ? WHERE id = 0;
+
+setCursor:
+UPDATE sync_state SET cursor = ? WHERE id = 0;
+
+-- Bump a notebook's local modified_at to at least [wall_ts] (never moves it backwards).
+bumpNotebookModifiedAtMax:
+UPDATE notebook SET modified_at = max(modified_at, ?) WHERE id = ?;
+
+-- The owning notebook of a page (to bump modified_at when a page/stroke op applies).
+notebookIdOfPage:
+SELECT notebook_id FROM page WHERE id = ?;
+
+applyUpsertNotebook:
+INSERT INTO notebook(id, name, sort_order, created_at, modified_at, folder_id, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name,
+    sort_order = excluded.sort_order,
+    created_at = excluded.created_at,
+    folder_id = excluded.folder_id,
+    deleted_at = excluded.deleted_at;
+
+applyUpsertFolder:
+INSERT INTO folder(id, name, sort_order, created_at, modified_at, parent_folder_id, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name,
+    sort_order = excluded.sort_order,
+    created_at = excluded.created_at,
+    parent_folder_id = excluded.parent_folder_id,
+    deleted_at = excluded.deleted_at;
+
+applyUpsertPage:
+INSERT INTO page(id, notebook_id, sort_order, created_at, template, template_pitch_mm, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    notebook_id = excluded.notebook_id,
+    sort_order = excluded.sort_order,
+    created_at = excluded.created_at,
+    template = excluded.template,
+    template_pitch_mm = excluded.template_pitch_mm,
+    deleted_at = excluded.deleted_at;
+
+applyUpsertStroke:
+INSERT INTO stroke(id, page_id, color, pen_width_min, pen_width_max, points, z, created_at, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    page_id = excluded.page_id,
+    color = excluded.color,
+    pen_width_min = excluded.pen_width_min,
+    pen_width_max = excluded.pen_width_max,
+    points = excluded.points,
+    z = excluded.z,
+    created_at = excluded.created_at,
+    deleted_at = excluded.deleted_at;

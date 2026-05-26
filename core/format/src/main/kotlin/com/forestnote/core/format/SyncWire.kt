@@ -1,6 +1,9 @@
 package com.forestnote.core.format
 
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 import java.util.Base64
 
@@ -67,4 +70,62 @@ internal object SyncWire {
             put("points", Base64.getEncoder().encodeToString(points))
             put("z", z)
         }.toString()
+
+    // -- decode (inverse of the encoders above) ----------------------------------
+    //
+    // The apply path (Phase 4) turns a relayed op's wire `cols` back into the column values to
+    // store. Each holder mirrors its `syncRow*` query result shape, so a winning op writes
+    // straight through. Contract: `decode(encode(row)) == row` for every table (SyncWireDecodeTest).
+
+    /** Synced notebook columns, in DB-storable form (`color`/timestamps already native). */
+    data class NotebookRow(val folderId: String?, val name: String, val sortOrder: Long, val createdAt: Long, val deletedAt: Long?)
+    data class FolderRow(val name: String, val sortOrder: Long, val createdAt: Long, val deletedAt: Long?, val parentFolderId: String?)
+    data class PageRow(val notebookId: String, val sortOrder: Long, val createdAt: Long, val deletedAt: Long?, val template: String?, val templatePitchMm: Long?)
+    data class StrokeRow(val pageId: String, val color: Long, val penWidthMin: Long, val penWidthMax: Long, val points: ByteArray, val z: Long, val createdAt: Long, val deletedAt: Long?)
+
+    fun decodeNotebook(cols: JsonObject) = NotebookRow(
+        folderId = str(cols, "folder_id"),
+        name = str(cols, "name")!!,
+        sortOrder = num(cols, "sort_order")!!,
+        createdAt = num(cols, "created_at")!!,
+        deletedAt = num(cols, "deleted_at")
+    )
+
+    fun decodeFolder(cols: JsonObject) = FolderRow(
+        name = str(cols, "name")!!,
+        sortOrder = num(cols, "sort_order")!!,
+        createdAt = num(cols, "created_at")!!,
+        deletedAt = num(cols, "deleted_at"),
+        parentFolderId = str(cols, "parent_folder_id")
+    )
+
+    fun decodePage(cols: JsonObject) = PageRow(
+        notebookId = str(cols, "notebook_id")!!,
+        sortOrder = num(cols, "sort_order")!!,
+        createdAt = num(cols, "created_at")!!,
+        deletedAt = num(cols, "deleted_at"),
+        template = str(cols, "template"),
+        templatePitchMm = num(cols, "template_pitch_mm")
+    )
+
+    fun decodeStroke(cols: JsonObject) = StrokeRow(
+        pageId = str(cols, "page_id")!!,
+        // unsigned int64 wire color -> low 32 bits reinterpreted as a signed Int, sign-extended
+        // back to the Long the DB stores (the exact inverse of `color and 0xFFFFFFFFL`).
+        color = num(cols, "color")!!.toInt().toLong(),
+        penWidthMin = num(cols, "pen_width_min")!!,
+        penWidthMax = num(cols, "pen_width_max")!!,
+        points = Base64.getDecoder().decode(str(cols, "points")!!),
+        z = num(cols, "z")!!,
+        createdAt = num(cols, "created_at")!!,
+        deletedAt = num(cols, "deleted_at")
+    )
+
+    /** A JSON string column, or null for JSON null / absent. */
+    private fun str(cols: JsonObject, key: String): String? =
+        cols[key]?.let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.content }
+
+    /** A JSON int64 column, or null for JSON null / absent. */
+    private fun num(cols: JsonObject, key: String): Long? =
+        cols[key]?.let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.long }
 }

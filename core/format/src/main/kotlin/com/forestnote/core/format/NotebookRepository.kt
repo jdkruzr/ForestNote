@@ -6,6 +6,8 @@ import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.Ulid
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 
 /** Public notebook metadata so the UI never touches generated row types. */
 data class NotebookMeta(
@@ -810,6 +812,97 @@ class NotebookRepository private constructor(
             SyncWire.strokeCols(it.page_id, it.color, it.pen_width_min, it.pen_width_max, it.points, it.z, it.created_at, it.deleted_at)
         }
         else -> null
+    }
+
+    // -- Sync send side (Phase 4) ------------------------------------------------
+    //
+    // The engine drives the §4.2 loop over these: read pending ops, POST, then on success
+    // advance the ack water (pruning the outbox) and adopt the server cursor.
+
+    /** This install's sync site_id, or null until [enableSync] mints it. */
+    fun syncSiteId(): String? = db.notebookQueries.getSyncState().executeAsOneOrNull()?.site_id
+
+    /** Last global seq applied from the server (0 = never synced). */
+    fun syncCursor(): Long = db.notebookQueries.getSyncState().executeAsOneOrNull()?.cursor ?: 0L
+
+    /** Contiguous accepted_through high-water: the outbox is pruned at/below this. */
+    fun syncAckedOpSeq(): Long = db.notebookQueries.getSyncState().executeAsOneOrNull()?.acked_op_seq ?: 0L
+
+    /** Pending outbound ops (op_seq > acked), in authoring order. Empty when sync is disabled. */
+    fun pendingOps(): List<SyncOp> {
+        val site = syncSiteId() ?: return emptyList()
+        val acked = syncAckedOpSeq()
+        return db.notebookQueries.pendingOutbox(acked).executeAsList().map {
+            SyncOp(it.table_name, it.pk, site, it.op_seq, it.wall_ts, Json.parseToJsonElement(it.payload).jsonObject)
+        }
+    }
+
+    /** Advance the ack high-water to [through] and prune the now-settled outbox ops (one txn). */
+    fun markAckedThrough(through: Long) {
+        db.transaction {
+            db.notebookQueries.setAckedOpSeq(through)
+            db.notebookQueries.pruneOutbox(through)
+        }
+    }
+
+    /** Adopt the server's cursor as the new local high-water (authoritative, §7.4). */
+    fun setSyncCursor(cursor: Long) {
+        db.notebookQueries.setCursor(cursor)
+    }
+
+    // -- Sync apply (Phase 4) ----------------------------------------------------
+    //
+    // Merge relayed ops (authored by other devices) into the local mirror by the same row-level
+    // LWW rule the server uses (protocol §5). Applied as one transaction so a partial failure
+    // re-fetches and re-applies idempotently (§4.2/§7.3). Relayed ops are never re-authored, so
+    // this path deliberately bypasses enqueueOp/next_op_seq.
+
+    /**
+     * Apply a batch of relayed [ops]. For each op (in the given order): drop unknown columns,
+     * compare its key `(wall_ts, op_seq, site_id)` against the row's recorded provenance, and on
+     * a strict win write the decoded columns through to the base table, re-stamp `sync_row_meta`,
+     * and raise the owning notebook's `modified_at` to `max(current, wall_ts)`. Losses and ties
+     * (incl. a re-delivered op) leave the row untouched — the merge is idempotent and
+     * order-independent.
+     */
+    fun applySyncOps(ops: List<SyncOp>) {
+        if (ops.isEmpty()) return
+        db.transaction {
+            for (raw in ops) {
+                val op = SyncMerge.normalize(raw)
+                val meta = db.notebookQueries.getRowMeta(op.table, op.pk).executeAsOneOrNull()
+                if (meta != null) {
+                    val stored = SyncOp(op.table, op.pk, meta.lww_site_id, meta.lww_op_seq, meta.lww_wall_ts, op.cols)
+                    if (!SyncMerge.less(stored, op)) continue // incoming did not strictly win
+                }
+                if (!writeWinningOp(op)) continue
+                db.notebookQueries.upsertRowMeta(op.table, op.pk, op.wallTs, op.opSeq, op.siteId)
+            }
+        }
+    }
+
+    /** Materialize a winning op's columns into its base table; true if applied. */
+    private fun writeWinningOp(op: SyncOp): Boolean {
+        when (op.table) {
+            "notebook" -> SyncWire.decodeNotebook(op.cols).let {
+                db.notebookQueries.applyUpsertNotebook(op.pk, it.name, it.sortOrder, it.createdAt, op.wallTs, it.folderId, it.deletedAt)
+                db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, op.pk)
+            }
+            "folder" -> SyncWire.decodeFolder(op.cols).let {
+                db.notebookQueries.applyUpsertFolder(op.pk, it.name, it.sortOrder, it.createdAt, op.wallTs, it.parentFolderId, it.deletedAt)
+            }
+            "page" -> SyncWire.decodePage(op.cols).let {
+                db.notebookQueries.applyUpsertPage(op.pk, it.notebookId, it.sortOrder, it.createdAt, it.template, it.templatePitchMm, it.deletedAt)
+                db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, it.notebookId)
+            }
+            "stroke" -> SyncWire.decodeStroke(op.cols).let {
+                db.notebookQueries.applyUpsertStroke(op.pk, it.pageId, it.color, it.penWidthMin, it.penWidthMax, it.points, it.z, it.createdAt, it.deletedAt)
+                db.notebookQueries.notebookIdOfPage(it.pageId).executeAsOneOrNull()
+                    ?.let { nb -> db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, nb) }
+            }
+            else -> return false // unknown table: skip (a relayed op for a table we don't model)
+        }
+        return true
     }
 
     /**
