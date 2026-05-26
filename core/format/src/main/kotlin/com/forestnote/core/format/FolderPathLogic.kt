@@ -1,5 +1,8 @@
 package com.forestnote.core.format
 
+// pattern: Functional Core
+// Pure hierarchy walks over in-memory FolderMeta rows; no I/O, no Android.
+
 /**
  * Pure folder-hierarchy logic over in-memory [FolderMeta] rows. No I/O, no Android.
  * Both operations are guarded against cycles and dangling parents so a corrupt
