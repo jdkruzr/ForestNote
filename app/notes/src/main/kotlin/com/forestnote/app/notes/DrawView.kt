@@ -52,6 +52,11 @@ class DrawView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
     companion object {
+        // Page-template ink (B3). Lines at a muted gray; dots a touch darker so they
+        // read at the same weight (on-device tuning).
+        private val TEMPLATE_LINE_COLOR = Color.parseColor("#FFB0B0B0")
+        private val TEMPLATE_DOT_COLOR = Color.parseColor("#FF8A8A8A")
+
         /**
          * Pure function: Check if a tool type should be accepted for drawing.
          * Stylus and eraser are accepted, finger is rejected (AC1.3).
@@ -243,7 +248,7 @@ class DrawView @JvmOverloads constructor(
     private var templatePitchMm: Int = 5
     private val templatePaint = Paint().apply {
         isAntiAlias = true
-        color = Color.parseColor("#FFB0B0B0") // muted gray — visible but recedes behind ink
+        color = TEMPLATE_LINE_COLOR
         style = Paint.Style.FILL
         strokeWidth = 1f
     }
@@ -262,8 +267,6 @@ class DrawView @JvmOverloads constructor(
         super.onSizeChanged(w, h, oldw, oldh)
         // Update transform with actual screen dimensions so coordinate conversion is accurate
         transform.update(w, h)
-        // Physical density for mm→px template pitch (xdpi, not densityDpi — see PageTransform.ppi).
-        transform.ppi = resources.displayMetrics.xdpi
         // Ensure bitmap matches new size
         ensureBitmap()
         // Re-lay the template + strokes for the new scale (template even with no ink).
@@ -951,13 +954,18 @@ class DrawView @JvmOverloads constructor(
 
         when (templateType) {
             PageTemplate.DOT -> {
-                val r = 1.5f
+                // Dots read fainter than lines at the same gray, so go a touch darker
+                // and larger (on-device tuning) — without affecting the line templates.
+                templatePaint.color = TEMPLATE_DOT_COLOR
+                val r = 2.25f
                 for (x in xs) for (y in ys) canvas.drawCircle(x, y, r, templatePaint)
             }
             PageTemplate.RULED -> {
+                templatePaint.color = TEMPLATE_LINE_COLOR
                 for (y in ys) canvas.drawLine(0f, y, w, y, templatePaint)
             }
             PageTemplate.GRID -> {
+                templatePaint.color = TEMPLATE_LINE_COLOR
                 for (y in ys) canvas.drawLine(0f, y, w, y, templatePaint)
                 for (x in xs) canvas.drawLine(x, 0f, x, h, templatePaint)
             }

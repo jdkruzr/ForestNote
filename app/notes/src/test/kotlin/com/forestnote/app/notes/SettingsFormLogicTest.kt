@@ -43,10 +43,10 @@ class SettingsFormLogicTest {
 
     @Test
     fun offPresetSnapsToNearest() {
-        // presets are [4,5,7,10]; 6 is equidistant 5 and 7 -> snap to the lower (5, index 1)
-        assertEquals(1, SettingsFormLogic.selectedPitchIndex(6))
-        // 8 is closer to 7 than 10
-        assertEquals(2, SettingsFormLogic.selectedPitchIndex(8))
+        // presets are [5,7,10]; 6 is equidistant 5 and 7 -> snap to the lower (5, index 0)
+        assertEquals(0, SettingsFormLogic.selectedPitchIndex(6))
+        // 8 is closer to 7 (index 1) than 10
+        assertEquals(1, SettingsFormLogic.selectedPitchIndex(8))
     }
 
     @Test
@@ -57,8 +57,8 @@ class SettingsFormLogicTest {
 
     @Test
     fun pitchForIndexReturnsThePreset() {
-        assertEquals(4, SettingsFormLogic.pitchForIndex(0))
-        assertEquals(10, SettingsFormLogic.pitchForIndex(3))
+        assertEquals(5, SettingsFormLogic.pitchForIndex(0))
+        assertEquals(10, SettingsFormLogic.pitchForIndex(2))
     }
 
     @Test

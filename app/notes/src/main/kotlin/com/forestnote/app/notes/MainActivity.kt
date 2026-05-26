@@ -78,6 +78,12 @@ class MainActivity : Activity() {
         drawView = findViewById(R.id.draw_view)
         val toolBarRoot: View = findViewById(R.id.toolbar)
 
+        // Physical PPI for mm→px template pitch (B3). The AiPaper Mini under-reports
+        // DisplayMetrics.xdpi (~146) and its densityDpi (320) is a bucket — neither is
+        // the true ~293 PPI panel (verified by measuring template pitch on-glass). Use
+        // the measured constant on e-ink; fall back to xdpi on generic devices.
+        pageTransform.ppi = if (isEInk) AIPAPER_MINI_PPI else resources.displayMetrics.xdpi
+
         // Configure DrawView
         drawView.apply {
             setBackend(backend)
@@ -475,5 +481,12 @@ class MainActivity : Activity() {
             }
             default?.uncaughtException(t, e) ?: System.exit(1)
         }
+    }
+
+    private companion object {
+        // AiPaper Mini true panel PPI = sqrt(1440²+1920²)/8.2" ≈ 293. The device
+        // misreports density (densityDpi=320, xdpi≈146), so neither is usable for
+        // physical mm sizing — use this measured constant for template pitch.
+        const val AIPAPER_MINI_PPI = 293f
     }
 }

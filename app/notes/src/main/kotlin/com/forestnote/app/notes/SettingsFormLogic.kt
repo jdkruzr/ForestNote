@@ -14,8 +14,12 @@ import kotlin.math.abs
  */
 object SettingsFormLogic {
 
-    /** Pitch presets, in millimetres, ascending (left-to-right radio order). */
-    val pitchPresetsMm: List<Int> = listOf(4, 5, 7, 10)
+    /**
+     * Pitch presets, in millimetres, ascending (left-to-right radio order). Tuned
+     * on-device: 5mm is the practical minimum at the Mini's true PPI, 7mm reads
+     * well, 10mm suits learning script. (4mm was too fine to write on.)
+     */
+    val pitchPresetsMm: List<Int> = listOf(5, 7, 10)
 
     /** The pitch radio is only meaningful when a template is actually drawn. */
     fun pitchRowVisible(template: PageTemplate): Boolean = template != PageTemplate.BLANK
