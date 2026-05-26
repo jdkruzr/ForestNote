@@ -117,7 +117,7 @@ class MainActivity : Activity() {
         }
         pageIndicator.setOnClickListener { showPagePicker() }
 
-        // Notebook label opens the notebook picker.
+        // Notebook label opens the Library overlay (C6: the picker is fully superseded).
         btnNotebooks = findViewById(R.id.btn_notebooks)
         btnNotebooks.setOnClickListener { openLibrary() }
 
