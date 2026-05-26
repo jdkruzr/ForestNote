@@ -13,6 +13,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.View
+import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
 import com.forestnote.core.ink.PenParams
@@ -51,6 +52,11 @@ class DrawView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
     companion object {
+        // Page-template ink (B3). Lines at a muted gray; dots a touch darker so they
+        // read at the same weight (on-device tuning).
+        private val TEMPLATE_LINE_COLOR = Color.parseColor("#FFB0B0B0")
+        private val TEMPLATE_DOT_COLOR = Color.parseColor("#FF8A8A8A")
+
         /**
          * Pure function: Check if a tool type should be accepted for drawing.
          * Stylus and eraser are accepted, finger is rejected (AC1.3).
@@ -235,6 +241,18 @@ class DrawView @JvmOverloads constructor(
     private var writingCanvas: Canvas? = null
     private var bitmapProvided = false
 
+    // Page template (B3): the *effective* template + pitch for the active page
+    // (page override or global default, resolved by the caller). Drawn onto the
+    // bitmap under the ink in every rebuild path. BLANK = nothing drawn (v1 look).
+    private var templateType: PageTemplate = PageTemplate.BLANK
+    private var templatePitchMm: Int = 5
+    private val templatePaint = Paint().apply {
+        isAntiAlias = true
+        color = TEMPLATE_LINE_COLOR
+        style = Paint.Style.FILL
+        strokeWidth = 1f
+    }
+
     // Touch state tracking
     private var prevScreenX = 0f
     private var prevScreenY = 0f
@@ -251,12 +269,11 @@ class DrawView @JvmOverloads constructor(
         transform.update(w, h)
         // Ensure bitmap matches new size
         ensureBitmap()
-        // Restore strokes to bitmap in case scale changed
-        if (completedStrokes.isNotEmpty()) {
-            writingBitmap?.eraseColor(Color.TRANSPARENT)
-            for (stroke in completedStrokes) {
-                drawStrokeToBitmap(stroke)
-            }
+        // Re-lay the template + strokes for the new scale (template even with no ink).
+        writingBitmap?.eraseColor(Color.TRANSPARENT)
+        drawTemplateToBitmap()
+        for (stroke in completedStrokes) {
+            drawStrokeToBitmap(stroke)
         }
     }
 
@@ -273,6 +290,18 @@ class DrawView @JvmOverloads constructor(
     }
 
     /**
+     * Set the active page's *effective* template + pitch (B3). The caller resolves
+     * page-override-vs-global-default; DrawView just renders what it's given. Repaints
+     * only when something actually changed (avoids needless e-ink refreshes).
+     */
+    fun setTemplate(template: PageTemplate, pitchMm: Int) {
+        if (template == templateType && pitchMm == templatePitchMm) return
+        templateType = template
+        templatePitchMm = pitchMm
+        redrawBitmap()
+    }
+
+    /**
      * Apply an async startup load: merge the DB-loaded strokes with any strokes drawn
      * during the load gap (dedup by id, loaded first — see [mergeStrokes]), then replay
      * the merged model onto the offscreen bitmap. Safe to call after the user has
@@ -284,6 +313,7 @@ class DrawView @JvmOverloads constructor(
         completedStrokes.addAll(merged)
         ensureBitmap()
         writingBitmap?.eraseColor(Color.TRANSPARENT)
+        drawTemplateToBitmap()
         for (stroke in completedStrokes) {
             drawStrokeToBitmap(stroke)
         }
@@ -306,6 +336,7 @@ class DrawView @JvmOverloads constructor(
         completedStrokes.clear()
         currentStroke = null
         writingBitmap?.eraseColor(Color.TRANSPARENT)
+        drawTemplateToBitmap() // clearing ink leaves the page template in place
         writingBitmap?.let { bmp ->
             val loc = IntArray(2)
             getLocationOnScreen(loc)
@@ -814,6 +845,7 @@ class DrawView @JvmOverloads constructor(
     private fun redrawBitmap() {
         val canvas = writingCanvas ?: return
         writingBitmap?.eraseColor(Color.TRANSPARENT)
+        drawTemplateToBitmap()
         for (stroke in completedStrokes) {
             drawStrokeToBitmap(stroke)
         }
@@ -902,6 +934,45 @@ class DrawView @JvmOverloads constructor(
      * Draw a single stroke onto the offscreen bitmap using screen coordinates.
      * Used during stroke restoration.
      */
+    /**
+     * Draw the page template onto the offscreen bitmap, under the ink. Dot = dots at
+     * grid intersections; Ruled = horizontal lines; Grid = horizontal + vertical.
+     * BLANK draws nothing (the v1 plain-white look). Pitch is a physical mm value
+     * converted to px via [PageTransform.pitchPx]; positions come from the pure
+     * [TemplateGeometry.lineOffsets].
+     */
+    private fun drawTemplateToBitmap() {
+        if (templateType == PageTemplate.BLANK) return
+        val canvas = writingCanvas ?: return
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+
+        val pitchPx = transform.pitchPx(templatePitchMm.toFloat())
+        val xs = TemplateGeometry.lineOffsets(w, pitchPx)
+        val ys = TemplateGeometry.lineOffsets(h, pitchPx)
+
+        when (templateType) {
+            PageTemplate.DOT -> {
+                // Dots read fainter than lines at the same gray, so go a touch darker
+                // and larger (on-device tuning) — without affecting the line templates.
+                templatePaint.color = TEMPLATE_DOT_COLOR
+                val r = 2.25f
+                for (x in xs) for (y in ys) canvas.drawCircle(x, y, r, templatePaint)
+            }
+            PageTemplate.RULED -> {
+                templatePaint.color = TEMPLATE_LINE_COLOR
+                for (y in ys) canvas.drawLine(0f, y, w, y, templatePaint)
+            }
+            PageTemplate.GRID -> {
+                templatePaint.color = TEMPLATE_LINE_COLOR
+                for (y in ys) canvas.drawLine(0f, y, w, y, templatePaint)
+                for (x in xs) canvas.drawLine(x, 0f, x, h, templatePaint)
+            }
+            PageTemplate.BLANK -> {} // unreachable (guarded above)
+        }
+    }
+
     private fun drawStrokeToBitmap(stroke: Stroke) {
         val canvas = writingCanvas ?: return
         val points = stroke.points

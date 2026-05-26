@@ -17,7 +17,7 @@ Main application module that wires together ink rendering, storage, and user int
 
 ## Key Decisions
 - Activity (not Fragment/Compose): minimal overhead for single-screen e-ink app. Secondary screens (Settings) are full-screen overlay Views added to `android.R.id.content`, not new Activities — keeps the single `NotebookStore` (single-writer DB invariant) and avoids fragments
-- DrawView owns offscreen bitmap: all strokes rendered to bitmap, blitted to screen in onDraw
+- DrawView owns offscreen bitmap: all strokes rendered to bitmap, blitted to screen in onDraw. The page template (B3) is drawn onto the bitmap UNDER the ink in every rebuild path (onSizeChanged/mergeLoadedStrokes/clearAll/redrawBitmap); `setTemplate(effectiveTemplate, pitchMm)` repaints on change. Template pitch uses true panel PPI (293 on the Mini, set in MainActivity by isEInk), NOT densityDpi/xdpi
 - Hardware eraser (TOOL_TYPE_ERASER) always erases regardless of toolbar selection
 - 900ms postDelayed invalidate after pen-up: triggers quality e-ink refresh without excessive redraws
 - All persistence flows through `NotebookStore` (single background thread); DrawView/MainActivity never touch `NotebookRepository` or the DB directly. Save is fire-and-forget; erase reconcile + load run off-thread and post results back to the main thread
@@ -42,7 +42,8 @@ Main application module that wires together ink rendering, storage, and user int
 - `Clipboard.kt` - `Clipboard` interface + `InProcessClipboard` (listener-based; B1 re-backs it with `app_state.clipboard_json`)
 - `SelectionMenuView.kt` - Floating action pill (PopupWindow) for a lasso selection; non-focusable so drag-to-move touches reach the canvas
 - `SettingsView.kt` - Full-screen Settings overlay (B2): inflated over the editor via `addContentView` onto `android.R.id.content`, reusing MainActivity's single `NotebookStore` (a 2nd Activity would open a 2nd DB connection and break single-writer serialization). Editor template+pitch radios persist on change; Sync/AI/CalDAV URL fields commit on blur or IME Done. Reached via a "Settings" neutral button on the notebook picker; system back dismisses it (`MainActivity.onBackPressed`)
-- `SettingsFormLogic.kt` - Pure pitch-radio rules (presets 4/5/7/10mm, visible iff template != BLANK, nearest-preset snap, index clamp)
+- `SettingsFormLogic.kt` - Pure pitch-radio rules (presets 5/7/10mm, visible iff template != BLANK, nearest-preset snap, index clamp)
+- `TemplateGeometry.kt` - Pure template geometry (interior `lineOffsets(extent,pitch)`) + effective-config resolution (`page override ?: global default`, AC8.4)
 - `res/layout/view_settings.xml` + `res/values/styles.xml` - Settings layout (header Back/title + scrolling sections) and its field styles (black-on-white, e-ink friendly)
 - `PageNavigationLogic.kt` - Pure page navigation (index, prev/next bounds, "N / M" label, can-delete)
 - `res/layout/toolbar.xml` - The six tool cells: Fountain / Lasso / Erase / Paste / Clear / Refresh (each whole cell is the hitbox)

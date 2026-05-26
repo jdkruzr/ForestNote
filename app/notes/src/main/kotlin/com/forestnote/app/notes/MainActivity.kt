@@ -78,6 +78,12 @@ class MainActivity : Activity() {
         drawView = findViewById(R.id.draw_view)
         val toolBarRoot: View = findViewById(R.id.toolbar)
 
+        // Physical PPI for mm→px template pitch (B3). The AiPaper Mini under-reports
+        // DisplayMetrics.xdpi (~146) and its densityDpi (320) is a bucket — neither is
+        // the true ~293 PPI panel (verified by measuring template pitch on-glass). Use
+        // the measured constant on e-ink; fall back to xdpi on generic devices.
+        pageTransform.ppi = if (isEInk) AIPAPER_MINI_PPI else resources.displayMetrics.xdpi
+
         // Configure DrawView
         drawView.apply {
             setBackend(backend)
@@ -227,6 +233,15 @@ class MainActivity : Activity() {
                     R.drawable.ic_arrow_right
                 }
             )
+            // B3: render the active page's effective template (page override ?: global
+            // default). Folded in here so every page/notebook switch re-resolves it.
+            val page = pages.firstOrNull { it.id == activeId }
+            store.loadSettings { settings ->
+                drawView.setTemplate(
+                    TemplateGeometry.effectiveTemplate(page?.template, settings.defaultTemplate),
+                    TemplateGeometry.effectivePitchMm(page?.templatePitchMm, settings.defaultPitchMm)
+                )
+            }
         }
     }
 
@@ -311,8 +326,8 @@ class MainActivity : Activity() {
     /** Dismiss the Settings overlay and return to the editor. */
     private fun closeSettings() {
         settingsView.hide()
-        // A template/pitch change while in Settings affects the editor's rendering once
-        // B3 lands; for now there is nothing to repaint.
+        // Re-resolve + repaint the active page's template in case the default changed (B3).
+        refreshPageIndicator()
     }
 
     @Deprecated("Deprecated in Java")
@@ -466,5 +481,12 @@ class MainActivity : Activity() {
             }
             default?.uncaughtException(t, e) ?: System.exit(1)
         }
+    }
+
+    private companion object {
+        // AiPaper Mini true panel PPI = sqrt(1440²+1920²)/8.2" ≈ 293. The device
+        // misreports density (densityDpi=320, xdpi≈146), so neither is usable for
+        // physical mm sizing — use this measured constant for template pitch.
+        const val AIPAPER_MINI_PPI = 293f
     }
 }
