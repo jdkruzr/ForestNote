@@ -100,13 +100,17 @@ class LibraryView {
         val folderId = currentFolderId
         val backChevron = view.findViewById<View>(R.id.btn_library_back)
 
-        // Resolve the breadcrumb path + back target for the current folder.
+        // Resolve the breadcrumb path + back target for the current folder. Each async
+        // result is dropped if the user has since navigated elsewhere (guards against a
+        // stale in-flight reload landing after a faster later one — same idea as
+        // ThumbnailLoader's view-tag guard).
         if (folderId == null) {
             backTarget = null
             backChevron.visibility = View.GONE
             breadcrumbView?.render(emptyList())
         } else {
             store.folderPath(folderId) { path ->
+                if (folderId != currentFolderId) return@folderPath
                 backTarget = BreadcrumbLogic.backTargetId(path)
                 backChevron.visibility = View.VISIBLE
                 breadcrumbView?.render(path)
@@ -114,7 +118,9 @@ class LibraryView {
         }
 
         store.listFolderCardsForParent(folderId) { folders ->
+            if (folderId != currentFolderId) return@listFolderCardsForParent
             store.listNotebookCardsInFolder(folderId) { notebooks ->
+                if (folderId != currentFolderId) return@listNotebookCardsInFolder
                 val items = folders.map { LibraryItem.Folder(it) } + notebooks.map { LibraryItem.Notebook(it) }
                 adapter.submit(items)
                 view.findViewById<TextView>(R.id.text_item_count).text = "${folders.size + notebooks.size}"
