@@ -79,6 +79,27 @@ DELETE FROM notebook WHERE id = ?;
 nextNotebookSortOrder:
 SELECT coalesce(max(sort_order), -1) + 1 FROM notebook;
 
+-- folders --
+
+listAllFolders:
+SELECT * FROM folder ORDER BY sort_order ASC, created_at ASC;
+
+getFoldersForParent:
+SELECT * FROM folder WHERE parent_folder_id IS ? ORDER BY sort_order ASC, created_at ASC;
+
+findFolder:
+SELECT * FROM folder WHERE id = ?;
+
+insertFolder:
+INSERT INTO folder(id, name, sort_order, created_at, modified_at, parent_folder_id)
+VALUES (?, ?, ?, ?, ?, ?);
+
+renameFolder:
+UPDATE folder SET name = ? WHERE id = ?;
+
+nextFolderSortOrder:
+SELECT coalesce(max(sort_order), -1) + 1 FROM folder WHERE parent_folder_id IS ?;
+
 -- pages (scoped by notebook) --
 
 listPagesForNotebook:

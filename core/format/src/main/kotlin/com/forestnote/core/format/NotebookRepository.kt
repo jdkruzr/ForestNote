@@ -16,6 +16,19 @@ data class NotebookMeta(
 )
 
 /**
+ * Public folder metadata so the UI never touches generated row types.
+ * [parentFolderId] NULL means a root-level folder.
+ */
+data class FolderMeta(
+    val id: String,
+    val name: String,
+    val sortOrder: Long,
+    val createdAt: Long,
+    val modifiedAt: Long,
+    val parentFolderId: String?
+)
+
+/**
  * Public page metadata so the UI never touches generated row types.
  * [template] / [templatePitchMm] are the per-page override: NULL means
  * "inherit the global default" from [Settings].
