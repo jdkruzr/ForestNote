@@ -181,9 +181,9 @@ class MigrationTest {
     fun repositoryUsableAfterMigration() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV1Schema(driver)
-        // Schema.version is now 3; openExisting → bootstrap queries the v3 tables
-        // (notebook/app_state), so migrate all the way to the current version.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 3L)
+        // Schema.version is now 4; openExisting → bootstrap queries the current tables
+        // (notebook incl. modified_at, app_state), so migrate all the way to the current version.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 4L)
 
         // openExisting (no schema.create) must work against the migrated DB.
         val repo = NotebookRepository.openExisting(driver)
@@ -206,7 +206,8 @@ class MigrationTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV2Schema(driver)
 
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 3L)
+        // Migrate to the current version (4); this still runs the v2->v3 step plus v3->v4.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 4L)
 
         assertTrue(tableExists(driver, "notebook"), "notebook table exists after v2->v3")
         assertTrue(tableExists(driver, "app_state"), "app_state table exists after v2->v3")
@@ -223,6 +224,55 @@ class MigrationTest {
         val loaded = repo.loadStrokes()
         assertEquals(1, loaded.size, "migrated v3 DB accepts and returns strokes")
         assertEquals(stroke.id, loaded[0].id, "saved ULID round-trips through the v3 DB")
+
+        driver.close()
+    }
+
+    /**
+     * library-and-tools A5: migrating v3 -> v4 adds notebook.modified_at, backfilled
+     * from created_at for pre-existing notebooks.
+     */
+    @Test
+    fun v3ToV4AddsNotebookModifiedAtBackfilledFromCreatedAt() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        // Minimal v3 notebook table with one pre-existing row.
+        driver.execute(
+            null,
+            """
+            CREATE TABLE notebook (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+            0
+        )
+        driver.execute(
+            null,
+            "INSERT INTO notebook(id, name, sort_order, created_at) VALUES ('n1', 'N', 0, 12345)",
+            0
+        )
+        driver.execute(null, "PRAGMA user_version = 3", 0)
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 3L, newVersion = 4L)
+
+        assertTrue(
+            columnNames(driver, "notebook").contains("modified_at"),
+            "notebook gains modified_at after v3->v4"
+        )
+        var modified = -1L
+        driver.executeQuery(
+            null,
+            "SELECT modified_at FROM notebook WHERE id = 'n1'",
+            { cursor ->
+                cursor.next()
+                modified = cursor.getLong(0)!!
+                QueryResult.Value(Unit)
+            },
+            0
+        )
+        assertEquals(12345L, modified, "existing notebook's modified_at is backfilled from created_at")
 
         driver.close()
     }

@@ -6,9 +6,11 @@ import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.ListView
 import android.widget.TextView
 import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.ink.BackendDetector
@@ -39,7 +41,15 @@ class MainActivity : Activity() {
     private lateinit var toolBar: ToolBar
     private lateinit var pageIndicator: TextView
     private lateinit var btnNotebooks: TextView
+    private lateinit var btnNext: ImageButton
     private var isEInk = false
+
+    // In-process clipboard for lasso Cut/Copy/Paste (held across A7 selection + A8 paste).
+    private val clipboard = InProcessClipboard()
+    private lateinit var selectionMenu: SelectionMenuView
+    // Shared with DrawView (same instance); DrawView updates its extents on layout, so
+    // virtualLongAxis is current by the time paste() reads it for the in-bounds offset.
+    private val pageTransform = PageTransform()
 
     // Cache of the current notebook's pages + active id, refreshed off the store.
     private var pageIds: List<String> = emptyList()
@@ -69,7 +79,7 @@ class MainActivity : Activity() {
         drawView.apply {
             setBackend(backend)
             setStore(store)
-            setTransform(PageTransform())
+            setTransform(pageTransform)
             onStrokeSaved = { stroke ->
                 // Notification-only callback
             }
@@ -78,12 +88,18 @@ class MainActivity : Activity() {
         // Wire the page navigation bar (prev / indicator / next).
         pageIndicator = findViewById(R.id.page_indicator)
         val btnPrev: ImageButton = findViewById(R.id.btn_prev_page)
-        val btnNext: ImageButton = findViewById(R.id.btn_next_page)
+        btnNext = findViewById(R.id.btn_next_page)
         btnPrev.setOnClickListener {
             PageNavigationLogic.prevId(pageIds, activePageId)?.let { goToPage(it) }
         }
         btnNext.setOnClickListener {
-            PageNavigationLogic.nextId(pageIds, activePageId)?.let { goToPage(it) }
+            // On the last page the arrow appends a new page (and switches to it);
+            // otherwise it navigates forward (AC3.1–AC3.3).
+            if (PageNavigationLogic.nextCreatesPage(pageIds, activePageId)) {
+                store.createPage { newId -> goToPage(newId) }
+            } else {
+                PageNavigationLogic.nextId(pageIds, activePageId)?.let { goToPage(it) }
+            }
         }
         pageIndicator.setOnClickListener { showPagePicker() }
 
@@ -104,6 +120,30 @@ class MainActivity : Activity() {
         toolBar = ToolBar(toolBarRoot, isEInk) { tool ->
             drawView.activeTool = tool
         }
+        // Propagate pen-variant choice to the canvas (affects width/colour/compositing).
+        toolBar.setOnPenVariantSelected { variant ->
+            drawView.activePenVariant = variant
+        }
+
+        // Lasso selection menu: show the action pill over a closed selection, dismiss
+        // it when the selection clears (tool switch / new lasso / cut / delete).
+        selectionMenu = SelectionMenuView(isEInk)
+        drawView.onSelectionChanged = { strokes, bounds ->
+            if (strokes.isEmpty() || bounds == null) {
+                selectionMenu.dismiss()
+            } else {
+                selectionMenu.show(
+                    drawView, strokes.size, bounds,
+                    SelectionMenuView.Callbacks(
+                        onCut = { drawView.cutSelection(clipboard) },
+                        onCopy = { drawView.copySelection(clipboard) },
+                        onRecognize = { showSelectionActionStub("Recognize") },
+                        onTodo = { showSelectionActionStub("To-do") },
+                        onDelete = { drawView.deleteSelection() }
+                    )
+                )
+            }
+        }
 
         // Wire Clear button
         toolBar.setOnClearClicked {
@@ -115,11 +155,43 @@ class MainActivity : Activity() {
             drawView.fullRefresh()
         }
 
+        // Paste cell: enabled live whenever the clipboard is non-empty (AC1.6).
+        toolBar.setOnPasteClicked { paste() }
+        clipboard.addListener { strokes -> toolBar.setPasteEnabled(strokes.isNotEmpty()) }
+        toolBar.setPasteEnabled(!clipboard.isEmpty())
+
         // E-ink optimizations
         if (isEInk) {
             window.setWindowAnimations(0)
             drawView.overScrollMode = View.OVER_SCROLL_NEVER
         }
+    }
+
+    /**
+     * Tapping Paste arms placement (AC1.6): the cell shows "Pasting…" and the next canvas
+     * tap drops the clipboard centred there. Tapping Paste again cancels. No-op when empty.
+     */
+    private fun paste() {
+        if (drawView.isPasteArmed) {
+            drawView.cancelPaste() // toggle off (its onEnded resets the caption)
+            return
+        }
+        val src = clipboard.get()
+        if (src.isEmpty()) return
+        toolBar.setPasteArmed(true)
+        drawView.armPaste(src) { toolBar.setPasteArmed(false) }
+    }
+
+    /**
+     * Stub for the lasso pill's Recognize / To-do actions (Caveat 1): both need a
+     * server URL from Settings (a later phase), so for now they explain that. No network.
+     */
+    private fun showSelectionActionStub(action: String) {
+        AlertDialog.Builder(this)
+            .setTitle(action)
+            .setMessage("$action needs a server URL configured in Settings, which is coming in a later version.")
+            .setPositiveButton("OK", null)
+            .show()
     }
 
     /**
@@ -144,6 +216,14 @@ class MainActivity : Activity() {
             pageIds = pages.map { it.id }
             activePageId = activeId
             pageIndicator.text = PageNavigationLogic.label(pageIds, activePageId)
+            // On the last page the next arrow grows a "+" badge (AC3.1).
+            btnNext.setImageResource(
+                if (PageNavigationLogic.nextCreatesPage(pageIds, activePageId)) {
+                    R.drawable.ic_arrow_right_plus
+                } else {
+                    R.drawable.ic_arrow_right
+                }
+            )
         }
     }
 
@@ -187,22 +267,38 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Notebook picker: list notebooks, switch on tap; New Notebook / Edit Current. */
+    /** Notebook picker: tap a row to switch, long-press a row for its Properties dialog. */
     private fun showNotebookPicker() {
-        store.listNotebooks { notebooks, activeId ->
-            val names = Array(notebooks.size) { i -> notebooks[i].name }
-            AlertDialog.Builder(this)
+        store.listNotebooks { notebooks, _ ->
+            val listView = ListView(this)
+            listView.adapter = ArrayAdapter(
+                this, android.R.layout.simple_list_item_1, notebooks.map { it.name }
+            )
+            val dialog = AlertDialog.Builder(this)
                 .setTitle("Notebooks")
-                .setItems(names) { _, which -> goToNotebook(notebooks[which].id) }
+                .setView(listView)
                 .setPositiveButton("New Notebook") { _, _ -> promptNewNotebook() }
-                .setNeutralButton("Edit Current") { _, _ ->
-                    val current = notebooks.firstOrNull { it.id == activeId }
-                    if (current != null) showEditNotebook(current, canDelete = notebooks.size > 1)
-                }
                 .setNegativeButton("Cancel", null)
-                .show()
+                .create()
+            listView.setOnItemClickListener { _, _, which, _ ->
+                dialog.dismiss()
+                goToNotebook(notebooks[which].id)
+            }
+            listView.setOnItemLongClickListener { _, _, which, _ ->
+                // Dismiss the picker first so Properties is a standalone dialog (it's the
+                // same entry point AC4.5's Library card will reuse once C3a lands).
+                dialog.dismiss()
+                openNotebookProperties(notebooks[which], canDelete = notebooks.size > 1)
+                true
+            }
+            dialog.show()
         }
     }
+
+    /** Format an epoch-ms timestamp for the Properties dialog (device locale). */
+    private fun formatTimestamp(epochMs: Long): String =
+        java.text.SimpleDateFormat("MMM d, yyyy h:mm a", java.util.Locale.getDefault())
+            .format(java.util.Date(epochMs))
 
     private fun promptNewNotebook() {
         val input = EditText(this).apply { hint = "Notebook name" }
@@ -217,28 +313,38 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun showEditNotebook(notebook: NotebookMeta, canDelete: Boolean) {
+    /**
+     * Notebook Properties (A9): Created / Modified / Pages metadata, editable name (Save
+     * renames), and Delete (when more than one notebook exists). Standalone — not nested
+     * in the picker — so AC4.5's Library card can open the same dialog once C3a lands.
+     */
+    private fun openNotebookProperties(notebook: NotebookMeta, canDelete: Boolean) {
+        val view = layoutInflater.inflate(R.layout.dialog_notebook_properties, null)
+        val nameInput = view.findViewById<EditText>(R.id.input_notebook_name)
+        val createdText = view.findViewById<TextView>(R.id.text_created)
+        val modifiedText = view.findViewById<TextView>(R.id.text_modified)
+        val pagesText = view.findViewById<TextView>(R.id.text_pages)
+
+        nameInput.setText(notebook.name)
+        createdText.text = "Created: ${formatTimestamp(notebook.createdAt)}"
+        modifiedText.text = "Modified: ${formatTimestamp(notebook.modifiedAt)}"
+        pagesText.text = "Pages: …"
+        store.countPages(notebook.id) { n -> pagesText.text = "Pages: $n" }
+
         val builder = AlertDialog.Builder(this)
-            .setTitle(notebook.name)
-            .setPositiveButton("Rename") { _, _ -> promptRenameNotebook(notebook) }
+            .setTitle("Notebook Properties")
+            .setView(view)
+            .setPositiveButton("Save") { _, _ ->
+                val name = nameInput.text.toString().trim().ifEmpty { notebook.name }
+                if (name != notebook.name) {
+                    store.renameNotebook(notebook.id, name) { refreshNotebookLabel() }
+                }
+            }
             .setNegativeButton("Cancel", null)
         if (canDelete) {
             builder.setNeutralButton("Delete") { _, _ -> confirmDeleteNotebook(notebook) }
         }
         builder.show()
-    }
-
-    private fun promptRenameNotebook(notebook: NotebookMeta) {
-        val input = EditText(this).apply { setText(notebook.name) }
-        AlertDialog.Builder(this)
-            .setTitle("Rename Notebook")
-            .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                val name = input.text.toString().trim().ifEmpty { notebook.name }
-                store.renameNotebook(notebook.id, name) { refreshNotebookLabel() }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
     }
 
     private fun confirmDeleteNotebook(notebook: NotebookMeta) {

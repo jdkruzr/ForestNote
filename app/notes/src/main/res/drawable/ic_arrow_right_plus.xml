@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Right-pointing triangle with a small "+" badge: "create a new page" (on the last page). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/black">
+    <!-- Next-page triangle (slightly smaller to leave room for the badge). -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M8,6 L8,20 L15,13 Z" />
+    <!-- "+" badge, top-right corner (clear of the triangle). -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M19.3,2.4 L20.7,2.4 L20.7,7.6 L19.3,7.6 Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M17.4,4.3 L22.6,4.3 L22.6,5.7 L17.4,5.7 Z" />
+</vector>

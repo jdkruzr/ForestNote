@@ -15,7 +15,7 @@
     android:elevation="0dp">
 
     <LinearLayout
-        android:id="@+id/cell_pen"
+        android:id="@+id/cell_fountain"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
@@ -23,15 +23,52 @@
         android:gravity="center"
         android:clickable="true"
         android:focusable="true"
-        android:contentDescription="Pen"
+        android:contentDescription="Fountain"
         android:background="?attr/selectableItemBackground">
 
         <ImageButton
-            android:id="@+id/btn_pen"
+            android:id="@+id/btn_fountain"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:src="@drawable/ic_pen"
+            android:src="@drawable/ic_fountain"
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="no"
+            android:background="@null"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:id="@+id/label_fountain"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Fountain ▾"
+            android:gravity="center"
+            android:textSize="9sp"
+            android:textColor="@color/black"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:paddingBottom="2dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/cell_lasso"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="Lasso"
+        android:background="?attr/selectableItemBackground">
+
+        <ImageButton
+            android:id="@+id/btn_lasso"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:src="@drawable/ic_lasso"
             android:clickable="false"
             android:focusable="false"
             android:importantForAccessibility="no"
@@ -41,7 +78,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Pen"
+            android:text="Lasso"
             android:gravity="center"
             android:textSize="9sp"
             android:textColor="@color/black"
@@ -50,7 +87,7 @@
     </LinearLayout>
 
     <LinearLayout
-        android:id="@+id/cell_stroke_eraser"
+        android:id="@+id/cell_erase"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
@@ -58,11 +95,11 @@
         android:gravity="center"
         android:clickable="true"
         android:focusable="true"
-        android:contentDescription="Stroke Eraser"
+        android:contentDescription="Erase"
         android:background="?attr/selectableItemBackground">
 
         <ImageButton
-            android:id="@+id/btn_stroke_eraser"
+            android:id="@+id/btn_erase"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
@@ -74,18 +111,20 @@
             android:scaleType="fitCenter" />
 
         <TextView
+            android:id="@+id/label_erase"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Stroke"
+            android:text="Stroke ▾"
             android:gravity="center"
             android:textSize="9sp"
             android:textColor="@color/black"
             android:maxLines="1"
+            android:ellipsize="end"
             android:paddingBottom="2dp" />
     </LinearLayout>
 
     <LinearLayout
-        android:id="@+id/cell_pixel_eraser"
+        android:id="@+id/cell_paste"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
@@ -93,15 +132,15 @@
         android:gravity="center"
         android:clickable="true"
         android:focusable="true"
-        android:contentDescription="Pixel Eraser"
+        android:contentDescription="Paste"
         android:background="?attr/selectableItemBackground">
 
         <ImageButton
-            android:id="@+id/btn_pixel_eraser"
+            android:id="@+id/btn_paste"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:src="@drawable/ic_pixel_eraser"
+            android:src="@drawable/ic_paste"
             android:clickable="false"
             android:focusable="false"
             android:importantForAccessibility="no"
@@ -109,9 +148,10 @@
             android:scaleType="fitCenter" />
 
         <TextView
+            android:id="@+id/label_paste"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Pixel"
+            android:text="Paste"
             android:gravity="center"
             android:textSize="9sp"
             android:textColor="@color/black"

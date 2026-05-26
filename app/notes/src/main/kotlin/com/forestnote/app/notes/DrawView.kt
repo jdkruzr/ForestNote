@@ -4,19 +4,25 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
+import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.View
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
+import com.forestnote.core.ink.PenParams
+import com.forestnote.core.ink.PenVariant
 import com.forestnote.core.ink.PressureCurve
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeBuilder
 import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.Tool
+import com.forestnote.core.ink.Ulid
 import kotlin.math.max
 import kotlin.math.min
 
@@ -79,7 +85,99 @@ class DrawView @JvmOverloads constructor(
     private var store: NotebookStore? = null
     private var transform = PageTransform()
     var activeTool: Tool = Tool.Pen
+        // Switching away from the lasso clears any in-progress polygon + selection
+        // (AC2.6). Kept here (single chokepoint) so every caller is covered.
+        set(value) {
+            if (value != field) {
+                clearLassoState()
+                cancelPaste() // a tool switch abandons a pending paste
+            }
+            field = value
+        }
+    /** Active pen variant; set by MainActivity when a variant is picked. */
+    var activePenVariant: PenVariant = PenVariant.FOUNTAIN
     var onStrokeSaved: ((Stroke) -> Unit)? = null
+
+    // ===== Lasso selection state (A6) — kept off the fast-ink writing buffer =====
+    private val lassoPoints = mutableListOf<LassoSelectionLogic.Point>()
+    private var selectedStrokeIds: Set<String> = emptySet()
+    private var lassoClosed = false
+
+    // Drag-to-move state (A8.5): touching inside a closed selection drags it live.
+    private var draggingSelection = false
+    private var dragStartVx = 0
+    private var dragStartVy = 0
+    private var dragDx = 0
+    private var dragDy = 0
+    private var dragBounds: LassoSelectionLogic.Bounds? = null
+
+    /**
+     * Fired when the lasso closes over a non-empty selection (strokes + screen bbox)
+     * and when the selection clears (empty list, null bounds). A7's selection menu
+     * wires this to show/dismiss the action pill; in A6 it stays null (no-op).
+     */
+    var onSelectionChanged: ((strokes: List<Stroke>, screenBounds: RectF?) -> Unit)? = null
+
+    private fun clearLassoState() {
+        lassoPoints.clear()
+        selectedStrokeIds = emptySet()
+        lassoClosed = false
+        draggingSelection = false
+        dragDx = 0
+        dragDy = 0
+        dragBounds = null
+        onSelectionChanged?.invoke(emptyList(), null)
+        invalidate()
+    }
+
+    // ===== Paste-placement mode (A8): tap Paste, then tap the canvas to drop =====
+    private var pendingPaste: List<Stroke>? = null
+    private var onPasteModeEnded: (() -> Unit)? = null
+
+    /**
+     * Arm paste placement: the next canvas tap drops [strokes] centred on it (clamped
+     * on-page), with fresh ULIDs. [onEnded] fires when the mode ends (placed OR cancelled)
+     * so the caller can reset the Paste cell caption.
+     */
+    fun armPaste(strokes: List<Stroke>, onEnded: () -> Unit) {
+        if (strokes.isEmpty()) return
+        pendingPaste = strokes
+        onPasteModeEnded = onEnded
+    }
+
+    val isPasteArmed: Boolean get() = pendingPaste != null
+
+    /** Leave paste mode without placing (tool switch / second Paste tap). */
+    fun cancelPaste() = endPasteMode()
+
+    private fun endPasteMode() {
+        if (pendingPaste == null && onPasteModeEnded == null) return
+        pendingPaste = null
+        val cb = onPasteModeEnded
+        onPasteModeEnded = null
+        cb?.invoke()
+    }
+
+    /** Drop the pending paste centred on a tapped screen point, clamped fully on-page. */
+    private fun placePasteAt(screenX: Float, screenY: Float) {
+        val strokes = pendingPaste ?: return
+        val b = LassoSelectionLogic.bounds(strokes)
+        if (b == null) { endPasteMode(); return }
+        val tapVx = transform.toVirtualX(screenX)
+        val tapVy = transform.toVirtualY(screenY)
+        val centreX = (b.minX + b.maxX) / 2
+        val centreY = (b.minY + b.maxY) / 2
+        // Offset to centre the selection on the tap, clamped so the bbox stays on-page.
+        val dx = clampOffset(tapVx - centreX, -b.minX, PageTransform.VIRTUAL_SHORT_AXIS - b.maxX)
+        val dy = clampOffset(tapVy - centreY, -b.minY, transform.virtualLongAxis - b.maxY)
+        val pasted = LassoSelectionLogic.translate(strokes, dx, dy) { Ulid.generate() }  // fresh ids
+        endPasteMode()
+        addPastedStrokes(pasted)
+    }
+
+    /** Coerce into [lo, hi]; if the content is wider than the page (lo > hi), pin to lo. */
+    private fun clampOffset(value: Int, lo: Int, hi: Int): Int =
+        if (lo > hi) lo else value.coerceIn(lo, hi)
 
     // Rendering
     private val strokePaint = Paint().apply {
@@ -90,6 +188,20 @@ class DrawView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
     }
 
+    /** Composite-behind mode for the highlighter (paints under existing ink). */
+    private val dstOverXfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OVER)
+
+    /**
+     * Set [strokePaint]'s colour + xfermode for a stroke. Highlighter strokes
+     * (carrying [PenParams.HIGHLIGHTER_GRAY]) composite DST_OVER so they land
+     * behind ink and, being opaque, never darken on overlap.
+     */
+    private fun configureStrokePaintFor(color: Int) {
+        strokePaint.color = color
+        strokePaint.xfermode =
+            if (color == PenParams.HIGHLIGHTER_GRAY) dstOverXfermode else null
+    }
+
     // Eraser paint — clears pixels with PorterDuff CLEAR, same as WiNote
     private val eraserPaint = Paint().apply {
         xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
@@ -98,6 +210,25 @@ class DrawView @JvmOverloads constructor(
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+
+    // Lasso preview paint — thin dashed black outline (screen coords, drawn in onDraw).
+    private val lassoPaint = Paint().apply {
+        color = Color.BLACK
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+        isAntiAlias = true
+        pathEffect = DashPathEffect(floatArrayOf(12f, 8f), 0f)
+    }
+
+    // Selection highlight paint — re-strokes selected ink wider so it reads on e-ink.
+    private val selectionPaint = Paint().apply {
+        color = Color.BLACK
+        style = Paint.Style.STROKE
+        isAntiAlias = true
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val lassoPath = Path()
 
     // Offscreen bitmap and canvas
     private var writingBitmap: Bitmap? = null
@@ -234,6 +365,11 @@ class DrawView @JvmOverloads constructor(
         if (!shouldAcceptToolType(event.getToolType(0))) {
             return false
         }
+        // Paste-placement mode (A8): the next tap drops the clipboard here, not ink.
+        if (pendingPaste != null) {
+            if (event.actionMasked == MotionEvent.ACTION_UP) placePasteAt(event.x, event.y)
+            return true
+        }
         return when (event.getToolType(0)) {
             MotionEvent.TOOL_TYPE_STYLUS -> handleStylus(event)
             MotionEvent.TOOL_TYPE_ERASER -> handleEraser(event)
@@ -245,7 +381,175 @@ class DrawView @JvmOverloads constructor(
         return when (activeTool) {
             is Tool.Pen -> handleDraw(event)
             is Tool.StrokeEraser, is Tool.PixelEraser -> handleErase(event)
+            is Tool.Lasso -> handleLasso(event)
         }
+    }
+
+    /**
+     * Handle the Lasso tool: accumulate a freehand polygon in virtual coordinates and,
+     * on pen-up, select strokes whose centroid falls inside it (AC2.1, AC2.2). This path
+     * never touches the fast-ink writing buffer — it only drives the overlay in onDraw.
+     */
+    private fun handleLasso(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                val vx = transform.toVirtualX(event.x)
+                val vy = transform.toVirtualY(event.y)
+                // Touch inside an existing closed selection → drag-to-move it (A8.5),
+                // rather than starting a new lasso.
+                if (lassoClosed && selectedStrokeIds.isNotEmpty() &&
+                    LassoSelectionLogic.pointInPolygon(LassoSelectionLogic.Point(vx, vy), lassoPoints)
+                ) {
+                    draggingSelection = true
+                    dragStartVx = vx
+                    dragStartVy = vy
+                    dragDx = 0
+                    dragDy = 0
+                    dragBounds = LassoSelectionLogic.bounds(getSelectedStrokes())
+                    onSelectionChanged?.invoke(emptyList(), null) // hide the pill while dragging
+                    return true
+                }
+                // Otherwise start a new lasso (clears any prior selection + dismisses its menu).
+                val hadSelection = selectedStrokeIds.isNotEmpty()
+                lassoPoints.clear()
+                selectedStrokeIds = emptySet()
+                lassoClosed = false
+                if (hadSelection) onSelectionChanged?.invoke(emptyList(), null)
+                lassoPoints.add(LassoSelectionLogic.Point(vx, vy))
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (draggingSelection) {
+                    val vx = transform.toVirtualX(event.x)
+                    val vy = transform.toVirtualY(event.y)
+                    val b = dragBounds
+                    if (b != null) {
+                        // Clamp the move so the selection bbox stays fully on-page.
+                        dragDx = clampOffset(vx - dragStartVx, -b.minX, PageTransform.VIRTUAL_SHORT_AXIS - b.maxX)
+                        dragDy = clampOffset(vy - dragStartVy, -b.minY, transform.virtualLongAxis - b.maxY)
+                    } else {
+                        dragDx = vx - dragStartVx
+                        dragDy = vy - dragStartVy
+                    }
+                    invalidate()
+                    return true
+                }
+                // Capture batched historical samples plus the current point.
+                for (h in 0 until event.historySize) {
+                    lassoPoints.add(
+                        LassoSelectionLogic.Point(
+                            transform.toVirtualX(event.getHistoricalX(h)),
+                            transform.toVirtualY(event.getHistoricalY(h))
+                        )
+                    )
+                }
+                lassoPoints.add(
+                    LassoSelectionLogic.Point(
+                        transform.toVirtualX(event.x), transform.toVirtualY(event.y)
+                    )
+                )
+                invalidate()
+            }
+
+            MotionEvent.ACTION_UP -> {
+                if (draggingSelection) {
+                    draggingSelection = false
+                    commitSelectionMove(dragDx, dragDy)
+                    dragDx = 0
+                    dragDy = 0
+                    val selected = getSelectedStrokes()
+                    onSelectionChanged?.invoke(selected, selectionScreenBounds(selected))
+                    invalidate()
+                    return true
+                }
+                lassoClosed = true
+                // A fast tap (< 3 points) closes with no selection and no error (AC2.7).
+                selectedStrokeIds = if (lassoPoints.size >= 3) {
+                    LassoSelectionLogic.selectedIds(completedStrokes.toList(), lassoPoints)
+                } else {
+                    emptySet()
+                }
+                // Notify the selection menu: show over the selection bbox, or dismiss.
+                val selected = getSelectedStrokes()
+                onSelectionChanged?.invoke(selected, selectionScreenBounds(selected))
+                invalidate()
+            }
+        }
+        return true
+    }
+
+    /**
+     * Commit a drag-to-move: replace the selected strokes with moved copies (same ids) in
+     * one transaction, update the in-memory model, and shift the lasso outline to follow.
+     */
+    private fun commitSelectionMove(dx: Int, dy: Int) {
+        if (dx == 0 && dy == 0) return
+        val ids = selectedStrokeIds.toList()
+        val moved = LassoSelectionLogic.translate(getSelectedStrokes(), dx, dy) { it.id } // keep ids
+        store?.replaceStrokes(ids, moved)
+        val idSet = ids.toHashSet()
+        completedStrokes.removeAll { it.id in idSet }
+        completedStrokes.addAll(moved)
+        val shifted = lassoPoints.map { LassoSelectionLogic.Point(it.x + dx, it.y + dy) }
+        lassoPoints.clear()
+        lassoPoints.addAll(shifted)
+        redrawBitmap()
+    }
+
+    /** Screen-space bounding box of [strokes], or null if empty (used to anchor the menu). */
+    private fun selectionScreenBounds(strokes: List<Stroke>): RectF? {
+        val b = LassoSelectionLogic.bounds(strokes) ?: return null
+        return RectF(
+            transform.toScreenX(b.minX), transform.toScreenY(b.minY),
+            transform.toScreenX(b.maxX), transform.toScreenY(b.maxY)
+        )
+    }
+
+    // ===== Lasso selection actions (A7) =====
+
+    /** The strokes currently selected by the lasso (live lookup against the model). */
+    fun getSelectedStrokes(): List<Stroke> =
+        completedStrokes.filter { it.id in selectedStrokeIds }
+
+    /** Copy the current selection to [clipboard] (leaves the strokes on the page). */
+    fun copySelection(clipboard: Clipboard) {
+        clipboard.set(getSelectedStrokes())
+    }
+
+    /** Remove the current selection from the page (persisted off-thread) without stashing. */
+    fun deleteSelection() {
+        val ids = selectedStrokeIds.toList()
+        if (ids.isEmpty()) return
+        store?.deleteStrokes(ids)
+        val idSet = ids.toHashSet()
+        completedStrokes.removeAll { it.id in idSet }
+        // Clear selection + dismiss the menu BEFORE redrawing so the highlight loop
+        // never references a removed stroke (the loop iterates completedStrokes anyway).
+        selectedStrokeIds = emptySet()
+        lassoPoints.clear()
+        lassoClosed = false
+        onSelectionChanged?.invoke(emptyList(), null)
+        redrawBitmap()
+    }
+
+    /** Cut = copy then delete. */
+    fun cutSelection(clipboard: Clipboard) {
+        copySelection(clipboard)
+        deleteSelection()
+    }
+
+    /**
+     * Insert already-offset, fresh-id strokes onto the page (lasso Paste, AC1.6). Mirrors
+     * the pen-up path: add to the in-memory model + persist each off-thread, then redraw.
+     * Persistence bumps the notebook's modified_at via saveStroke→touchCurrentNotebook.
+     */
+    fun addPastedStrokes(strokes: List<Stroke>) {
+        if (strokes.isEmpty()) return
+        for (s in strokes) {
+            completedStrokes.add(s)
+            store?.save(s)
+        }
+        redrawBitmap()
     }
 
     private fun handleEraser(event: MotionEvent): Boolean {
@@ -270,7 +574,12 @@ class DrawView @JvmOverloads constructor(
                 val vy = transform.toVirtualY(event.y)
                 val mp = transform.toMillipressure(event.pressure)
 
-                currentStroke = StrokeBuilder().also {
+                // Resolve per-variant colour/width, configure the live paint.
+                val params = PenParams.of(
+                    activePenVariant, Stroke.DEFAULT_WIDTH_MIN, Stroke.DEFAULT_WIDTH_MAX
+                )
+                configureStrokePaintFor(params.color)
+                currentStroke = StrokeBuilder(params.color, params.wMin, params.wMax).also {
                     it.addPoint(StrokePoint(vx, vy, mp, System.currentTimeMillis()))
                 }
 
@@ -537,6 +846,56 @@ class DrawView @JvmOverloads constructor(
         super.onDraw(canvas)
         // Blit the offscreen bitmap containing all accumulated strokes
         writingBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
+
+        // Lasso overlay (A6): selection highlight + dashed polygon, in screen coords.
+        if (activeTool is Tool.Lasso) {
+            drawLassoOverlay(canvas)
+        }
+    }
+
+    /** Draw the selection highlight and the dashed lasso polygon (screen coordinates). */
+    private fun drawLassoOverlay(canvas: Canvas) {
+        // While dragging, shift the whole overlay (highlight + outline) by the live offset
+        // so the selection visibly follows the pen; the originals stay in the bitmap until
+        // the move commits on pen-up (redrawBitmap then shows them only at the new spot).
+        val restore = draggingSelection && (dragDx != 0 || dragDy != 0)
+        if (restore) {
+            canvas.save()
+            canvas.translate(transform.toScreenSize(dragDx.toFloat()), transform.toScreenSize(dragDy.toFloat()))
+        }
+        // Highlight by re-stroking selected ink. Iterate the live list (not the id set)
+        // so ids that no longer exist after a delete/paste are simply skipped — never
+        // look a stroke up by id and risk a miss.
+        if (selectedStrokeIds.isNotEmpty()) {
+            for (stroke in completedStrokes) {
+                if (stroke.id !in selectedStrokeIds) continue
+                val pts = stroke.points
+                if (pts.size < 2) continue
+                selectionPaint.strokeWidth =
+                    transform.toScreenSize(stroke.penWidthMax.toFloat()) + 6f
+                for (i in 1 until pts.size) {
+                    canvas.drawLine(
+                        transform.toScreenX(pts[i - 1].x), transform.toScreenY(pts[i - 1].y),
+                        transform.toScreenX(pts[i].x), transform.toScreenY(pts[i].y),
+                        selectionPaint
+                    )
+                }
+            }
+        }
+
+        if (lassoPoints.isNotEmpty()) {
+            lassoPath.reset()
+            val first = lassoPoints.first()
+            lassoPath.moveTo(transform.toScreenX(first.x), transform.toScreenY(first.y))
+            for (i in 1 until lassoPoints.size) {
+                val p = lassoPoints[i]
+                lassoPath.lineTo(transform.toScreenX(p.x), transform.toScreenY(p.y))
+            }
+            if (lassoClosed) lassoPath.close()
+            canvas.drawPath(lassoPath, lassoPaint)
+        }
+
+        if (restore) canvas.restore()
     }
 
     /**
@@ -547,6 +906,11 @@ class DrawView @JvmOverloads constructor(
         val canvas = writingCanvas ?: return
         val points = stroke.points
         if (points.size < 2) return
+
+        // Per-stroke colour + composite mode (highlighter → DST_OVER, behind ink).
+        // During z-order replay this still lands highlighter beneath ink because
+        // ink pixels are already present when the (later-z) highlighter draws.
+        configureStrokePaintFor(stroke.color)
 
         for (i in 1 until points.size) {
             val prev = points[i - 1]
@@ -559,5 +923,8 @@ class DrawView @JvmOverloads constructor(
                 strokePaint
             )
         }
+
+        // Leave the shared paint in a clean (normal-composite) state.
+        strokePaint.xfermode = null
     }
 }

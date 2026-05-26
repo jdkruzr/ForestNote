@@ -1,12 +1,12 @@
 # Format Domain (core:format)
 
-Last verified: 2026-05-24
+Last verified: 2026-05-25
 
 ## Purpose
 Persists a notebook library to a single SQLite file (.forestnote) using SQLDelight. One library file holds `notebook → page → stroke`. Provides auto-save on pen-up, full restore on app launch, and notebook/page CRUD + active-context switching — all behind `NotebookRepository`.
 
 ## Contracts
-- **Exposes**: `NotebookRepository` (open/forTesting/openExisting; stroke ops: saveStroke→Unit, loadStrokes, deleteStroke(String), applyErase, clearPage; notebook/page: listNotebooks, listPagesForCurrentNotebook, currentNotebookId, currentPageId, switchPage, switchNotebook, createNotebook→id, renameNotebook, deleteNotebook, createPage→id, deletePage→Boolean; close), public metadata types `NotebookMeta(id, name)` / `PageMeta(id, createdAt)`, `StrokeSerializer` (encode/decode)
+- **Exposes**: `NotebookRepository` (open/forTesting/openExisting; stroke ops: saveStroke→Unit, loadStrokes, deleteStroke(String), applyErase, clearPage; notebook/page: listNotebooks, listPagesForCurrentNotebook, countPages(id)→Long, currentNotebookId, currentPageId, switchPage, switchNotebook, createNotebook→id, renameNotebook, deleteNotebook, modifiedAtOf(id), createPage→id, deletePage→Boolean; close), public metadata types `NotebookMeta(id, name, createdAt, modifiedAt)` / `PageMeta(id, createdAt)`, `StrokeSerializer` (encode/decode)
 - **Guarantees**: On open, bootstraps ≥1 notebook with ≥1 page and restores the active notebook+page from `app_state` (falling back to the first if the recorded ids are stale). Never zero notebooks: deleting the last bootstraps a fresh one. Notebook/page deletes are transactional (children-first) and leave no orphans. A notebook always keeps ≥1 page (deleting the only page is refused). Corrupted databases are deleted and recreated. Stroke round-trip is lossless.
 - **Expects**: Android Context for database creation. `Stroke`/`StrokePoint` types from `core:ink`. The UI goes through `app:notes` `NotebookStore`, never this class directly.
 
@@ -32,11 +32,12 @@ Persists a notebook library to a single SQLite file (.forestnote) using SQLDelig
 ## Key Files
 - `NotebookRepository.kt` - Storage facade (notebook/page/stroke CRUD, switch, bootstrap, app_state restore)
 - `StrokeSerializer.kt` - Binary point encoding/decoding
-- `notebook.sq` - SQLDelight v3 schema (notebook/page/stroke/app_state) and queries
-- `migrations/` - `1.sqm` (v1→v2), `2.sqm` (v2→v3); both DESTRUCTIVE resets
+- `notebook.sq` - SQLDelight v4 schema (notebook/page/stroke/app_state; `notebook.modified_at`) and queries (incl. `countPagesForNotebook`, `touchNotebook`, `selectNotebookModifiedAt`)
+- `migrations/` - `1.sqm` (v1→v2), `2.sqm` (v2→v3) both DESTRUCTIVE resets; `3.sqm` (v3→v4) adds `notebook.modified_at` (non-destructive, backfilled = created_at)
 
 ## Gotchas
 - NotebookRepository.open() silently deletes and recreates on any database error
 - Ids are client-minted ULIDs minted at construction — there is no "unsaved" id state
-- Schema is at version 3 (auto-derived from the two `.sqm` files); `migrations/2.sqm` is a DESTRUCTIVE v2→v3 reset (drops existing data), consistent with `1.sqm`
+- Schema is at version 4 (auto-derived from the three `.sqm` files); `migrations/2.sqm` is a DESTRUCTIVE v2→v3 reset (drops existing data), consistent with `1.sqm`; `3.sqm` (v3→v4, `modified_at`) is non-destructive
+- `notebook.modified_at` is bumped (via `touchCurrentNotebook`) inside every ink-mutating transaction — saveStroke, deleteStroke, applyErase (so app-layer cut/delete/paste/move inherit it), clearPage — using an injectable clock
 - Do not rely on FK cascade for deletes — `PRAGMA foreign_keys` is off; use transactional children-first deletes

@@ -2,7 +2,13 @@ package com.forestnote.app.notes
 
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.PopupWindow
+import android.widget.TextView
+import com.forestnote.core.ink.PenVariant
 import com.forestnote.core.ink.Tool
 
 /**
@@ -21,19 +27,35 @@ class ToolBar(
 ) {
     private var activeClearCallback: (() -> Unit)? = null
     private var activeRefreshCallback: (() -> Unit)? = null
+    private var penVariantCallback: ((PenVariant) -> Unit)? = null
 
     // Each tool's clickable hitbox is the whole cell (icon + word), not just the icon.
-    private val btnPen: View = root.findViewById(R.id.cell_pen)
-    private val btnStrokeEraser: View = root.findViewById(R.id.cell_stroke_eraser)
-    private val btnPixelEraser: View = root.findViewById(R.id.cell_pixel_eraser)
+    private val btnFountain: View = root.findViewById(R.id.cell_fountain)
+    private val lblFountain: TextView = root.findViewById(R.id.label_fountain)
+    private val btnLasso: View = root.findViewById(R.id.cell_lasso)
+    private val btnErase: View = root.findViewById(R.id.cell_erase)
+    private val lblErase: TextView = root.findViewById(R.id.label_erase)
+    private val btnPaste: View = root.findViewById(R.id.cell_paste)
+    private val lblPaste: TextView = root.findViewById(R.id.label_paste)
     private val btnClear: View = root.findViewById(R.id.cell_clear)
     private val btnRefresh: View = root.findViewById(R.id.cell_refresh)
 
-    private val buttonMap = mapOf(
-        btnPen to Tool.Pen,
-        btnStrokeEraser to Tool.StrokeEraser,
-        btnPixelEraser to Tool.PixelEraser
-    )
+    private var activePasteCallback: (() -> Unit)? = null
+    private var pasteEnabled = false
+
+    // Group cells whose active state is highlighted (Fountain = Pen group; Lasso; Erase = erasers).
+    private val highlightCells = listOf(btnFountain, btnLasso, btnErase)
+
+    /** Is the given group cell's tool group currently active? */
+    private fun isCellActive(cell: View, activeTool: Tool): Boolean = when (cell) {
+        btnFountain -> activeTool is Tool.Pen
+        btnLasso -> activeTool is Tool.Lasso
+        btnErase -> activeTool is Tool.StrokeEraser || activeTool is Tool.PixelEraser
+        else -> false
+    }
+
+    /** Currently-open variant dropdown, if any. */
+    private var openPopup: PopupWindow? = null
 
     // Delegate tool selection logic to ToolSelectionLogic
     private val logic = ToolSelectionLogic(
@@ -47,24 +69,48 @@ class ToolBar(
     )
 
     init {
-        // Wire up click listeners for tool buttons
-        btnPen.setOnClickListener { logic.selectTool(Tool.Pen) }
-        btnStrokeEraser.setOnClickListener { logic.selectTool(Tool.StrokeEraser) }
-        btnPixelEraser.setOnClickListener { logic.selectTool(Tool.PixelEraser) }
+        // Wire up click listeners for tool buttons. The Fountain cell selects the
+        // pen group (with its last-used variant) and opens the variant dropdown.
+        btnFountain.setOnClickListener {
+            logic.selectPenGroup()
+            showPenVariantDropdown(btnFountain)
+        }
+        // Lasso is a single top-level tool (no variant dropdown).
+        btnLasso.setOnClickListener { logic.selectTool(Tool.Lasso) }
+        btnErase.setOnClickListener {
+            logic.selectEraseGroup()
+            showEraseVariantDropdown(btnErase)
+        }
         btnClear.setOnClickListener { logic.triggerClear() }
         btnRefresh.setOnClickListener { activeRefreshCallback?.invoke() }
+        // Paste is an action cell, gated on a non-empty clipboard (greyed when empty).
+        btnPaste.setOnClickListener { if (pasteEnabled) activePasteCallback?.invoke() }
 
         // On e-ink, remove ripple background to prevent ghosting
         if (isEInk) {
-            for (button in buttonMap.keys) {
-                button.background = null
+            for (cell in highlightCells) {
+                cell.background = null
             }
+            btnPaste.background = null
             btnClear.background = null
             btnRefresh.background = null
         }
+        setPasteEnabled(false)
 
         // Set initial visual state
         updateButtonAppearance()
+        updatePenCellLabel()
+        updateEraseCellLabel()
+    }
+
+    /** The Fountain cell label reflects the active pen variant (e.g. "Fineliner ▾"). */
+    private fun updatePenCellLabel() {
+        lblFountain.text = "${penVariantLabel(logic.activePenVariant())} ▾"
+    }
+
+    /** The Erase cell label reflects the active erase variant (e.g. "Pixel ▾"). */
+    private fun updateEraseCellLabel() {
+        lblErase.text = "${eraseVariantLabel(logic.activeEraseVariant())} ▾"
     }
 
     /**
@@ -74,8 +120,8 @@ class ToolBar(
      */
     private fun updateButtonAppearance() {
         val activeTool = logic.getActiveTool()
-        for ((button, tool) in buttonMap) {
-            if (tool == activeTool) {
+        for (button in highlightCells) {
+            if (isCellActive(button, activeTool)) {
                 if (isEInk) {
                     // E-ink: 1dp black border on white background for high contrast
                     val border = GradientDrawable()
@@ -110,6 +156,132 @@ class ToolBar(
      */
     fun setOnRefreshClicked(callback: () -> Unit) {
         activeRefreshCallback = callback
+    }
+
+    /** Set the callback to invoke when the Paste cell is tapped (only fires when enabled). */
+    fun setOnPasteClicked(callback: () -> Unit) {
+        activePasteCallback = callback
+    }
+
+    /** Enable/disable the Paste cell: greyed (alpha 0.3) + no-op when the clipboard is empty. */
+    fun setPasteEnabled(enabled: Boolean) {
+        pasteEnabled = enabled
+        btnPaste.alpha = if (enabled) 1f else 0.3f
+    }
+
+    /** Reflect paste-placement mode: caption shows "Pasting…" until the next canvas tap. */
+    fun setPasteArmed(armed: Boolean) {
+        lblPaste.text = if (armed) "Pasting…" else "Paste"
+    }
+
+    /** Human-readable label for a pen variant (UI concern, kept out of core:ink). */
+    private fun penVariantLabel(variant: PenVariant): String = when (variant) {
+        PenVariant.FOUNTAIN -> "Fountain"
+        PenVariant.FINELINER -> "Fineliner"
+        PenVariant.HIGHLIGHTER -> "Highlighter"
+    }
+
+    /** Set the callback invoked when a pen variant is chosen from the dropdown. */
+    fun setOnPenVariantSelected(callback: (PenVariant) -> Unit) {
+        penVariantCallback = callback
+    }
+
+    /**
+     * Show a variant dropdown anchored under [anchor]. Rows are labelled, the
+     * [activeIndex] row is highlighted, and tapping a row calls [onPick] then
+     * dismisses. Built programmatically (no shadow/animation) to stay e-ink friendly.
+     */
+    private fun showDropdown(
+        anchor: View,
+        labels: List<String>,
+        activeIndex: Int,
+        onPick: (Int) -> Unit
+    ) {
+        openPopup?.dismiss()
+        val ctx = anchor.context
+        val density = ctx.resources.displayMetrics.density
+        val padH = (12 * density).toInt()
+        val padV = (8 * density).toInt()
+
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                setColor(Color.WHITE)
+                setStroke(1, Color.BLACK)
+            }
+        }
+
+        val popup = PopupWindow(
+            container,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true // focusable: tap-outside dismisses
+        )
+        popup.isOutsideTouchable = true
+        if (isEInk) popup.elevation = 0f
+
+        // A fixed-width marker column keeps labels aligned in any (proportional) font;
+        // the active row shows a ● there. A per-row box border was avoided on purpose —
+        // in a stacked list it reads as a divider that moves with the selection.
+        val markerWidth = (18 * density).toInt()
+        labels.forEachIndexed { i, label ->
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(padH, padV, padH, padV)
+                isClickable = true
+                addView(TextView(ctx).apply {
+                    text = if (i == activeIndex) "●" else ""
+                    textSize = 14f
+                    setTextColor(Color.BLACK)
+                    width = markerWidth
+                })
+                addView(TextView(ctx).apply {
+                    text = label
+                    textSize = 14f
+                    setTextColor(Color.BLACK)
+                })
+                setOnClickListener {
+                    onPick(i)
+                    popup.dismiss()
+                }
+            }
+            container.addView(row)
+        }
+
+        openPopup = popup
+        popup.showAsDropDown(anchor)
+    }
+
+    /** Pen-variant dropdown under the Fountain cell. */
+    private fun showPenVariantDropdown(anchor: View) {
+        val variants = PenVariant.entries
+        val active = logic.activePenVariant()
+        showDropdown(anchor, variants.map { penVariantLabel(it) }, variants.indexOf(active)) { i ->
+            val variant = variants[i]
+            logic.selectPenVariant(variant)
+            penVariantCallback?.invoke(variant)
+            updatePenCellLabel()
+        }
+    }
+
+    /** The erase group's two variants, in dropdown order. */
+    private val eraseVariants = listOf(Tool.StrokeEraser, Tool.PixelEraser)
+
+    private fun eraseVariantLabel(tool: Tool): String = when (tool) {
+        Tool.StrokeEraser -> "Stroke"
+        Tool.PixelEraser -> "Pixel"
+        else -> ""
+    }
+
+    /** Erase-variant dropdown under the Erase cell. */
+    private fun showEraseVariantDropdown(anchor: View) {
+        val active = logic.activeEraseVariant()
+        showDropdown(anchor, eraseVariants.map { eraseVariantLabel(it) }, eraseVariants.indexOf(active)) { i ->
+            // selectEraseVariant activates the eraser; onToolSelected propagates it.
+            logic.selectEraseVariant(eraseVariants[i])
+            updateEraseCellLabel()
+        }
     }
 
     /**

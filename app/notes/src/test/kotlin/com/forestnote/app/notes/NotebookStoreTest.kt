@@ -84,6 +84,61 @@ class NotebookStoreTest {
         store.shutdown()
     }
 
+    // AC2.4: deleteStrokes removes exactly the given ids from the page (cut/delete path).
+    @Test
+    fun deleteStrokesRemovesOnlyTheGivenIds() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+        val keep = horizontalStroke()
+        val dropA = horizontalStroke()
+        val dropB = horizontalStroke()
+        store.save(keep); store.save(dropA); store.save(dropB)
+
+        var doneCalled = false
+        store.deleteStrokes(listOf(dropA.id, dropB.id)) { doneCalled = true }
+
+        // Single-thread FIFO: this load runs after the delete completes.
+        var remaining: List<Stroke>? = null
+        val latch = CountDownLatch(1)
+        store.load { remaining = it; latch.countDown() }
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "load callback should fire")
+        assertEquals(setOf(keep.id), remaining!!.map { it.id }.toSet(),
+            "only the complement of the deleted ids remains on the page")
+        assertTrue(doneCalled, "deleteStrokes invokes its onDone callback")
+        store.shutdown()
+    }
+
+    // A8.5: replaceStrokes swaps a set of ids for moved copies (same ids) in one go.
+    @Test
+    fun replaceStrokesUpdatesInPlace() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+        val s = horizontalStroke()
+        store.save(s)
+        val moved = s.copy(points = s.points.map { it.copy(x = it.x + 500, y = it.y + 500) })
+
+        var doneCalled = false
+        store.replaceStrokes(listOf(s.id), listOf(moved)) { doneCalled = true }
+
+        var remaining: List<Stroke>? = null
+        val latch = CountDownLatch(1)
+        store.load { remaining = it; latch.countDown() }
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "load callback should fire")
+        assertEquals(1, remaining!!.size, "still one stroke (same id, moved)")
+        assertEquals(s.id, remaining!![0].id, "id preserved across the move")
+        assertEquals(500 to 550, remaining!![0].points[0].let { it.x to it.y }, "points moved")
+        assertTrue(doneCalled, "replaceStrokes invokes onDone")
+        store.shutdown()
+    }
+
     // AC6.1: a save enqueued immediately before shutdown() completes before the driver closes.
     @Test
     fun saveDrainsBeforeShutdownCloses() {

@@ -45,4 +45,23 @@ class ApplyEraseTest {
         assertTrue(strokes.any { it.id == fragmentA.id }, "fragment A present")
         assertTrue(strokes.any { it.id == fragmentB.id }, "fragment B present")
     }
+
+    // AC2.4: delete-only (no added fragments) leaves exactly the complement — the
+    // contract NotebookStore.deleteStrokes relies on for cut/delete.
+    @Test
+    fun applyEraseDeleteOnlyLeavesComplement() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver)
+        val keep = stroke(0)
+        val dropA = stroke(100)
+        val dropB = stroke(200)
+        repo.saveStroke(keep)
+        repo.saveStroke(dropA)
+        repo.saveStroke(dropB)
+
+        repo.applyErase(removedIds = listOf(dropA.id, dropB.id), added = emptyList())
+
+        val strokes = repo.loadStrokes()
+        assertEquals(listOf(keep.id), strokes.map { it.id }, "only the un-deleted stroke remains")
+    }
 }

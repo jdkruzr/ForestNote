@@ -1,5 +1,6 @@
 package com.forestnote.app.notes
 
+import com.forestnote.core.ink.PenVariant
 import com.forestnote.core.ink.Tool
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -243,5 +244,147 @@ class ToolBarLogicTest {
         logic.selectTool(Tool.StrokeEraser)
         assertFalse(logic.isToolSelected(Tool.Pen), "Pen should no longer be selected")
         assertTrue(logic.isToolSelected(Tool.StrokeEraser), "StrokeEraser should be selected")
+    }
+
+    // ========== Pen group / variant tests (A1) ==========
+    // library-and-tools.AC1.2 (group mechanism), AC1.5 (variant remembered across tool switch)
+
+    @Test
+    fun `defaultPenVariantIsFountain`() {
+        val logic = ToolSelectionLogic()
+        assertEquals(PenVariant.FOUNTAIN, logic.activePenVariant(),
+            "Default pen variant should be Fountain")
+    }
+
+    @Test
+    fun `selectingPenGroupActivatesPenTool`() {
+        var callbackTool: Tool? = null
+        val logic = ToolSelectionLogic(onToolSelected = { callbackTool = it })
+        logic.selectTool(Tool.StrokeEraser)
+
+        logic.selectPenGroup()
+
+        assertEquals(Tool.Pen, logic.getActiveTool(), "Pen group activates the Pen tool")
+        assertEquals(Tool.Pen, callbackTool,
+            "Selecting the pen group fires the tool callback with Pen")
+    }
+
+    @Test
+    fun `selectingPenVariantSetsVariantAndActivatesPen`() {
+        var callbackTool: Tool? = null
+        val logic = ToolSelectionLogic(onToolSelected = { callbackTool = it })
+
+        logic.selectPenVariant(PenVariant.FOUNTAIN)
+
+        assertEquals(PenVariant.FOUNTAIN, logic.activePenVariant(),
+            "Selected variant becomes active")
+        assertEquals(Tool.Pen, logic.getActiveTool(),
+            "Selecting a pen variant activates the Pen tool")
+        assertEquals(Tool.Pen, callbackTool,
+            "Selecting a pen variant fires the tool callback with Pen")
+    }
+
+    @Test
+    fun `penVariantPersistsAcrossToolSwitch`() {
+        val logic = ToolSelectionLogic()
+        logic.selectPenVariant(PenVariant.FOUNTAIN)
+        logic.selectTool(Tool.PixelEraser)
+
+        assertEquals(PenVariant.FOUNTAIN, logic.activePenVariant(),
+            "Pen variant is remembered while another tool is active")
+    }
+
+    // ========== Erase group tests (A3) ==========
+    // library-and-tools.AC1.4 (erase variants), AC1.5 (per-group last-used across switches)
+
+    @Test
+    fun `defaultEraseVariantIsStrokeEraser`() {
+        assertEquals(Tool.StrokeEraser, ToolSelectionLogic().activeEraseVariant(),
+            "Default erase variant should be StrokeEraser")
+    }
+
+    @Test
+    fun `selectingEraseVariantSetsVariantAndActivatesIt`() {
+        val logic = ToolSelectionLogic()
+        logic.selectEraseVariant(Tool.PixelEraser)
+
+        assertEquals(Tool.PixelEraser, logic.activeEraseVariant(),
+            "Selected erase variant becomes active")
+        assertEquals(Tool.PixelEraser, logic.getActiveTool(),
+            "Selecting an erase variant activates that eraser")
+    }
+
+    @Test
+    fun `eraseGroupActivatesLastUsedEraseVariant`() {
+        val logic = ToolSelectionLogic()
+        logic.selectEraseVariant(Tool.PixelEraser)
+        logic.selectTool(Tool.Pen)
+
+        logic.selectEraseGroup()
+
+        assertEquals(Tool.PixelEraser, logic.getActiveTool(),
+            "Erase group restores the last-used erase variant")
+    }
+
+    @Test
+    fun `penAndEraseGroupsEachRememberTheirLastVariantAcrossSwitches`() {
+        // AC1.5: Pen → Erase → Pen restores the previous pen variant (and vice versa).
+        val logic = ToolSelectionLogic()
+
+        logic.selectPenVariant(PenVariant.FINELINER)
+        logic.selectEraseVariant(Tool.PixelEraser)
+
+        logic.selectPenGroup()
+        assertEquals(Tool.Pen, logic.getActiveTool(), "pen group activates Pen")
+        assertEquals(PenVariant.FINELINER, logic.activePenVariant(),
+            "pen group restores last pen variant")
+
+        logic.selectEraseGroup()
+        assertEquals(Tool.PixelEraser, logic.getActiveTool(),
+            "erase group restores last erase variant")
+        assertEquals(Tool.PixelEraser, logic.activeEraseVariant())
+    }
+
+    // ========== Lasso tool tests (A6) ==========
+    // library-and-tools.AC1.1 (Lasso is a top-level tool)
+
+    @Test
+    fun `selectingLassoSetsActiveTool`() {
+        val logic = ToolSelectionLogic()
+        logic.selectTool(Tool.Lasso)
+        assertEquals(Tool.Lasso, logic.getActiveTool(), "Active tool should be Lasso after selection")
+    }
+
+    @Test
+    fun `lassoThenPenRestoresPen`() {
+        val logic = ToolSelectionLogic()
+        logic.selectTool(Tool.Lasso)
+        assertEquals(Tool.Lasso, logic.getActiveTool())
+
+        logic.selectTool(Tool.Pen)
+        assertEquals(Tool.Pen, logic.getActiveTool(), "Selecting Pen after Lasso restores the pen")
+    }
+
+    @Test
+    fun `lassoIsMutuallyExclusiveWithOtherTools`() {
+        val logic = ToolSelectionLogic()
+        logic.selectTool(Tool.Lasso)
+
+        assertTrue(logic.isToolSelected(Tool.Lasso), "Lasso should be the active tool")
+        assertFalse(logic.isToolSelected(Tool.Pen), "Pen should not be active while Lasso is")
+        assertFalse(logic.isToolSelected(Tool.StrokeEraser), "Eraser should not be active while Lasso is")
+    }
+
+    @Test
+    fun `selectingLassoDoesNotDisturbRememberedVariants`() {
+        // AC1.5: switching to Lasso must not clobber the pen/erase last-used variants.
+        val logic = ToolSelectionLogic()
+        logic.selectPenVariant(PenVariant.FINELINER)
+        logic.selectEraseVariant(Tool.PixelEraser)
+
+        logic.selectTool(Tool.Lasso)
+
+        assertEquals(PenVariant.FINELINER, logic.activePenVariant(), "pen variant remembered")
+        assertEquals(Tool.PixelEraser, logic.activeEraseVariant(), "erase variant remembered")
     }
 }

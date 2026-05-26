@@ -58,6 +58,32 @@ class NotebookStore(
     }
 
     /**
+     * Delete a set of strokes (lasso Cut/Delete) off-thread via the same transactional
+     * delete-and-insert as the eraser (added = none). `applyErase` bumps the notebook's
+     * modified_at inside the transaction, so cut/delete keeps the "Nh ago" label honest.
+     */
+    fun deleteStrokes(ids: List<String>, onDone: () -> Unit = {}) {
+        executor.execute {
+            runCatching { repo?.applyErase(ids, emptyList()) }
+                .onFailure { android.util.Log.e(TAG, "failed to delete strokes", it) }
+            poster { onDone() }
+        }
+    }
+
+    /**
+     * Replace a set of strokes with [added] in one transaction (lasso drag-to-move:
+     * [removedIds] are the originals, [added] the moved copies carrying the same ids).
+     * Routes through applyErase, so it also bumps the notebook's modified_at.
+     */
+    fun replaceStrokes(removedIds: List<String>, added: List<Stroke>, onDone: () -> Unit = {}) {
+        executor.execute {
+            runCatching { repo?.applyErase(removedIds, added) }
+                .onFailure { android.util.Log.e(TAG, "failed to replace strokes", it) }
+            poster { onDone() }
+        }
+    }
+
+    /**
      * Reconcile an erase gesture (geometry + transaction) off-thread, then post the
      * resulting diff (removed ids + surviving fragments) to the main thread.
      */
@@ -129,6 +155,16 @@ class NotebookStore(
                 .onFailure { android.util.Log.e(TAG, "failed to switch notebook", it) }
                 .getOrDefault(emptyList())
             poster { onLoaded(strokes) }
+        }
+    }
+
+    /** Count the pages under a notebook off-thread; posts the count (0 on failure/unknown). */
+    fun countPages(notebookId: String, onResult: (Long) -> Unit) {
+        executor.execute {
+            val n = runCatching { repo?.countPages(notebookId) ?: 0L }
+                .onFailure { android.util.Log.e(TAG, "failed to count pages", it) }
+                .getOrDefault(0L)
+            poster { onResult(n) }
         }
     }
 

@@ -1,6 +1,6 @@
 # ForestNote
 
-Last verified: 2026-05-24
+Last verified: 2026-05-25
 
 E-ink note-taking app for the Viwoods AiPaper Mini tablet. Uses reverse-engineered fast ink APIs for low-latency stylus rendering with a fallback path for generic Android devices.
 

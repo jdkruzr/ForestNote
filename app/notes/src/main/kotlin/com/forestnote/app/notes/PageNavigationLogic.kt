@@ -37,4 +37,15 @@ object PageNavigationLogic {
 
     /** A notebook must keep ≥1 page, so delete is only allowed when >1 exists. */
     fun canDelete(pageIds: List<String>): Boolean = pageIds.size > 1
+
+    /**
+     * Whether tapping the right page-nav arrow should create a new page rather
+     * than navigate: true only when the active page is the last one (so the
+     * arrow grows a "+" and appends a page). False if the active id is absent
+     * or the list is empty.
+     */
+    fun nextCreatesPage(pageIds: List<String>, activeId: String): Boolean {
+        val i = indexOf(pageIds, activeId)
+        return i >= 0 && i == pageIds.lastIndex
+    }
 }

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lasso: a dashed selection loop (freehand polygon select). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Dashed oval loop drawn as short arc segments. -->
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="1.6"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round"
+        android:pathData="M5,9 q1,-4 7,-4" />
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="1.6"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round"
+        android:pathData="M14,5.2 q5,1 4.6,5" />
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="1.6"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round"
+        android:pathData="M18.4,11.8 q-0.6,4 -6.4,4.2" />
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="1.6"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round"
+        android:pathData="M10,15.9 q-5,-0.2 -5,-3.9" />
+    <!-- The lasso's dangling tail + cinch knot. -->
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="1.6"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round"
+        android:pathData="M6.2,15 l-2.2,4.8" />
+    <path
+        android:fillColor="#000000"
+        android:pathData="M5,11.4 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0z" />
+</vector>
