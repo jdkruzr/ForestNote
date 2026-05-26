@@ -227,6 +227,15 @@ class MainActivity : Activity() {
                     R.drawable.ic_arrow_right
                 }
             )
+            // B3: render the active page's effective template (page override ?: global
+            // default). Folded in here so every page/notebook switch re-resolves it.
+            val page = pages.firstOrNull { it.id == activeId }
+            store.loadSettings { settings ->
+                drawView.setTemplate(
+                    TemplateGeometry.effectiveTemplate(page?.template, settings.defaultTemplate),
+                    TemplateGeometry.effectivePitchMm(page?.templatePitchMm, settings.defaultPitchMm)
+                )
+            }
         }
     }
 
@@ -311,8 +320,8 @@ class MainActivity : Activity() {
     /** Dismiss the Settings overlay and return to the editor. */
     private fun closeSettings() {
         settingsView.hide()
-        // A template/pitch change while in Settings affects the editor's rendering once
-        // B3 lands; for now there is nothing to repaint.
+        // Re-resolve + repaint the active page's template in case the default changed (B3).
+        refreshPageIndicator()
     }
 
     @Deprecated("Deprecated in Java")
