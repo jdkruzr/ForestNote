@@ -24,21 +24,26 @@ data class PenParams(
          * with DST_OVER, opaque-over-opaque cannot darken on overlap, which is the
          * hard no-darkening guarantee. (Diverges from WiNote's translucent alpha.)
          */
-        val HIGHLIGHTER_GRAY: Int = 0xFFB8B8B8.toInt()
+        val HIGHLIGHTER_GRAY: Int = 0xFFDCDCDC.toInt()
 
         /**
-         * Resolve params for [variant] given the base preset min/max widths.
+         * Resolve params for [variant] at width [level] (AC10). The level picks the base
+         * `(min, max)` pair via [PenWidthScale]; the per-variant transform below is unchanged
+         * from v1, so `(variant, PenWidthLevel.M)` reproduces the original `(7, 35)` rendering.
          */
-        fun of(variant: PenVariant, baseMin: Int, baseMax: Int): PenParams = when (variant) {
-            PenVariant.FOUNTAIN ->
-                PenParams(BLACK, baseMin, baseMax, behind = false)
-            PenVariant.FINELINER -> {
-                val w = (baseMin + baseMax) / 2
-                PenParams(BLACK, w, w, behind = false)
-            }
-            PenVariant.HIGHLIGHTER -> {
-                val w = baseMax * 5 / 2 // ≈ 2.5× preset max, integer
-                PenParams(HIGHLIGHTER_GRAY, w, w, behind = true)
+        fun of(variant: PenVariant, level: PenWidthLevel): PenParams {
+            val (baseMin, baseMax) = PenWidthScale.pair(level)
+            return when (variant) {
+                PenVariant.FOUNTAIN ->
+                    PenParams(BLACK, baseMin, baseMax, behind = false)
+                PenVariant.FINELINER -> {
+                    val w = (baseMin + baseMax) / 2
+                    PenParams(BLACK, w, w, behind = false)
+                }
+                PenVariant.HIGHLIGHTER -> {
+                    val w = baseMax * 5 / 2 // ≈ 2.5× base max, integer
+                    PenParams(HIGHLIGHTER_GRAY, w, w, behind = true)
+                }
             }
         }
     }

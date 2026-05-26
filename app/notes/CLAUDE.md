@@ -38,8 +38,9 @@ Main application module that wires together ink rendering, storage, and user int
 - `MainActivity.kt` - Lifecycle management, backend + NotebookStore wiring, nav-bar wiring (page picker; notebook label opens the Library), Library callback wiring + folder/notebook dialogs, launch-into-Library decision (`LaunchLogic`), crash handler
 - `NotebookStore.kt` - Single background-thread owner of NotebookRepository; async load/save/erase/clear, notebook/page list-switch-CRUD, folder CRUD + Library card reads (`listNotebookCardsInFolder`/`listFolderCardsForParent`/`folderPath`) + thumbnail source wrappers, settings load/update + per-page setPageTemplate, drain-on-shutdown
 - `DrawView.kt` - Touch handling, bitmap rendering, stroke/erase logic
-- `ToolBar.kt` - UI toolbar with tool button state management (incl. Paste enable/armed state, Template action cell → per-page template picker)
-- `ToolSelectionLogic.kt` - Pure tool selection state machine (pen/erase variants + Lasso)
+- `ToolBar.kt` - UI toolbar with tool button state management (incl. Paste enable/armed state, Template action cell → per-page template picker). The Fountain cell opens a **pen-settings popup** (A10): variant rows + a 5-chip width strip (chips drawn as thickness samples); tapping a variant/width updates the popup in place (no dismiss), tap-outside dismisses. Exposes `setOnPenWidthSelected`/`loadPenWidths`/`activePenWidthLevel`/`currentPenWidthLevels`
+- `ToolSelectionLogic.kt` - Pure tool selection state machine (pen/erase variants + Lasso + **per-variant pen width level**, default M: `selectPenWidth`/`activePenWidth`/`penWidthFor`/`setPenWidthForVariant`/`allPenWidthLevels`)
+- `PenWidthSettings.kt` - Pure bridge: `Settings.penWidthLevels` (`Map<String,String>`) ↔ `Map<PenVariant,PenWidthLevel>` (decode drops unknown names; consumer defaults to M)
 - `LassoSelectionLogic.kt` - Pure selection geometry (ray-cast pointInPolygon, integer centroid, selectedIds, bounds, translate)
 - `Clipboard.kt` - `Clipboard` interface + `InProcessClipboard` (listener-based; B1 re-backs it with `app_state.clipboard_json`)
 - `SelectionMenuView.kt` - Floating action pill (PopupWindow) for a lasso selection; non-focusable so drag-to-move touches reach the canvas

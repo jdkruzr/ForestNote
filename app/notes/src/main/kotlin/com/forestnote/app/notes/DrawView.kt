@@ -18,6 +18,7 @@ import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
 import com.forestnote.core.ink.PenParams
 import com.forestnote.core.ink.PenVariant
+import com.forestnote.core.ink.PenWidthLevel
 import com.forestnote.core.ink.PressureCurve
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeBuilder
@@ -102,6 +103,8 @@ class DrawView @JvmOverloads constructor(
         }
     /** Active pen variant; set by MainActivity when a variant is picked. */
     var activePenVariant: PenVariant = PenVariant.FOUNTAIN
+    /** Active pen width level (A10); set by MainActivity on width pick / variant switch / launch. */
+    var activePenWidthLevel: PenWidthLevel = PenWidthLevel.M
     var onStrokeSaved: ((Stroke) -> Unit)? = null
 
     // ===== Lasso selection state (A6) — kept off the fast-ink writing buffer =====
@@ -605,10 +608,8 @@ class DrawView @JvmOverloads constructor(
                 val vy = transform.toVirtualY(event.y)
                 val mp = transform.toMillipressure(event.pressure)
 
-                // Resolve per-variant colour/width, configure the live paint.
-                val params = PenParams.of(
-                    activePenVariant, Stroke.DEFAULT_WIDTH_MIN, Stroke.DEFAULT_WIDTH_MAX
-                )
+                // Resolve per-variant colour/width at the active width level, configure the live paint.
+                val params = PenParams.of(activePenVariant, activePenWidthLevel)
                 configureStrokePaintFor(params.color)
                 currentStroke = StrokeBuilder(params.color, params.wMin, params.wMax).also {
                     it.addPoint(StrokePoint(vx, vy, mp, System.currentTimeMillis()))

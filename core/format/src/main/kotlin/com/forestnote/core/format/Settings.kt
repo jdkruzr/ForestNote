@@ -43,6 +43,12 @@ data class Settings(
     val caldavServerUrl: String = "",
     /** Auto-empty the Recycle Bin after this many days (E4). 0 = never (default). */
     val recycleBinRetentionDays: Int = 0,
+    /**
+     * Per-variant pen width level (A10), keyed by `PenVariant.name` → `PenWidthLevel.name`.
+     * Stringly-typed so this module needn't pull in core:ink's enums for serialization; the
+     * app layer converts. Empty/missing ⇒ that variant defaults to M (the v1 width).
+     */
+    val penWidthLevels: Map<String, String> = emptyMap(),
 ) {
     companion object {
         /**
