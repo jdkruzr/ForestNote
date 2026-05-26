@@ -20,6 +20,9 @@ import java.util.concurrent.TimeUnit
 // Owns the executor, the repository handle, and all I/O orchestration + logging.
 // Pure geometry (StrokeGeometry.reconcileErase) is delegated to core:ink.
 
+/** The cheap inputs to a notebook's first-page thumbnail cache key (C3b). */
+data class ThumbnailSource(val pageId: String, val strokeCount: Long, val modifiedAt: Long)
+
 /**
  * Single owner of all persistence. Runs every database operation on one background
  * thread (the serialization point — single writer, no lock contention), and posts
@@ -120,6 +123,32 @@ class NotebookStore(
                 .onFailure { android.util.Log.e(TAG, "failed to list notebooks", it) }
                 .getOrDefault(emptyList<NotebookMeta>() to "")
             poster { onResult(result.first, result.second) }
+        }
+    }
+
+    /**
+     * Read the cheap inputs to a notebook's first-page thumbnail cache key in one
+     * background hop. Null if the notebook has no page or the read fails (AC4.2).
+     */
+    fun thumbnailSource(notebookId: String, onResult: (ThumbnailSource?) -> Unit) {
+        executor.execute {
+            val src = runCatching {
+                val r = repo ?: return@runCatching null
+                val pageId = r.firstPageIdForNotebook(notebookId) ?: return@runCatching null
+                ThumbnailSource(pageId, r.countStrokesForPage(pageId), r.modifiedAtOf(notebookId))
+            }.onFailure { android.util.Log.e(TAG, "failed to read thumbnail source", it) }
+                .getOrNull()
+            poster { onResult(src) }
+        }
+    }
+
+    /** Load strokes for an arbitrary page (a thumbnail render), off-thread. */
+    fun loadStrokesForPage(pageId: String, onResult: (List<Stroke>) -> Unit) {
+        executor.execute {
+            val strokes = runCatching { repo?.loadStrokesForPage(pageId) ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to load strokes for page", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(strokes) }
         }
     }
 

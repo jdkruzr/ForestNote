@@ -429,6 +429,29 @@ class NotebookStoreTest {
         store.shutdown()
     }
 
+    // C3b: thumbnailSource returns the first page + stroke count; loadStrokesForPage reads it back.
+    @Test
+    fun thumbnailSourceAndArbitraryPageLoadThroughTheStore() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+        val saved = horizontalStroke()
+        store.save(saved)
+
+        val activeNotebookId = awaitResult<String> { cb -> store.listNotebooks { _, active -> cb(active) } }
+        val src = awaitResult<ThumbnailSource?> { cb -> store.thumbnailSource(activeNotebookId) { cb(it) } }
+        assertTrue(src != null, "thumbnailSource is non-null for a notebook with a page")
+        assertTrue(src!!.strokeCount >= 1, "stroke count reflects the saved stroke")
+
+        val strokes = awaitResult<List<Stroke>> { cb -> store.loadStrokesForPage(src.pageId) { cb(it) } }
+        assertEquals(listOf(saved.id), strokes.map { it.id }, "arbitrary-page load returns the saved stroke")
+
+        store.shutdown()
+    }
+
     /** Block until a single async store callback fires, returning its value. */
     private fun <T> awaitResult(invoke: ((T) -> Unit) -> Unit): T {
         val latch = CountDownLatch(1)
