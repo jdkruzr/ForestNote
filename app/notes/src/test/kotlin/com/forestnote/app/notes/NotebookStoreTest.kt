@@ -2,6 +2,7 @@ package com.forestnote.app.notes
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.forestnote.core.format.FolderMeta
+import com.forestnote.core.format.NotebookCard
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.format.PageMeta
 import com.forestnote.core.format.PageTemplate
@@ -405,6 +406,25 @@ class NotebookStoreTest {
         val roots = awaitResult<List<FolderMeta>> { cb -> store.getFoldersForParent(null) { cb(it) } }
         assertEquals(listOf(folderId), roots.map { it.id }, "the created root folder is listed through the store")
         assertEquals("Work", roots.first().name, "the listed folder carries its name")
+
+        store.shutdown()
+    }
+
+    // C3a: listNotebookCards returns each notebook with a page count through the store.
+    @Test
+    fun listNotebookCardsReturnsCreatedNotebookWithPageCount() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+        val newId = awaitResult<String> { cb -> store.createNotebook("Cards") { cb(it) } }
+
+        val cards = awaitResult<List<NotebookCard>> { cb -> store.listNotebookCards { cb(it) } }
+        val created = cards.first { it.id == newId }
+        assertEquals("Cards", created.name, "card carries the notebook name")
+        assertTrue(created.pageCount >= 1, "a created notebook has at least its initial page")
 
         store.shutdown()
     }

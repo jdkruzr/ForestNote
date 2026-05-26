@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import com.forestnote.core.format.FolderMeta
+import com.forestnote.core.format.NotebookCard
 import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.format.PageMeta
@@ -119,6 +120,16 @@ class NotebookStore(
                 .onFailure { android.util.Log.e(TAG, "failed to list notebooks", it) }
                 .getOrDefault(emptyList<NotebookMeta>() to "")
             poster { onResult(result.first, result.second) }
+        }
+    }
+
+    /** List every notebook with its page count off-thread, for the Library grid (AC4.2). */
+    fun listNotebookCards(onResult: (List<NotebookCard>) -> Unit) {
+        executor.execute {
+            val cards = runCatching { repo?.listNotebookCards() ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to list notebook cards", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(cards) }
         }
     }
 
