@@ -33,6 +33,15 @@ class PageTransform {
         private set
 
     /**
+     * Physical pixels-per-inch, for converting real-world mm measurements (page
+     * template pitch) to pixels. Set from the device's *physical* density
+     * (DisplayMetrics.xdpi), NOT densityDpi — the AiPaper Mini reports
+     * densityDpi=320 but its true PPI is ~293. Defaults to the mdpi baseline so
+     * [pitchPx] is sane before the view supplies a real value.
+     */
+    var ppi: Float = 160f
+
+    /**
      * Update the transform when view dimensions change.
      * Call this in View.onSizeChanged().
      *
@@ -55,6 +64,9 @@ class PageTransform {
 
     /** Convert virtual y to screen pixels. */
     fun toScreenY(virtualY: Int): Float = virtualY * scale
+
+    /** Convert a real-world millimetre measurement to screen pixels using [ppi]. */
+    fun pitchPx(mm: Float): Float = mm / 25.4f * ppi
 
     /** Convert virtual width/distance to screen pixels. */
     fun toScreenSize(virtualSize: Int): Float = virtualSize * scale

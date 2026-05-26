@@ -125,6 +125,22 @@ class PageTransformTest {
     }
 
     @Test
+    fun pitchPxConvertsMillimetresUsingPpi() {
+        val transform = PageTransform()
+        transform.ppi = 100f
+        // 25.4mm = 1 inch = ppi pixels.
+        assertEquals(100f, transform.pitchPx(25.4f), 0.001f)
+        assertEquals(50f, transform.pitchPx(12.7f), 0.001f)
+    }
+
+    @Test
+    fun pitchPxScalesLinearlyWithPpi() {
+        val transform = PageTransform()
+        transform.ppi = 293f // the AiPaper Mini's true PPI
+        assertEquals(293f / 25.4f * 5f, transform.pitchPx(5f), 0.001f)
+    }
+
+    @Test
     fun roundTripVirtualToScreenAndBackPreservesValue() {
         val transform = PageTransform()
         transform.update(1440, 1920)
