@@ -28,6 +28,17 @@ data class NotebookCard(
 )
 
 /**
+ * Per-folder data for a Library card: identity, name, parent, and the count of
+ * notebooks directly inside it (one query, no N+1 during recycling).
+ */
+data class FolderCard(
+    val id: String,
+    val name: String,
+    val parentFolderId: String?,
+    val notebookCount: Long
+)
+
+/**
  * Public folder metadata so the UI never touches generated row types.
  * [parentFolderId] NULL means a root-level folder.
  */
@@ -207,10 +218,15 @@ class NotebookRepository private constructor(
         db.notebookQueries.listNotebooks().executeAsList()
             .map { NotebookMeta(it.id, it.name, it.created_at, it.modified_at) }
 
-    /** Every notebook with its page count, for the Library grid (AC4.2/AC4.3). */
-    fun listNotebookCards(): List<NotebookCard> =
-        db.notebookQueries.listNotebookCards().executeAsList()
+    /** Notebooks directly inside [folderId] (null = root) with page counts, for the Library grid. */
+    fun listNotebookCardsInFolder(folderId: String?): List<NotebookCard> =
+        db.notebookQueries.listNotebookCardsInFolder(folderId).executeAsList()
             .map { NotebookCard(it.id, it.name, it.created_at, it.modified_at, it.page_count) }
+
+    /** Folders directly under [parentId] (null = root) with notebook counts, for the Library grid. */
+    fun listFolderCardsForParent(parentId: String?): List<FolderCard> =
+        db.notebookQueries.listFolderCardsForParent(parentId).executeAsList()
+            .map { FolderCard(it.id, it.name, it.parent_folder_id, it.notebook_count) }
 
     /** Number of pages under [notebookId] (0 for an unknown notebook). */
     fun countPages(notebookId: String): Long =

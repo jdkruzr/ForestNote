@@ -419,22 +419,53 @@ class NotebookRepositoryTest {
     // -- Library cards (C3a) ------------------------------------------------
 
     @Test
-    fun listNotebookCardsReturnsPageCountsAndOrder() {
-        // AC4.2/AC4.3: each notebook with its page count, in sort order.
+    fun listNotebookCardsInRootReturnsPageCountsAndOrder() {
+        // AC4.2/AC4.3: root notebooks with page counts, in sort order.
         val repo = createRepository()
-        // The bootstrap notebook is the first card (1 page). Add a second notebook with
-        // extra pages so page counts differ and ordering is observable.
+        // The bootstrap notebook is the first root card (1 page). Add a second notebook
+        // with extra pages so page counts differ and ordering is observable.
         val firstId = repo.listNotebooks().first().id
         val secondId = repo.createNotebook("Second")
         repo.switchNotebook(secondId)
         repo.createPage()
         repo.createPage() // Second now has 3 pages (initial + 2)
 
-        val cards = repo.listNotebookCards()
-        assertEquals(listOf(firstId, secondId), cards.map { it.id }, "cards in sort order")
+        val cards = repo.listNotebookCardsInFolder(null)
+        assertEquals(listOf(firstId, secondId), cards.map { it.id }, "root cards in sort order")
         assertEquals(1L, cards.first { it.id == firstId }.pageCount, "bootstrap notebook has 1 page")
         assertEquals(3L, cards.first { it.id == secondId }.pageCount, "second notebook has 3 pages")
         assertEquals("Second", cards.first { it.id == secondId }.name, "card carries the notebook name")
+        repo.close()
+    }
+
+    @Test
+    fun folderScopedCardQueriesPartitionByFolder() {
+        // AC4.2/AC4.4: notebooks and folders are scoped to their container.
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver)
+        val rootNotebookId = repo.listNotebooks().first().id
+
+        val folderId = repo.createFolder("Work", null)
+        val nestedId = repo.createFolder("Sub", folderId)
+        // Place a notebook inside the folder via a direct insert (createNotebook(folderId)
+        // lands in C4 Task 5; this keeps the Task-1 query test self-contained).
+        driver.execute(
+            null,
+            "INSERT INTO notebook(id, name, sort_order, created_at, modified_at, folder_id) " +
+                "VALUES ('nf1', 'Inside', 0, 0, 0, '$folderId')",
+            0
+        )
+
+        val rootNotebooks = repo.listNotebookCardsInFolder(null)
+        assertEquals(listOf(rootNotebookId), rootNotebooks.map { it.id }, "root excludes the in-folder notebook")
+        val folderNotebooks = repo.listNotebookCardsInFolder(folderId)
+        assertEquals(listOf("nf1"), folderNotebooks.map { it.id }, "the folder contains its notebook")
+
+        val rootFolders = repo.listFolderCardsForParent(null)
+        assertEquals(listOf(folderId), rootFolders.map { it.id }, "Work is a root folder")
+        assertEquals(1L, rootFolders.first().notebookCount, "Work has one notebook inside")
+        val childFolders = repo.listFolderCardsForParent(folderId)
+        assertEquals(listOf(nestedId), childFolders.map { it.id }, "Sub is nested under Work, not at root")
         repo.close()
     }
 
