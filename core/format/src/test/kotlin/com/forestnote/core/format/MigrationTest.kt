@@ -181,10 +181,10 @@ class MigrationTest {
     fun repositoryUsableAfterMigration() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV1Schema(driver)
-        // Schema.version is now 5; openExisting → bootstrap queries the current tables
-        // (notebook incl. modified_at, app_state incl. settings_json), so migrate all
-        // the way to the current version.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 5L)
+        // Schema.version is now 6; openExisting → bootstrap queries the current tables
+        // (notebook incl. modified_at + folder_id, app_state incl. settings_json), so
+        // migrate all the way to the current version.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 6L)
 
         // openExisting (no schema.create) must work against the migrated DB.
         val repo = NotebookRepository.openExisting(driver)
@@ -207,8 +207,8 @@ class MigrationTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV2Schema(driver)
 
-        // Migrate to the current version (5); this still runs the v2->v3 step plus v3->v4, v4->v5.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 5L)
+        // Migrate to the current version (6); this still runs the v2->v3 step plus v3->v4, v4->v5, v5->v6.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 6L)
 
         assertTrue(tableExists(driver, "notebook"), "notebook table exists after v2->v3")
         assertTrue(tableExists(driver, "app_state"), "app_state table exists after v2->v3")
