@@ -34,7 +34,7 @@ Main application module that wires together ink rendering, storage, and user int
 
 ## Key Files
 - `MainActivity.kt` - Lifecycle management, backend + NotebookStore wiring, nav-bar wiring (page + notebook pickers), crash handler
-- `NotebookStore.kt` - Single background-thread owner of NotebookRepository; async load/save/erase/clear, notebook/page list-switch-CRUD, drain-on-shutdown
+- `NotebookStore.kt` - Single background-thread owner of NotebookRepository; async load/save/erase/clear, notebook/page list-switch-CRUD, settings load/update + per-page setPageTemplate, drain-on-shutdown
 - `DrawView.kt` - Touch handling, bitmap rendering, stroke/erase logic
 - `ToolBar.kt` - UI toolbar with tool button state management (incl. Paste enable/armed state)
 - `ToolSelectionLogic.kt` - Pure tool selection state machine (pen/erase variants + Lasso)

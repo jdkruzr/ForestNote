@@ -7,6 +7,7 @@ pluginManagement {
     }
     plugins {
         id("app.cash.sqldelight") version("2.0.2")
+        id("org.jetbrains.kotlin.plugin.serialization") version("2.0.21")
     }
 }
 

@@ -15,8 +15,17 @@ data class NotebookMeta(
     val modifiedAt: Long
 )
 
-/** Public page metadata so the UI never touches generated row types. */
-data class PageMeta(val id: String, val createdAt: Long)
+/**
+ * Public page metadata so the UI never touches generated row types.
+ * [template] / [templatePitchMm] are the per-page override: NULL means
+ * "inherit the global default" from [Settings].
+ */
+data class PageMeta(
+    val id: String,
+    val createdAt: Long,
+    val template: PageTemplate? = null,
+    val templatePitchMm: Int? = null
+)
 
 /**
  * Storage facade for the .forestnote library file.
@@ -137,6 +146,27 @@ class NotebookRepository private constructor(
     fun modifiedAtOf(notebookId: String): Long =
         db.notebookQueries.selectNotebookModifiedAt(notebookId).executeAsOne()
 
+    /**
+     * The user's global settings, decoded from the `app_state.settings_json`
+     * blob. A fresh/empty blob decodes to all-default [Settings].
+     */
+    fun settings(): Settings {
+        val blob = db.notebookQueries.getSettingsJson().executeAsOneOrNull() ?: "{}"
+        return Settings.json.decodeFromString(Settings.serializer(), blob)
+    }
+
+    /**
+     * Read-modify-write the settings blob in one step and return the new value.
+     * The blob is rewritten whole — never query individual fields. This is a
+     * single UPDATE on the existing app_state row, so it cannot clobber the
+     * active notebook/page.
+     */
+    fun updateSettings(transform: (Settings) -> Settings): Settings {
+        val next = transform(settings())
+        db.notebookQueries.setSettingsJson(Settings.json.encodeToString(Settings.serializer(), next))
+        return next
+    }
+
     fun listNotebooks(): List<NotebookMeta> =
         db.notebookQueries.listNotebooks().executeAsList()
             .map { NotebookMeta(it.id, it.name, it.created_at, it.modified_at) }
@@ -147,7 +177,22 @@ class NotebookRepository private constructor(
 
     fun listPagesForCurrentNotebook(): List<PageMeta> =
         db.notebookQueries.listPagesForNotebook(currentNotebookId).executeAsList()
-            .map { PageMeta(it.id, it.created_at) }
+            .map {
+                PageMeta(
+                    id = it.id,
+                    createdAt = it.created_at,
+                    template = it.template?.let { name -> PageTemplate.valueOf(name) },
+                    templatePitchMm = it.template_pitch_mm?.toInt()
+                )
+            }
+
+    /**
+     * Set (or clear) a page's template override. NULL [template]/[pitchMm] clears
+     * the override so the page inherits the global default again (AC8.4).
+     */
+    fun setPageTemplate(pageId: String, template: PageTemplate?, pitchMm: Int?) {
+        db.notebookQueries.setPageTemplate(template?.name, pitchMm?.toLong(), pageId)
+    }
 
     /** Switch the active page within the current notebook and persist it (AC4.1, AC4.3). */
     fun switchPage(pageId: String) {

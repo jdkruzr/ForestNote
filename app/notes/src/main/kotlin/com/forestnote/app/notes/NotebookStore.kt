@@ -6,6 +6,8 @@ import android.os.Looper
 import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.format.PageMeta
+import com.forestnote.core.format.PageTemplate
+import com.forestnote.core.format.Settings
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeGeometry
 import java.util.concurrent.ExecutorService
@@ -212,6 +214,38 @@ class NotebookStore(
         executor.execute {
             runCatching { repo?.deleteNotebook(notebookId) }
                 .onFailure { android.util.Log.e(TAG, "failed to delete notebook", it) }
+            poster { onDone() }
+        }
+    }
+
+    /** Load the global settings off-thread; posts the decoded value (defaults on failure). */
+    fun loadSettings(onResult: (Settings) -> Unit) {
+        executor.execute {
+            val settings = runCatching { repo?.settings() ?: Settings() }
+                .onFailure { android.util.Log.e(TAG, "failed to load settings", it) }
+                .getOrDefault(Settings())
+            poster { onResult(settings) }
+        }
+    }
+
+    /**
+     * Read-modify-write the settings blob off-thread and post the new value. The
+     * [transform] runs on the background thread (it must be pure — no UI/IO).
+     */
+    fun updateSettings(transform: (Settings) -> Settings, onResult: (Settings) -> Unit = {}) {
+        executor.execute {
+            val next = runCatching { repo?.updateSettings(transform) ?: transform(Settings()) }
+                .onFailure { android.util.Log.e(TAG, "failed to update settings", it) }
+                .getOrDefault(transform(Settings()))
+            poster { onResult(next) }
+        }
+    }
+
+    /** Set or clear a page's template override off-thread; callback posted when done. */
+    fun setPageTemplate(pageId: String, template: PageTemplate?, pitchMm: Int?, onDone: () -> Unit = {}) {
+        executor.execute {
+            runCatching { repo?.setPageTemplate(pageId, template, pitchMm) }
+                .onFailure { android.util.Log.e(TAG, "failed to set page template", it) }
             poster { onDone() }
         }
     }
