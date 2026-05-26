@@ -5,6 +5,7 @@ sqldelight = "2.0.2"
 kotlinx-serialization = "1.7.3"
 androidx-core = "1.15.0"
 androidx-appcompat = "1.7.0"
+androidx-recyclerview = "1.3.2"
 androidx-ink = "1.0.0"
 material = "1.12.0"
 junit = "4.13.2"
@@ -21,6 +22,7 @@ kotlin-gradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", ve
 # AndroidX
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "androidx-appcompat" }
+androidx-recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "androidx-recyclerview" }
 
 # Material Design (Views, not Compose)
 material = { module = "com.google.android.material:material", version.ref = "material" }

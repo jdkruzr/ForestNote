@@ -25,6 +25,9 @@ dependencies {
     // Ink API for erase tools (geometry types used indirectly via StrokeGeometry)
     implementation(libs.findLibrary("androidx-ink-geometry").get())
 
+    // RecyclerView for the Library card grid (C3a — the app's first RecyclerView)
+    implementation(libs.findLibrary("androidx-recyclerview").get())
+
     // Real SQLite driver for NotebookStore tests (JVM, in-memory + file-backed)
     testImplementation(libs.findLibrary("sqldelight-sqlite-driver").get())
 }
