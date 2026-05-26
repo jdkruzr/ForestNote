@@ -128,6 +128,17 @@ class NotebookRepository private constructor(
             ?.takeIf { id -> pages.any { it.id == id } }
             ?: pages.first().id
         persistActive()
+        // Freeze any legacy "inherit" pages (template IS NULL) to the current global
+        // default once, so changing the default later no longer changes them (B4
+        // freeze-at-creation). Idempotent: new pages are always concrete.
+        val (seedTemplate, seedPitch) = defaultTemplateSeed()
+        db.notebookQueries.bakeNullPageTemplates(seedTemplate, seedPitch)
+    }
+
+    /** The global default template/pitch as concrete columns, for seeding new pages. */
+    private fun defaultTemplateSeed(): Pair<String, Long> {
+        val s = settings()
+        return s.defaultTemplate.name to s.defaultPitchMm.toLong()
     }
 
     private fun persistActive() {
@@ -207,6 +218,9 @@ class NotebookRepository private constructor(
         if (pages.isEmpty()) {
             val pid = Ulid.generate()
             db.notebookQueries.insertPage(pid, notebookId, 0, System.currentTimeMillis())
+            // Recovery page for an empty notebook: seed the global default (concrete).
+            val (seedTemplate, seedPitch) = defaultTemplateSeed()
+            db.notebookQueries.setPageTemplate(seedTemplate, seedPitch, pid)
             pages = db.notebookQueries.listPagesForNotebook(notebookId).executeAsList()
         }
         currentPageId = pages.first().id
@@ -218,10 +232,14 @@ class NotebookRepository private constructor(
         val nid = Ulid.generate()
         val now = clock()
         val so = db.notebookQueries.nextNotebookSortOrder().executeAsOne()
+        val (seedTemplate, seedPitch) = defaultTemplateSeed()
         db.transaction {
             db.notebookQueries.insertNotebook(nid, name, so, now, now)
-            // A notebook always has at least one page.
-            db.notebookQueries.insertPage(Ulid.generate(), nid, 0, now)
+            // A notebook always has at least one page; its first page is seeded with the
+            // global default (concrete), since it has no predecessor to copy (B4).
+            val pid = Ulid.generate()
+            db.notebookQueries.insertPage(pid, nid, 0, now)
+            db.notebookQueries.setPageTemplate(seedTemplate, seedPitch, pid)
         }
         return nid
     }
@@ -262,12 +280,17 @@ class NotebookRepository private constructor(
         val pid = Ulid.generate()
         // Snapshot the existing pages (ordered by sort_order) BEFORE inserting the new one.
         val last = db.notebookQueries.listPagesForNotebook(currentNotebookId).executeAsList().lastOrNull()
+        // Predecessor is already concrete (seeded at its own creation); copy it. A
+        // notebook with no pages falls back to the global default seed.
+        val (seedTemplate, seedPitch) = if (last != null) {
+            last.template to last.template_pitch_mm
+        } else {
+            defaultTemplateSeed()
+        }
         val so = db.notebookQueries.nextPageSortOrder(currentNotebookId).executeAsOne()
         db.transaction {
             db.notebookQueries.insertPage(pid, currentNotebookId, so, System.currentTimeMillis())
-            if (last != null) {
-                db.notebookQueries.setPageTemplate(last.template, last.template_pitch_mm, pid)
-            }
+            db.notebookQueries.setPageTemplate(seedTemplate, seedPitch, pid)
         }
         return pid
     }

@@ -392,7 +392,12 @@ class MainActivity : Activity() {
                     .setView(view)
                     .setPositiveButton("Save") { _, _ ->
                         if (rgTemplate.checkedRadioButtonId == R.id.rb_pt_default) {
-                            store.setPageTemplate(page.id, null, null) { refreshPageIndicator() }
+                            // Freeze-at-creation model: "Use default" snapshots the CURRENT
+                            // global default onto the page (concrete), so the page won't
+                            // track future default changes (B4 decision).
+                            store.setPageTemplate(page.id, settings.defaultTemplate, settings.defaultPitchMm) {
+                                refreshPageIndicator()
+                            }
                         } else {
                             val template = templateToId.entries.first { it.value == rgTemplate.checkedRadioButtonId }.key
                             val pitch = if (template == PageTemplate.BLANK) {
