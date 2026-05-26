@@ -41,6 +41,8 @@ data class Settings(
     val fullTextTranscriptionUrl: String = "",
     val chatUrl: String = "",
     val caldavServerUrl: String = "",
+    /** Auto-empty the Recycle Bin after this many days (E4). 0 = never (default). */
+    val recycleBinRetentionDays: Int = 0,
 ) {
     companion object {
         /**

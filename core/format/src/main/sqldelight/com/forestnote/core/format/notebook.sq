@@ -102,9 +102,21 @@ DELETE FROM notebook WHERE id = ?;
 softDeleteNotebook:
 UPDATE notebook SET deleted_at = ?, deleted_batch_id = ?, deleted_root_id = ? WHERE id = ?;
 
--- Soft-delete every notebook whose folder_id is in the deleted folder subtree (cascade).
+-- Soft-delete every LIVE notebook whose folder_id is in the deleted folder subtree (cascade).
+-- The `deleted_at IS NULL` guard is essential: a notebook already tombstoned on its own
+-- (standalone bin entry) must NOT be absorbed into this folder's batch.
 softDeleteNotebooksInFolders:
-UPDATE notebook SET deleted_at = ?, deleted_batch_id = ?, deleted_root_id = ? WHERE folder_id IN ?;
+UPDATE notebook SET deleted_at = ?, deleted_batch_id = ?, deleted_root_id = ?
+WHERE folder_id IN ? AND deleted_at IS NULL;
+
+-- All tombstoned notebooks (for the Recycle Bin, E3). Not filtered by the _live view.
+listTombstonedNotebooks:
+SELECT * FROM notebook WHERE deleted_at IS NOT NULL;
+
+-- Restore a notebook from the bin (clear tombstone) and place it in [folder_id] (NULL = root).
+-- The caller reconciles folder_id against live folders (RecycleBinLogic.restoreFolderFor).
+restoreNotebookWithFolder:
+UPDATE notebook SET deleted_at = NULL, deleted_batch_id = NULL, deleted_root_id = NULL, folder_id = ? WHERE id = ?;
 
 nextNotebookSortOrder:
 SELECT coalesce(max(sort_order), -1) + 1 FROM notebook_live;
@@ -157,6 +169,19 @@ UPDATE folder SET name = ? WHERE id = ?;
 -- all sharing one deleted_batch_id and pointing deleted_root_id at the tapped folder (E2).
 softDeleteFolders:
 UPDATE folder SET deleted_at = ?, deleted_batch_id = ?, deleted_root_id = ? WHERE id IN ?;
+
+-- All tombstoned folders (for the Recycle Bin, E3). Not filtered by the _live view.
+listTombstonedFolders:
+SELECT * FROM folder WHERE deleted_at IS NOT NULL;
+
+-- Restore a folder from the bin (clear tombstone). Folder restore is done id-by-id over a batch.
+clearFolderTombstone:
+UPDATE folder SET deleted_at = NULL, deleted_batch_id = NULL, deleted_root_id = NULL WHERE id = ?;
+
+-- Permanently remove a folder row (E3 permanent delete / E4 empty + purge). Notebooks are
+-- removed via the notebook hard-delete path; folders have no children of their own to cascade.
+hardDeleteFolder:
+DELETE FROM folder WHERE id = ?;
 
 nextFolderSortOrder:
 SELECT coalesce(max(sort_order), -1) + 1 FROM folder_live WHERE parent_folder_id IS ?;

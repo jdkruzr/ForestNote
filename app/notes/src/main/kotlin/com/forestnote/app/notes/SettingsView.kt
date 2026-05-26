@@ -85,6 +85,7 @@ class SettingsView {
         val fulltextInput = view.findViewById<EditText>(R.id.input_fulltext_url)
         val chatInput = view.findViewById<EditText>(R.id.input_chat_url)
         val caldavInput = view.findViewById<EditText>(R.id.input_caldav_url)
+        val binRetentionInput = view.findViewById<EditText>(R.id.input_bin_retention_days)
 
         // While populating from loaded values, suppress the change listeners so the
         // programmatic set doesn't immediately write back.
@@ -105,6 +106,7 @@ class SettingsView {
             fulltextInput.setText(s.fullTextTranscriptionUrl)
             chatInput.setText(s.chatUrl)
             caldavInput.setText(s.caldavServerUrl)
+            binRetentionInput.setText(s.recycleBinRetentionDays.toString())
             loading = false
         }
 
@@ -132,6 +134,9 @@ class SettingsView {
         wireUrl(fulltextInput) { s, v -> s.copy(fullTextTranscriptionUrl = v) }.also { it.guard = { loading } }
         wireUrl(chatInput) { s, v -> s.copy(chatUrl = v) }.also { it.guard = { loading } }
         wireUrl(caldavInput) { s, v -> s.copy(caldavServerUrl = v) }.also { it.guard = { loading } }
+        // Retention is a non-negative integer; blank/invalid commits as 0 (= never).
+        wireUrl(binRetentionInput) { s, v -> s.copy(recycleBinRetentionDays = v.toIntOrNull()?.coerceAtLeast(0) ?: 0) }
+            .also { it.guard = { loading } }
     }
 
     private var store: NotebookStore? = null

@@ -3,6 +3,7 @@ package com.forestnote.app.notes
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.forestnote.core.format.BinEntry
 import com.forestnote.core.format.FolderCard
 import com.forestnote.core.format.FolderMeta
 import com.forestnote.core.format.NotebookCard
@@ -361,6 +362,53 @@ class NotebookStore(
         executor.execute {
             runCatching { repo?.deleteFolder(folderId) }
                 .onFailure { android.util.Log.e(TAG, "failed to delete folder", it) }
+            poster { onDone() }
+        }
+    }
+
+    /** Load the Recycle Bin's top-level entries off-thread; posts them (empty on failure). */
+    fun recycleBinEntries(onResult: (List<BinEntry>) -> Unit) {
+        executor.execute {
+            val entries = runCatching { repo?.recycleBinEntries() ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to load recycle bin entries", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(entries) }
+        }
+    }
+
+    /** Count bin entries off-thread (for the Library badge); posts the count (0 on failure). */
+    fun recycleBinCount(onResult: (Int) -> Unit) {
+        executor.execute {
+            val n = runCatching { repo?.recycleBinCount() ?: 0 }
+                .onFailure { android.util.Log.e(TAG, "failed to count recycle bin", it) }
+                .getOrDefault(0)
+            poster { onResult(n) }
+        }
+    }
+
+    /** Restore a bin entry (notebook or folder batch); callback posted when done. */
+    fun restoreBinEntry(entry: BinEntry, onDone: () -> Unit) {
+        executor.execute {
+            runCatching { repo?.restoreEntry(entry) }
+                .onFailure { android.util.Log.e(TAG, "failed to restore bin entry", it) }
+            poster { onDone() }
+        }
+    }
+
+    /** Permanently delete a bin entry (and its batch); callback posted when done. */
+    fun permanentlyDeleteBinEntry(entry: BinEntry, onDone: () -> Unit) {
+        executor.execute {
+            runCatching { repo?.permanentlyDelete(entry) }
+                .onFailure { android.util.Log.e(TAG, "failed to permanently delete bin entry", it) }
+            poster { onDone() }
+        }
+    }
+
+    /** Permanently delete everything in the bin; callback posted when done. */
+    fun emptyRecycleBin(onDone: () -> Unit) {
+        executor.execute {
+            runCatching { repo?.emptyRecycleBin() }
+                .onFailure { android.util.Log.e(TAG, "failed to empty recycle bin", it) }
             poster { onDone() }
         }
     }
