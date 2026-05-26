@@ -1,0 +1,36 @@
+-- v7 -> v8: Sync (UltraBridge), Phase 0. NON-destructive.
+--  * page/stroke gain a deleted_at tombstone column (NULL = live), so deletes/erases
+--    become syncable upserts (Phase 1) instead of row removals. Existing rows are all
+--    live, so no backfill is needed (ADD COLUMN defaults to NULL).
+--  * sync_state / outbox / sync_row_meta are new sync-only tables (empty until sync runs).
+-- No view changes: page/stroke have no live views, and folder/notebook are untouched, so
+-- the notebook_live/folder_live views keep matching their base tables (unlike 6.sqm, which
+-- had to re-CREATE the views). create() and migrate() never both run on one DB.
+ALTER TABLE page ADD COLUMN deleted_at INTEGER;
+ALTER TABLE stroke ADD COLUMN deleted_at INTEGER;
+
+CREATE TABLE sync_state (
+    id           INTEGER PRIMARY KEY NOT NULL CHECK (id = 0),
+    site_id      TEXT,
+    next_op_seq  INTEGER NOT NULL DEFAULT 1,
+    cursor       INTEGER NOT NULL DEFAULT 0,
+    acked_op_seq INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE outbox (
+    op_seq     INTEGER PRIMARY KEY NOT NULL,
+    table_name TEXT NOT NULL,
+    pk         TEXT NOT NULL,
+    wall_ts    INTEGER NOT NULL,
+    payload    TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE sync_row_meta (
+    table_name  TEXT NOT NULL,
+    pk          TEXT NOT NULL,
+    lww_wall_ts INTEGER NOT NULL,
+    lww_op_seq  INTEGER NOT NULL,
+    lww_site_id TEXT NOT NULL,
+    PRIMARY KEY (table_name, pk)
+);
