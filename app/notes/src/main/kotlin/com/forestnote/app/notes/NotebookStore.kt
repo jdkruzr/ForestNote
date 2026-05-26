@@ -344,11 +344,23 @@ class NotebookStore(
         }
     }
 
-    /** Hard-delete [ids] (and everything under them) in one transaction (D3); callback posted when done. */
+    /** Soft-delete [ids] as standalone Recycle Bin tombstones (D3 → E2); callback posted when done. */
     fun bulkDeleteNotebooks(ids: List<String>, onDone: () -> Unit) {
         executor.execute {
             runCatching { repo?.bulkDeleteNotebooks(ids) }
                 .onFailure { android.util.Log.e(TAG, "failed to bulk delete notebooks", it) }
+            poster { onDone() }
+        }
+    }
+
+    /**
+     * Soft-delete a folder and its whole subtree as one Recycle Bin batch (E2); callback posted
+     * when done. (The Folder Properties Delete button that calls this is wired in E3.)
+     */
+    fun deleteFolder(folderId: String, onDone: () -> Unit) {
+        executor.execute {
+            runCatching { repo?.deleteFolder(folderId) }
+                .onFailure { android.util.Log.e(TAG, "failed to delete folder", it) }
             poster { onDone() }
         }
     }

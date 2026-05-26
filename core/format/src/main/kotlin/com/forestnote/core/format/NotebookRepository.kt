@@ -354,46 +354,62 @@ class NotebookRepository private constructor(
     }
 
     /**
-     * Hard-delete every notebook in [ids] (children-first, no FK-cascade reliance) in one
-     * transaction (D3). The active-notebook fallback is decided ONCE after the whole batch:
-     * a per-id fallback could switch to a survivor that's deleted later in the same batch,
-     * leaving a dangling active id. If the active notebook was in the set, switch to a
-     * remaining one, or bootstrap a fresh notebook + page (never zero notebooks).
+     * If the active notebook just got tombstoned, move off it: switch to a remaining live
+     * notebook, or bootstrap a fresh one (never zero LIVE notebooks, AC7/E1). `listNotebooks`
+     * reads `notebook_live`, so "remaining"/"empty" already means live-only. Decided ONCE after
+     * a batch — a per-id fallback could land on a notebook tombstoned later in the same batch.
      */
-    fun bulkDeleteNotebooks(ids: List<String>) {
-        if (ids.isEmpty()) return
-        db.transaction {
-            ids.forEach { id ->
-                db.notebookQueries.deleteStrokesForNotebook(id)
-                db.notebookQueries.deletePagesForNotebook(id)
-                db.notebookQueries.deleteNotebook(id)
-            }
-        }
-        if (currentNotebookId in ids) {
-            val remaining = db.notebookQueries.listNotebooks().executeAsList()
-            if (remaining.isEmpty()) bootstrap() else switchNotebook(remaining.first().id)
-        }
+    private fun fallbackOffDeletedActive() {
+        val remaining = db.notebookQueries.listNotebooks().executeAsList()
+        if (remaining.isEmpty()) bootstrap() else switchNotebook(remaining.first().id)
     }
 
     /**
-     * Delete a notebook and everything under it in one transaction (no FK-cascade
-     * reliance, AC2.3). If the active notebook is deleted, switch to a remaining one;
-     * if none remain, bootstrap a fresh notebook + page (never zero notebooks, AC2.4).
+     * Soft-delete every notebook in [ids] as a STANDALONE tombstone (NULL batch/root) in one
+     * transaction (D3 → E2). RESOLVED (design): do NOT share a batch id across the selection —
+     * a shared non-null batch id would make these match neither Recycle Bin batch-top case
+     * (AC7.3) and they'd vanish from the bin. Pages/strokes are left in place (restorable);
+     * permanent delete (E4) removes them. Active-notebook fallback decided once after the batch.
+     */
+    fun bulkDeleteNotebooks(ids: List<String>) {
+        if (ids.isEmpty()) return
+        val now = clock()
+        db.transaction {
+            ids.forEach { id -> db.notebookQueries.softDeleteNotebook(now, null, null, id) }
+        }
+        if (currentNotebookId in ids) fallbackOffDeletedActive()
+    }
+
+    /**
+     * Soft-delete a single notebook as a STANDALONE tombstone (NULL batch/root, AC7.3). The row
+     * (plus its pages/strokes) stays in the DB, just filtered out of every live query, so it can
+     * be restored from the Recycle Bin (E3). If the active notebook is deleted, fall back off it.
      */
     fun deleteNotebook(notebookId: String) {
+        db.notebookQueries.softDeleteNotebook(clock(), null, null, notebookId)
+        if (currentNotebookId == notebookId) fallbackOffDeletedActive()
+    }
+
+    /**
+     * Soft-delete a folder and its whole subtree as one batch (AC7.2): the tapped folder + every
+     * descendant folder + every notebook in any of them get the same fresh [deleted_batch_id],
+     * and every row's [deleted_root_id] points at [folderId] (the folder the user tapped). One
+     * transaction so restore is atomic. The subtree is computed from LIVE folders BEFORE stamping
+     * (they're still live at this point). If the active notebook is in the cascade, fall back off it.
+     */
+    fun deleteFolder(folderId: String) {
+        val now = clock()
+        val batchId = Ulid.generate()
+        val subtree = listOf(folderId) + descendantFolderIds(folderId)
+        // Snapshot which live notebooks the cascade will tombstone, to decide the active fallback.
+        val affectedNotebookIds = db.notebookQueries.listNotebooks().executeAsList()
+            .filter { it.folder_id in subtree }
+            .map { it.id }
         db.transaction {
-            db.notebookQueries.deleteStrokesForNotebook(notebookId)
-            db.notebookQueries.deletePagesForNotebook(notebookId)
-            db.notebookQueries.deleteNotebook(notebookId)
+            db.notebookQueries.softDeleteFolders(now, batchId, folderId, subtree)
+            db.notebookQueries.softDeleteNotebooksInFolders(now, batchId, folderId, subtree)
         }
-        if (currentNotebookId == notebookId) {
-            val remaining = db.notebookQueries.listNotebooks().executeAsList()
-            if (remaining.isEmpty()) {
-                bootstrap() // recreates a fresh notebook + page and persists app_state
-            } else {
-                switchNotebook(remaining.first().id)
-            }
-        }
+        if (currentNotebookId in affectedNotebookIds) fallbackOffDeletedActive()
     }
 
     /**

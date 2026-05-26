@@ -67,7 +67,7 @@ class BulkNotebookOpsTest {
     private fun db(driver: JdbcSqliteDriver) = NotebookDatabase(driver)
 
     @Test
-    fun `bulkDelete removes notebooks, their pages and strokes, leaving no orphans`() {
+    fun `bulkDelete soft-deletes notebooks (vanish from live lists) but KEEPS pages and strokes for restore`() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val repo = NotebookRepository.forTesting(driver)
         val survivor = repo.currentNotebookId()
@@ -84,10 +84,13 @@ class BulkNotebookOpsTest {
 
         repo.bulkDeleteNotebooks(listOf(a, b))
 
-        assertEquals(0L, db(driver).notebookQueries.countPagesForNotebook(a).executeAsOne(), "A's pages gone")
-        assertEquals(0L, db(driver).notebookQueries.countPagesForNotebook(b).executeAsOne(), "B's pages gone")
-        assertEquals(0, db(driver).notebookQueries.getStrokesForPage(aPage).executeAsList().size, "A's strokes gone")
-        assertEquals(0, db(driver).notebookQueries.getStrokesForPage(bPage).executeAsList().size, "B's strokes gone")
+        // Soft delete: the notebooks disappear from the live list...
+        assertTrue(repo.listNotebooks().map { it.id }.none { it == a || it == b }, "A and B are gone from live lists")
+        // ...but their pages and strokes remain in the DB (E4 permanent-delete removes them).
+        assertEquals(1L, db(driver).notebookQueries.countPagesForNotebook(a).executeAsOne(), "A's page is kept")
+        assertEquals(1L, db(driver).notebookQueries.countPagesForNotebook(b).executeAsOne(), "B's page is kept")
+        assertEquals(1, db(driver).notebookQueries.getStrokesForPage(aPage).executeAsList().size, "A's stroke is kept")
+        assertEquals(1, db(driver).notebookQueries.getStrokesForPage(bPage).executeAsList().size, "B's stroke is kept")
         repo.switchNotebook(survivor)
         assertEquals(1, repo.loadStrokes().size, "survivor's stroke is untouched")
         repo.close()

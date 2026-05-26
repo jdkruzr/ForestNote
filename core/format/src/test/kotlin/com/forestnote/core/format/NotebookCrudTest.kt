@@ -76,9 +76,10 @@ class NotebookCrudTest {
         repo.close()
     }
 
-    /** AC2.3: deleteNotebook removes its pages and strokes transactionally (no orphans), others untouched. */
+    /** AC7/E2: deleteNotebook soft-deletes — the notebook leaves the live list but its pages and
+     * strokes are KEPT (restorable from the Recycle Bin); other notebooks are untouched. */
     @Test
-    fun deleteNotebookCascadesPagesAndStrokes() {
+    fun deleteNotebookSoftDeletesAndKeepsPagesAndStrokes() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val repo = NotebookRepository.forTesting(driver)
         val bootstrapId = repo.currentNotebookId()
@@ -93,16 +94,18 @@ class NotebookCrudTest {
 
         repo.deleteNotebook(victim)
 
-        // The victim's pages and strokes are gone (queried directly to prove no orphans).
+        // The victim vanishes from the live list...
+        assertTrue(repo.listNotebooks().none { it.id == victim }, "soft-deleted notebook leaves the live list")
+        // ...but its pages and strokes are retained for restore (E4 permanent-delete removes them).
         assertEquals(
-            0L,
+            1L,
             db(driver).notebookQueries.countPagesForNotebook(victim).executeAsOne(),
-            "deleted notebook has no pages"
+            "soft-deleted notebook keeps its page"
         )
         assertEquals(
-            0L,
+            2L,
             strokeCountForPage(driver, victimPage),
-            "deleted notebook's strokes are gone"
+            "soft-deleted notebook keeps its strokes"
         )
         // The bootstrap notebook is untouched.
         repo.switchNotebook(bootstrapId)
