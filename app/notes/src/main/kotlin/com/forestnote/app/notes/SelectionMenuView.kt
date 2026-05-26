@@ -17,8 +17,9 @@ import android.widget.TextView
  * selection's bounding box (or below when there's no room above).
  *
  * Built programmatically and styled like [ToolBar]'s dropdown (white bg, 1px border,
- * no elevation/animation) to stay e-ink friendly. Recognize/To-do are wired to
- * callbacks but stubbed by the caller until Settings (B1) provides a URL — Caveat 1.
+ * no elevation/animation) to stay e-ink friendly. Recognize/To-do fire callbacks; the
+ * caller (F1/F2) shows a placeholder dialog keyed on the configured endpoint URL — no
+ * network call yet (see [SelectionActionLogic]).
  */
 class SelectionMenuView(private val isEInk: Boolean) {
 

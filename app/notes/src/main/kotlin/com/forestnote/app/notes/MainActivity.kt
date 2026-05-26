@@ -177,8 +177,12 @@ class MainActivity : Activity() {
                     SelectionMenuView.Callbacks(
                         onCut = { drawView.cutSelection(clipboard) },
                         onCopy = { drawView.copySelection(clipboard) },
-                        onRecognize = { showSelectionActionStub("Recognize") },
-                        onTodo = { showSelectionActionStub("To-do") },
+                        onRecognize = {
+                            showSelectionAction { SelectionActionLogic.recognize(strokes.size, it.selectionRecognitionUrl) }
+                        },
+                        onTodo = {
+                            showSelectionAction { SelectionActionLogic.todo(strokes.size, it.caldavServerUrl) }
+                        },
                         onDelete = { drawView.deleteSelection() }
                     )
                 )
@@ -226,15 +230,20 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Stub for the lasso pill's Recognize / To-do actions (Caveat 1): both need a
-     * server URL from Settings (a later phase), so for now they explain that. No network.
+     * Placeholder dialog for the lasso pill's Recognize (F1) / To-do (F2) actions.
+     * Loads the current settings off-thread, then shows a message that varies by
+     * whether the relevant endpoint URL is configured (see [SelectionActionLogic]).
+     * No network call yet — these phases only wire up the UI.
      */
-    private fun showSelectionActionStub(action: String) {
-        AlertDialog.Builder(this)
-            .setTitle(action)
-            .setMessage("$action needs a server URL configured in Settings, which is coming in a later version.")
-            .setPositiveButton("OK", null)
-            .show()
+    private fun showSelectionAction(build: (com.forestnote.core.format.Settings) -> SelectionActionLogic.Dialog) {
+        store.loadSettings { settings ->
+            val dialog = build(settings)
+            AlertDialog.Builder(this)
+                .setTitle(dialog.title)
+                .setMessage(dialog.message)
+                .setPositiveButton("OK", null)
+                .show()
+        }
     }
 
     /**
