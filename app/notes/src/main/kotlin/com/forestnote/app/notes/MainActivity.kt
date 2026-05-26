@@ -317,10 +317,7 @@ class MainActivity : Activity() {
             onFolderProperties = { folder -> openFolderProperties(folder) },
             onOpenSettings = { openSettings() },
             onBulkMove = { ids -> showMoveTargetDialog(ids) },
-            // D3 stub: bulk delete lands in D3.
-            onBulkDelete = { ids ->
-                android.widget.Toast.makeText(this, "Delete ${ids.size} (coming in D3)", android.widget.Toast.LENGTH_SHORT).show()
-            }
+            onBulkDelete = { ids -> confirmBulkDelete(ids) }
         ))
     }
 
@@ -348,6 +345,30 @@ class MainActivity : Activity() {
                 .setNegativeButton("Cancel", null)
                 .show()
         }
+    }
+
+    /**
+     * Bulk-delete confirmation (D3): hard-delete the selected notebooks (and their pages +
+     * strokes) in one transaction. reloadCurrentPage() lets the editor follow if the active
+     * notebook was deleted (the repo has already switched it); then the Library reloads and
+     * select mode exits. Soft delete + recycle bin arrive in milestone E.
+     */
+    private fun confirmBulkDelete(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        val n = ids.size
+        val what = if (n == 1) "notebook" else "notebooks"
+        AlertDialog.Builder(this)
+            .setTitle("Delete $n $what")
+            .setMessage("Delete $n $what and all their pages?")
+            .setPositiveButton("Delete") { _, _ ->
+                store.bulkDeleteNotebooks(ids.toList()) {
+                    reloadCurrentPage()
+                    if (libraryView.isShowing) libraryView.reload()
+                    libraryView.exitSelectMode()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     /** Show the full-screen Settings overlay over the editor (B2). */

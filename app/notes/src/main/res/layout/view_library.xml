@@ -144,7 +144,8 @@
                 android:paddingBottom="2dp" />
         </LinearLayout>
 
-        <!-- Recycle Bin (greyed until the E area) -->
+        <!-- Recycle Bin: visible but disabled (greyed, non-clickable) until phase E3 wires the
+             actual bin view. D3 deletes are hard deletes — soft delete + the bin land in area E. -->
         <LinearLayout
             android:id="@+id/btn_library_recycle_bin"
             android:layout_width="wrap_content"

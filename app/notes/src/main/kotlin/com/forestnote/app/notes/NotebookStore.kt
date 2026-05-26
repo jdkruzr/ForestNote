@@ -344,6 +344,15 @@ class NotebookStore(
         }
     }
 
+    /** Hard-delete [ids] (and everything under them) in one transaction (D3); callback posted when done. */
+    fun bulkDeleteNotebooks(ids: List<String>, onDone: () -> Unit) {
+        executor.execute {
+            runCatching { repo?.bulkDeleteNotebooks(ids) }
+                .onFailure { android.util.Log.e(TAG, "failed to bulk delete notebooks", it) }
+            poster { onDone() }
+        }
+    }
+
     /** Load the global settings off-thread; posts the decoded value (defaults on failure). */
     fun loadSettings(onResult: (Settings) -> Unit) {
         executor.execute {

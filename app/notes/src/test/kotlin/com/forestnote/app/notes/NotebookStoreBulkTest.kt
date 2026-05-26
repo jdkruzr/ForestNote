@@ -47,6 +47,23 @@ class NotebookStoreBulkTest {
     }
 
     @Test
+    fun `bulkDeleteNotebooks removes notebooks and the callback fires`() {
+        val store = freshStore()
+        val a = await<String> { cb -> store.createNotebook("A", null) { cb(it) } }
+        val b = await<String> { cb -> store.createNotebook("B", null) { cb(it) } }
+
+        var done = false
+        await<Unit> { cb -> store.bulkDeleteNotebooks(listOf(a, b)) { done = true; cb(Unit) } }
+
+        val atRoot = await<List<NotebookCard>> { cb -> store.listNotebookCardsInFolder(null) { cb(it) } }
+        store.shutdown()
+
+        assertTrue(done, "onDone callback fired")
+        val ids = atRoot.map { it.id }.toSet()
+        assertTrue(a !in ids && b !in ids, "deleted notebooks are gone from root")
+    }
+
+    @Test
     fun `listAllFolders returns the full set`() {
         val store = freshStore()
         await<String> { cb -> store.createFolder("One", null) { cb(it) } }

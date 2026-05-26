@@ -26,3 +26,13 @@ Manual verification to run on the AiPaper Mini before merging + tagging each pha
 - [ ] After a move the Library reloads and select mode exits (selection cleared).
 - [ ] Cancel leaves everything unchanged.
 - [ ] Moving a notebook into the folder it's already in is harmless (no dupe/loss).
+
+## D3 — Bulk delete (hard delete)  (branch `feature/library-tools-d3`, tag `phase-D3-bulk-delete`)
+- [ ] Select ≥1 notebook → **Delete** shows a confirmation ("Delete N notebooks and all their pages?").
+- [ ] Confirm → the selected notebooks (and their pages/strokes) are gone; Library reloads, select mode exits.
+- [ ] Cancel leaves everything intact.
+- [ ] Deleting the set that **includes the currently-open notebook** → the editor falls back
+      cleanly to a surviving notebook (no crash, no blank/dangling page).
+- [ ] Deleting **every** notebook → a fresh blank notebook is created automatically (never zero).
+- [ ] The **Recycle bin** header cell stays visible-but-greyed and does nothing (enabled in E3).
+- [ ] Confirm deletes are permanent this phase (no bin yet) — sanity-check before relying on it.
