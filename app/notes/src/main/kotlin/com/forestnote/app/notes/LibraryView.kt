@@ -36,6 +36,9 @@ class LibraryView {
     private var loader: ThumbnailLoader? = null
     private var store: NotebookStore? = null
     private var adapter: LibraryAdapter? = null
+    private var breadcrumbView: BreadcrumbView? = null
+    // The folder the back chevron walks up to (one level up), set from the last path resolution.
+    private var backTarget: String? = null
 
     /** The folder currently being viewed (null = root). Read by MainActivity for create-in-folder. */
     var currentFolderId: String? = null
@@ -67,17 +70,22 @@ class LibraryView {
         adapter = libraryAdapter
         grid.adapter = libraryAdapter
 
+        breadcrumbView = BreadcrumbView(view.findViewById(R.id.breadcrumb_container)) { folderId ->
+            currentFolderId = folderId
+            reload()
+        }
+
         view.findViewById<View>(R.id.btn_library_settings).setOnClickListener { callbacks.onOpenSettings() }
         view.findViewById<View>(R.id.btn_library_add_notebook).setOnClickListener { callbacks.onNewNotebook() }
 
-        // +Folder is enabled this phase; back chevron exits to root.
+        // +Folder is enabled this phase; back chevron walks up one parent level (C5).
         view.findViewById<View>(R.id.btn_library_add_folder).apply {
             isEnabled = true
             alpha = 1f
             setOnClickListener { callbacks.onNewFolder() }
         }
         view.findViewById<View>(R.id.btn_library_back).setOnClickListener {
-            currentFolderId = null
+            currentFolderId = backTarget
             reload()
         }
 
@@ -90,9 +98,21 @@ class LibraryView {
         val store = store ?: return
         val adapter = adapter ?: return
         val folderId = currentFolderId
-        // Back chevron visible only when inside a folder.
-        view.findViewById<View>(R.id.btn_library_back).visibility =
-            if (folderId == null) View.GONE else View.VISIBLE
+        val backChevron = view.findViewById<View>(R.id.btn_library_back)
+
+        // Resolve the breadcrumb path + back target for the current folder.
+        if (folderId == null) {
+            backTarget = null
+            backChevron.visibility = View.GONE
+            breadcrumbView?.render(emptyList())
+        } else {
+            store.folderPath(folderId) { path ->
+                backTarget = BreadcrumbLogic.backTargetId(path)
+                backChevron.visibility = View.VISIBLE
+                breadcrumbView?.render(path)
+            }
+        }
+
         store.listFolderCardsForParent(folderId) { folders ->
             store.listNotebookCardsInFolder(folderId) { notebooks ->
                 val items = folders.map { LibraryItem.Folder(it) } + notebooks.map { LibraryItem.Notebook(it) }
@@ -115,6 +135,8 @@ class LibraryView {
         host = null
         store = null
         adapter = null
+        breadcrumbView = null
+        backTarget = null
         currentFolderId = null
     }
 
