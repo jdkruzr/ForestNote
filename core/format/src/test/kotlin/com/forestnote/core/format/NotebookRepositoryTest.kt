@@ -437,4 +437,29 @@ class NotebookRepositoryTest {
         assertEquals("Second", cards.first { it.id == secondId }.name, "card carries the notebook name")
         repo.close()
     }
+
+    // -- thumbnail source reads (C3b) ---------------------------------------
+
+    @Test
+    fun firstPageAndStrokeReadsForThumbnails() {
+        // AC4.2: arbitrary-page reads the thumbnail pipeline needs, without changing context.
+        val repo = createRepository()
+        val firstPage = repo.currentPageId()
+        assertEquals(firstPage, repo.firstPageIdForNotebook(repo.currentNotebookId()),
+            "firstPageIdForNotebook returns the bootstrap notebook's first page")
+
+        val a = Stroke(points = listOf(StrokePoint(1, 2, 500, 0L), StrokePoint(3, 4, 500, 1L)))
+        val b = Stroke(points = listOf(StrokePoint(5, 6, 500, 2L)))
+        repo.saveStroke(a)
+        repo.saveStroke(b)
+
+        assertEquals(2L, repo.countStrokesForPage(firstPage), "two strokes counted on the page")
+
+        val loaded = repo.loadStrokesForPage(firstPage)
+        assertEquals(setOf(a.id, b.id), loaded.map { it.id }.toSet(), "arbitrary-page load round-trips ids")
+        assertEquals(a.points, loaded.first { it.id == a.id }.points, "points round-trip")
+
+        assertEquals(null, repo.firstPageIdForNotebook("nope"), "unknown notebook → null first page")
+        repo.close()
+    }
 }

@@ -140,6 +140,13 @@ DELETE FROM stroke WHERE page_id IN (SELECT id FROM page WHERE notebook_id = ?);
 getStrokesForPage:
 SELECT * FROM stroke WHERE page_id = ? ORDER BY z ASC;
 
+-- First page of a notebook (for its Library thumbnail).
+firstPageIdForNotebook:
+SELECT id FROM page WHERE notebook_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1;
+
+countStrokesForPage:
+SELECT count(*) FROM stroke WHERE page_id = ?;
+
 nextZForPage:
 SELECT coalesce(max(z), -1) + 1 FROM stroke WHERE page_id = ?;
 

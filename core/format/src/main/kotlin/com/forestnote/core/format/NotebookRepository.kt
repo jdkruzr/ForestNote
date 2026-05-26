@@ -431,6 +431,26 @@ class NotebookRepository private constructor(
             }
     }
 
+    /** First page id of [notebookId] (the one a thumbnail renders), or null if none. */
+    fun firstPageIdForNotebook(notebookId: String): String? =
+        db.notebookQueries.firstPageIdForNotebook(notebookId).executeAsOneOrNull()
+
+    /** Stroke count on [pageId] — a cheap input to the thumbnail cache key. */
+    fun countStrokesForPage(pageId: String): Long =
+        db.notebookQueries.countStrokesForPage(pageId).executeAsOne()
+
+    /** Load strokes for an arbitrary page without changing the active page context. */
+    fun loadStrokesForPage(pageId: String): List<Stroke> =
+        db.notebookQueries.getStrokesForPage(pageId).executeAsList().map { row ->
+            Stroke(
+                id = row.id,
+                points = StrokeSerializer.decode(row.points),
+                color = row.color.toInt(),
+                penWidthMin = row.pen_width_min.toInt(),
+                penWidthMax = row.pen_width_max.toInt()
+            )
+        }
+
     /**
      * Delete a single stroke by its stable ULID. Used by stroke eraser.
      */
