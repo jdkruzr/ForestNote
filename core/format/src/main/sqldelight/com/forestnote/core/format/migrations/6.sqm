@@ -1,0 +1,18 @@
+-- v6 -> v7: Soft-delete (Recycle Bin, AC7). NON-destructive.
+--  * folder/notebook gain deleted_at / deleted_batch_id / deleted_root_id (all nullable).
+--    NULL deleted_at = live; existing rows are all live, so no backfill is needed.
+--  * deleted_at indexes for the bin/live filters.
+-- The notebook_live / folder_live VIEWs must be created HERE too: SQLDelight only emits
+-- CREATE VIEW in Schema.create() (fresh installs), never in migrate(), so an upgrading
+-- device would otherwise lack the views the repointed live queries read from. create() and
+-- migrate() never both run on one DB, so this does not conflict with the .sq definitions.
+ALTER TABLE folder ADD COLUMN deleted_at INTEGER;
+ALTER TABLE folder ADD COLUMN deleted_batch_id TEXT;
+ALTER TABLE folder ADD COLUMN deleted_root_id TEXT;
+ALTER TABLE notebook ADD COLUMN deleted_at INTEGER;
+ALTER TABLE notebook ADD COLUMN deleted_batch_id TEXT;
+ALTER TABLE notebook ADD COLUMN deleted_root_id TEXT;
+CREATE INDEX folder_deleted_at ON folder(deleted_at);
+CREATE INDEX notebook_deleted_at ON notebook(deleted_at);
+CREATE VIEW notebook_live AS SELECT * FROM notebook WHERE deleted_at IS NULL;
+CREATE VIEW folder_live AS SELECT * FROM folder WHERE deleted_at IS NULL;

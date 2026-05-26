@@ -56,6 +56,8 @@ class MainActivity : Activity() {
     // Full-screen Library overlay (C3a). Like settingsView, reuses this Activity's single
     // store; reached by tapping the notebook label and dismissed by the system back button.
     private val libraryView = LibraryView()
+    // Full-screen Recycle Bin overlay (E3). Opened from the Library header; system back closes it.
+    private val recycleBinView = RecycleBinView()
     // Shared with DrawView (same instance); DrawView updates its extents on layout, so
     // virtualLongAxis is current by the time paste() reads it for the in-bounds offset.
     private val pageTransform = PageTransform()
@@ -316,6 +318,7 @@ class MainActivity : Activity() {
             onNewFolder = { promptNewFolder(libraryView.currentFolderId) },
             onFolderProperties = { folder -> openFolderProperties(folder) },
             onOpenSettings = { openSettings() },
+            onOpenRecycleBin = { openRecycleBin() },
             onBulkMove = { ids -> showMoveTargetDialog(ids) },
             onBulkDelete = { ids -> confirmBulkDelete(ids) }
         ))
@@ -323,6 +326,19 @@ class MainActivity : Activity() {
 
     /** Dismiss the Library overlay and return to the editor. */
     private fun closeLibrary() { libraryView.hide() }
+
+    /** Show the full-screen Recycle Bin overlay over the Library (E3). */
+    private fun openRecycleBin() {
+        if (recycleBinView.isShowing) return
+        val content = findViewById<android.view.ViewGroup>(android.R.id.content)
+        recycleBinView.show(content, store) { closeRecycleBin() }
+    }
+
+    /** Dismiss the Recycle Bin and refresh the Library (restored items / badge). */
+    private fun closeRecycleBin() {
+        recycleBinView.hide()
+        if (libraryView.isShowing) libraryView.reload()
+    }
 
     /**
      * Bulk-move dialog (D2): pick a destination folder (or Library root) for the selected
@@ -348,10 +364,10 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Bulk-delete confirmation (D3): hard-delete the selected notebooks (and their pages +
-     * strokes) in one transaction. reloadCurrentPage() lets the editor follow if the active
-     * notebook was deleted (the repo has already switched it); then the Library reloads and
-     * select mode exits. Soft delete + recycle bin arrive in milestone E.
+     * Bulk-delete confirmation (D3 → E2): soft-delete the selected notebooks (standalone
+     * tombstones) into the Recycle Bin in one transaction. reloadCurrentPage() lets the editor
+     * follow if the active notebook was deleted (the repo has already switched it); then the
+     * Library reloads and select mode exits. Items are restorable from the Recycle Bin (E3).
      */
     private fun confirmBulkDelete(ids: Set<String>) {
         if (ids.isEmpty()) return
@@ -359,7 +375,7 @@ class MainActivity : Activity() {
         val what = if (n == 1) "notebook" else "notebooks"
         AlertDialog.Builder(this)
             .setTitle("Delete $n $what")
-            .setMessage("Delete $n $what and all their pages?")
+            .setMessage("Move $n $what to the Recycle Bin?")
             .setPositiveButton("Delete") { _, _ ->
                 store.bulkDeleteNotebooks(ids.toList()) {
                     reloadCurrentPage()
@@ -465,6 +481,10 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        if (recycleBinView.isShowing) {
+            closeRecycleBin()
+            return
+        }
         if (settingsView.isShowing) {
             closeSettings()
             return
@@ -514,8 +534,9 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Folder Properties (C4): a minimal rename dialog. No Delete — folder soft-delete is
-     * the E/recycle-bin area, out of scope here (AC4.5's delete clause for folders).
+     * Folder Properties (C4 + E3): rename, plus Delete which soft-deletes the folder and its
+     * whole subtree into the Recycle Bin (AC5.4/AC7.2). The repo bounces the active notebook
+     * off any tombstoned descendant, so reloadCurrentPage() lets the editor follow.
      */
     private fun openFolderProperties(folder: FolderCard) {
         val input = EditText(this).apply { setText(folder.name) }
@@ -526,6 +547,21 @@ class MainActivity : Activity() {
                 val name = input.text.toString().trim().ifEmpty { folder.name }
                 if (name != folder.name) {
                     store.renameFolder(folder.id, name) { libraryView.reload() }
+                }
+            }
+            .setNeutralButton("Delete") { _, _ -> confirmDeleteFolder(folder) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun confirmDeleteFolder(folder: FolderCard) {
+        AlertDialog.Builder(this)
+            .setTitle("Delete Folder")
+            .setMessage("Move \"${folder.name}\" and everything inside it to the Recycle Bin?")
+            .setPositiveButton("Delete") { _, _ ->
+                store.deleteFolder(folder.id) {
+                    reloadCurrentPage()
+                    if (libraryView.isShowing) libraryView.reload()
                 }
             }
             .setNegativeButton("Cancel", null)
@@ -571,7 +607,7 @@ class MainActivity : Activity() {
     private fun confirmDeleteNotebook(notebook: NotebookMeta) {
         AlertDialog.Builder(this)
             .setTitle("Delete Notebook")
-            .setMessage("Delete \"${notebook.name}\" and all its pages?")
+            .setMessage("Move \"${notebook.name}\" to the Recycle Bin?")
             .setPositiveButton("Delete") { _, _ ->
                 store.deleteNotebook(notebook.id) {
                     // Repo already switched to a remaining/bootstrapped notebook.

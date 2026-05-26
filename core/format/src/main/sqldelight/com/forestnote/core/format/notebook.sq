@@ -6,9 +6,15 @@ CREATE TABLE folder (
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     modified_at INTEGER NOT NULL DEFAULT 0,
-    parent_folder_id TEXT REFERENCES folder(id)  -- NULL = root-level folder
+    parent_folder_id TEXT REFERENCES folder(id),  -- NULL = root-level folder
+    -- Soft-delete (Recycle Bin, AC7). NULL deleted_at = live. deleted_batch_id groups a
+    -- folder-delete cascade; deleted_root_id points at the folder the user tapped Delete on.
+    deleted_at INTEGER,
+    deleted_batch_id TEXT,
+    deleted_root_id TEXT
 );
 CREATE INDEX folder_parent_folder_id ON folder(parent_folder_id);
+CREATE INDEX folder_deleted_at ON folder(deleted_at);
 
 -- Notebook table: a named, ordered collection of pages.
 CREATE TABLE notebook (
@@ -17,9 +23,15 @@ CREATE TABLE notebook (
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     modified_at INTEGER NOT NULL DEFAULT 0,  -- bumped on every ink mutation; backfilled = created_at
-    folder_id TEXT REFERENCES folder(id)     -- NULL = root (no folder)
+    folder_id TEXT REFERENCES folder(id),    -- NULL = root (no folder)
+    -- Soft-delete (Recycle Bin, AC7). NULL deleted_at = live. A standalone notebook delete
+    -- has NULL deleted_batch_id/deleted_root_id; a folder-cascade delete stamps both.
+    deleted_at INTEGER,
+    deleted_batch_id TEXT,
+    deleted_root_id TEXT
 );
 CREATE INDEX notebook_folder_id ON notebook(folder_id);
+CREATE INDEX notebook_deleted_at ON notebook(deleted_at);
 
 -- Page table: each page belongs to exactly one notebook.
 CREATE TABLE page (
@@ -56,10 +68,16 @@ CREATE TABLE app_state (
     clipboard_json TEXT                        -- persisted cross-notebook clipboard (NULL = empty); wired in a later phase
 );
 
+-- Live (non-tombstoned) rows. Every query that should ignore soft-deleted rows reads
+-- from these views instead of the base table, so the deleted_at filter can't be
+-- forgotten on a future query (AC7.1). Writes still go to the base tables.
+CREATE VIEW notebook_live AS SELECT * FROM notebook WHERE deleted_at IS NULL;
+CREATE VIEW folder_live AS SELECT * FROM folder WHERE deleted_at IS NULL;
+
 -- notebooks --
 
 listNotebooks:
-SELECT * FROM notebook ORDER BY sort_order ASC, created_at ASC;
+SELECT * FROM notebook_live ORDER BY sort_order ASC, created_at ASC;
 
 insertNotebook:
 INSERT INTO notebook(id, name, sort_order, created_at, modified_at, folder_id) VALUES (?, ?, ?, ?, ?, ?);
@@ -74,13 +92,34 @@ touchNotebook:
 UPDATE notebook SET modified_at = ? WHERE id = ?;
 
 selectNotebookModifiedAt:
-SELECT modified_at FROM notebook WHERE id = ?;
+SELECT modified_at FROM notebook_live WHERE id = ?;
 
 deleteNotebook:
 DELETE FROM notebook WHERE id = ?;
 
+-- Soft-delete (Recycle Bin, E2). Stamp the tombstone columns instead of removing the row.
+-- A standalone notebook delete passes NULL batch/root; a folder cascade passes both.
+softDeleteNotebook:
+UPDATE notebook SET deleted_at = ?, deleted_batch_id = ?, deleted_root_id = ? WHERE id = ?;
+
+-- Soft-delete every LIVE notebook whose folder_id is in the deleted folder subtree (cascade).
+-- The `deleted_at IS NULL` guard is essential: a notebook already tombstoned on its own
+-- (standalone bin entry) must NOT be absorbed into this folder's batch.
+softDeleteNotebooksInFolders:
+UPDATE notebook SET deleted_at = ?, deleted_batch_id = ?, deleted_root_id = ?
+WHERE folder_id IN ? AND deleted_at IS NULL;
+
+-- All tombstoned notebooks (for the Recycle Bin, E3). Not filtered by the _live view.
+listTombstonedNotebooks:
+SELECT * FROM notebook WHERE deleted_at IS NOT NULL;
+
+-- Restore a notebook from the bin (clear tombstone) and place it in [folder_id] (NULL = root).
+-- The caller reconciles folder_id against live folders (RecycleBinLogic.restoreFolderFor).
+restoreNotebookWithFolder:
+UPDATE notebook SET deleted_at = NULL, deleted_batch_id = NULL, deleted_root_id = NULL, folder_id = ? WHERE id = ?;
+
 nextNotebookSortOrder:
-SELECT coalesce(max(sort_order), -1) + 1 FROM notebook;
+SELECT coalesce(max(sort_order), -1) + 1 FROM notebook_live;
 
 -- One row per notebook (scoped to a folder, NULL = root) with its page count, for the
 -- Library grid. The correlated subquery avoids an N+1 of countPages() per card.
@@ -91,7 +130,7 @@ SELECT
     n.created_at,
     n.modified_at,
     (SELECT count(*) FROM page WHERE page.notebook_id = n.id) AS page_count
-FROM notebook n
+FROM notebook_live n
 WHERE n.folder_id IS ?
 ORDER BY n.sort_order ASC, n.created_at ASC;
 
@@ -103,21 +142,21 @@ SELECT
     f.name,
     f.sort_order,
     f.parent_folder_id,
-    (SELECT count(*) FROM notebook WHERE notebook.folder_id = f.id) AS notebook_count
-FROM folder f
+    (SELECT count(*) FROM notebook_live WHERE notebook_live.folder_id = f.id) AS notebook_count
+FROM folder_live f
 WHERE f.parent_folder_id IS ?
 ORDER BY f.sort_order ASC, f.created_at ASC;
 
 -- folders --
 
 listAllFolders:
-SELECT * FROM folder ORDER BY sort_order ASC, created_at ASC;
+SELECT * FROM folder_live ORDER BY sort_order ASC, created_at ASC;
 
 getFoldersForParent:
-SELECT * FROM folder WHERE parent_folder_id IS ? ORDER BY sort_order ASC, created_at ASC;
+SELECT * FROM folder_live WHERE parent_folder_id IS ? ORDER BY sort_order ASC, created_at ASC;
 
 findFolder:
-SELECT * FROM folder WHERE id = ?;
+SELECT * FROM folder_live WHERE id = ?;
 
 insertFolder:
 INSERT INTO folder(id, name, sort_order, created_at, modified_at, parent_folder_id)
@@ -126,8 +165,26 @@ VALUES (?, ?, ?, ?, ?, ?);
 renameFolder:
 UPDATE folder SET name = ? WHERE id = ?;
 
+-- Soft-delete every folder in a deleted subtree (the tapped folder + its descendants),
+-- all sharing one deleted_batch_id and pointing deleted_root_id at the tapped folder (E2).
+softDeleteFolders:
+UPDATE folder SET deleted_at = ?, deleted_batch_id = ?, deleted_root_id = ? WHERE id IN ?;
+
+-- All tombstoned folders (for the Recycle Bin, E3). Not filtered by the _live view.
+listTombstonedFolders:
+SELECT * FROM folder WHERE deleted_at IS NOT NULL;
+
+-- Restore a folder from the bin (clear tombstone). Folder restore is done id-by-id over a batch.
+clearFolderTombstone:
+UPDATE folder SET deleted_at = NULL, deleted_batch_id = NULL, deleted_root_id = NULL WHERE id = ?;
+
+-- Permanently remove a folder row (E3 permanent delete / E4 empty + purge). Notebooks are
+-- removed via the notebook hard-delete path; folders have no children of their own to cascade.
+hardDeleteFolder:
+DELETE FROM folder WHERE id = ?;
+
 nextFolderSortOrder:
-SELECT coalesce(max(sort_order), -1) + 1 FROM folder WHERE parent_folder_id IS ?;
+SELECT coalesce(max(sort_order), -1) + 1 FROM folder_live WHERE parent_folder_id IS ?;
 
 -- pages (scoped by notebook) --
 

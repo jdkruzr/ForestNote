@@ -164,6 +164,9 @@ class NotebookRepository private constructor(
             ?.takeIf { id -> pages.any { it.id == id } }
             ?: pages.first().id
         persistActive()
+        // Retention (E4): purge bin entries older than Settings.recycleBinRetentionDays (no-op
+        // when 0/off). Runs once per launch, here, after the DB is open and active is restored.
+        purgeExpiredBinEntries(now)
         // Freeze any legacy "inherit" pages (template IS NULL) to the current global
         // default once, so changing the default later no longer changes them (B4
         // freeze-at-creation). Idempotent: new pages are always concrete.
@@ -354,45 +357,168 @@ class NotebookRepository private constructor(
     }
 
     /**
-     * Hard-delete every notebook in [ids] (children-first, no FK-cascade reliance) in one
-     * transaction (D3). The active-notebook fallback is decided ONCE after the whole batch:
-     * a per-id fallback could switch to a survivor that's deleted later in the same batch,
-     * leaving a dangling active id. If the active notebook was in the set, switch to a
-     * remaining one, or bootstrap a fresh notebook + page (never zero notebooks).
+     * If the active notebook just got tombstoned, move off it: switch to a remaining live
+     * notebook, or bootstrap a fresh one (never zero LIVE notebooks, AC7/E1). `listNotebooks`
+     * reads `notebook_live`, so "remaining"/"empty" already means live-only. Decided ONCE after
+     * a batch — a per-id fallback could land on a notebook tombstoned later in the same batch.
+     */
+    private fun fallbackOffDeletedActive() {
+        val remaining = db.notebookQueries.listNotebooks().executeAsList()
+        if (remaining.isEmpty()) bootstrap() else switchNotebook(remaining.first().id)
+    }
+
+    /**
+     * Soft-delete every notebook in [ids] as a STANDALONE tombstone (NULL batch/root) in one
+     * transaction (D3 → E2). RESOLVED (design): do NOT share a batch id across the selection —
+     * a shared non-null batch id would make these match neither Recycle Bin batch-top case
+     * (AC7.3) and they'd vanish from the bin. Pages/strokes are left in place (restorable);
+     * permanent delete (E4) removes them. Active-notebook fallback decided once after the batch.
      */
     fun bulkDeleteNotebooks(ids: List<String>) {
         if (ids.isEmpty()) return
+        val now = clock()
         db.transaction {
-            ids.forEach { id ->
-                db.notebookQueries.deleteStrokesForNotebook(id)
-                db.notebookQueries.deletePagesForNotebook(id)
-                db.notebookQueries.deleteNotebook(id)
-            }
+            ids.forEach { id -> db.notebookQueries.softDeleteNotebook(now, null, null, id) }
         }
-        if (currentNotebookId in ids) {
-            val remaining = db.notebookQueries.listNotebooks().executeAsList()
-            if (remaining.isEmpty()) bootstrap() else switchNotebook(remaining.first().id)
+        if (currentNotebookId in ids) fallbackOffDeletedActive()
+    }
+
+    /**
+     * Soft-delete a single notebook as a STANDALONE tombstone (NULL batch/root, AC7.3). The row
+     * (plus its pages/strokes) stays in the DB, just filtered out of every live query, so it can
+     * be restored from the Recycle Bin (E3). If the active notebook is deleted, fall back off it.
+     */
+    fun deleteNotebook(notebookId: String) {
+        db.notebookQueries.softDeleteNotebook(clock(), null, null, notebookId)
+        if (currentNotebookId == notebookId) fallbackOffDeletedActive()
+    }
+
+    /**
+     * Soft-delete a folder and its whole subtree as one batch (AC7.2): the tapped folder + every
+     * descendant folder + every notebook in any of them get the same fresh [deleted_batch_id],
+     * and every row's [deleted_root_id] points at [folderId] (the folder the user tapped). One
+     * transaction so restore is atomic. The subtree is computed from LIVE folders BEFORE stamping
+     * (they're still live at this point). If the active notebook is in the cascade, fall back off it.
+     */
+    fun deleteFolder(folderId: String) {
+        val now = clock()
+        val batchId = Ulid.generate()
+        val subtree = listOf(folderId) + descendantFolderIds(folderId)
+        // Snapshot which live notebooks the cascade will tombstone, to decide the active fallback.
+        val affectedNotebookIds = db.notebookQueries.listNotebooks().executeAsList()
+            .filter { it.folder_id in subtree }
+            .map { it.id }
+        db.transaction {
+            db.notebookQueries.softDeleteFolders(now, batchId, folderId, subtree)
+            db.notebookQueries.softDeleteNotebooksInFolders(now, batchId, folderId, subtree)
+        }
+        if (currentNotebookId in affectedNotebookIds) fallbackOffDeletedActive()
+    }
+
+    // -- Recycle Bin (E3/E4) -----------------------------------------------
+
+    private fun tombstonedFolders(): List<DeletedFolder> =
+        db.notebookQueries.listTombstonedFolders().executeAsList().map {
+            DeletedFolder(it.id, it.name, it.deleted_at ?: 0L, it.deleted_batch_id, it.deleted_root_id, it.parent_folder_id)
+        }
+
+    private fun tombstonedNotebooks(): List<DeletedNotebook> =
+        db.notebookQueries.listTombstonedNotebooks().executeAsList().map {
+            DeletedNotebook(it.id, it.name, it.deleted_at ?: 0L, it.deleted_batch_id, it.deleted_root_id, it.folder_id)
+        }
+
+    private fun liveFolderIds(): Set<String> =
+        db.notebookQueries.listAllFolders().executeAsList().map { it.id }.toSet()
+
+    /** Hard-remove a notebook and its pages/strokes (children-first; FKs are off). */
+    private fun hardDeleteNotebookRow(notebookId: String) {
+        db.notebookQueries.deleteStrokesForNotebook(notebookId)
+        db.notebookQueries.deletePagesForNotebook(notebookId)
+        db.notebookQueries.deleteNotebook(notebookId)
+    }
+
+    /** The Recycle Bin's top-level entries, newest first (AC7.3). */
+    fun recycleBinEntries(): List<BinEntry> =
+        RecycleBinLogic.entries(tombstonedFolders(), tombstonedNotebooks())
+
+    /** Number of bin entries (for the Library badge, AC4.6). */
+    fun recycleBinCount(): Int = recycleBinEntries().size
+
+    /**
+     * Restore a bin entry (AC7.4). A standalone notebook returns to its original folder if
+     * that folder is still live, else to root (AC7.6). A folder entry restores its whole batch:
+     * folders first (so the notebooks can reconcile against the now-live folders), then each
+     * batch notebook to its reconciled folder. Restore never touches the active context (the
+     * active notebook is always live, never a tombstone).
+     */
+    fun restoreEntry(entry: BinEntry) {
+        when (entry.kind) {
+            BinKind.NOTEBOOK -> {
+                val nb = tombstonedNotebooks().firstOrNull { it.id == entry.id } ?: return
+                val dest = RecycleBinLogic.restoreFolderFor(nb.folderId, liveFolderIds())
+                db.notebookQueries.restoreNotebookWithFolder(dest, nb.id)
+            }
+            BinKind.FOLDER -> {
+                val batchId = entry.deletedBatchId ?: return
+                val members = RecycleBinLogic.batchMemberIds(batchId, tombstonedFolders(), tombstonedNotebooks())
+                val batchNotebooks = tombstonedNotebooks().filter { it.id in members.notebookIds }
+                db.transaction {
+                    members.folderIds.forEach { db.notebookQueries.clearFolderTombstone(it) }
+                    val live = liveFolderIds() // includes the just-restored batch folders
+                    batchNotebooks.forEach { nb ->
+                        val dest = RecycleBinLogic.restoreFolderFor(nb.folderId, live)
+                        db.notebookQueries.restoreNotebookWithFolder(dest, nb.id)
+                    }
+                }
+            }
         }
     }
 
     /**
-     * Delete a notebook and everything under it in one transaction (no FK-cascade
-     * reliance, AC2.3). If the active notebook is deleted, switch to a remaining one;
-     * if none remain, bootstrap a fresh notebook + page (never zero notebooks, AC2.4).
+     * Permanently delete a bin entry and everything in its batch (AC7.4). For a folder entry,
+     * every batch notebook (with its pages/strokes) and every batch folder is hard-removed.
      */
-    fun deleteNotebook(notebookId: String) {
-        db.transaction {
-            db.notebookQueries.deleteStrokesForNotebook(notebookId)
-            db.notebookQueries.deletePagesForNotebook(notebookId)
-            db.notebookQueries.deleteNotebook(notebookId)
-        }
-        if (currentNotebookId == notebookId) {
-            val remaining = db.notebookQueries.listNotebooks().executeAsList()
-            if (remaining.isEmpty()) {
-                bootstrap() // recreates a fresh notebook + page and persists app_state
-            } else {
-                switchNotebook(remaining.first().id)
+    fun permanentlyDelete(entry: BinEntry) {
+        when (entry.kind) {
+            BinKind.NOTEBOOK -> db.transaction { hardDeleteNotebookRow(entry.id) }
+            BinKind.FOLDER -> {
+                val batchId = entry.deletedBatchId ?: return
+                val members = RecycleBinLogic.batchMemberIds(batchId, tombstonedFolders(), tombstonedNotebooks())
+                db.transaction {
+                    members.notebookIds.forEach { hardDeleteNotebookRow(it) }
+                    members.folderIds.forEach { db.notebookQueries.hardDeleteFolder(it) }
+                }
             }
+        }
+    }
+
+    /** Permanently delete everything in the bin (AC7.5). One transaction. */
+    fun emptyRecycleBin() {
+        val notebooks = db.notebookQueries.listTombstonedNotebooks().executeAsList()
+        val folders = db.notebookQueries.listTombstonedFolders().executeAsList()
+        db.transaction {
+            notebooks.forEach { hardDeleteNotebookRow(it.id) }
+            folders.forEach { db.notebookQueries.hardDeleteFolder(it.id) }
+        }
+    }
+
+    /**
+     * Retention policy (E4): if `Settings.recycleBinRetentionDays > 0`, permanently delete bin
+     * rows tombstoned longer than that many days. Called once from `bootstrap()` at launch.
+     * A folder batch purges atomically because every row in it shares one `deleted_at`.
+     */
+    fun purgeExpiredBinEntries(now: Long) {
+        val days = settings().recycleBinRetentionDays
+        if (days <= 0) return
+        val cutoff = now - days.toLong() * 86_400_000L
+        val notebooks = db.notebookQueries.listTombstonedNotebooks().executeAsList()
+            .filter { (it.deleted_at ?: Long.MAX_VALUE) < cutoff }
+        val folders = db.notebookQueries.listTombstonedFolders().executeAsList()
+            .filter { (it.deleted_at ?: Long.MAX_VALUE) < cutoff }
+        if (notebooks.isEmpty() && folders.isEmpty()) return
+        db.transaction {
+            notebooks.forEach { hardDeleteNotebookRow(it.id) }
+            folders.forEach { db.notebookQueries.hardDeleteFolder(it.id) }
         }
     }
 

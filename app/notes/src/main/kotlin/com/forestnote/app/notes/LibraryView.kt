@@ -29,6 +29,7 @@ class LibraryView {
         val onNewFolder: () -> Unit,
         val onFolderProperties: (FolderCard) -> Unit,
         val onOpenSettings: () -> Unit,
+        val onOpenRecycleBin: () -> Unit,
         // Bulk actions on the current selection (D1 wires the UI; D2/D3 fill in the dialogs).
         val onBulkMove: (Set<String>) -> Unit,
         val onBulkDelete: (Set<String>) -> Unit
@@ -94,6 +95,13 @@ class LibraryView {
 
         view.findViewById<View>(R.id.btn_library_settings).setOnClickListener { callbacks.onOpenSettings() }
         view.findViewById<View>(R.id.btn_library_add_notebook).setOnClickListener { callbacks.onNewNotebook() }
+
+        // Recycle Bin: enabled this phase (E3). The count badge is filled in by reload().
+        view.findViewById<View>(R.id.btn_library_recycle_bin).apply {
+            isEnabled = true
+            alpha = 1f
+            setOnClickListener { callbacks.onOpenRecycleBin() }
+        }
 
         // +Folder is enabled this phase; back chevron walks up one parent level (C5).
         view.findViewById<View>(R.id.btn_library_add_folder).apply {
@@ -165,6 +173,13 @@ class LibraryView {
             val nb = if (notebookCount == 1) "1 notebook" else "$notebookCount notebooks"
             val fl = if (folderCount == 1) "1 folder" else "$folderCount folders"
             view.findViewById<TextView>(R.id.text_item_count).text = "$nb across $fl total"
+        }
+
+        // Recycle Bin count badge: caption shows "Recycle (N)" when non-empty (AC4.6).
+        store.recycleBinCount { n ->
+            if (root !== view) return@recycleBinCount
+            view.findViewById<TextView>(R.id.text_recycle_bin_caption).text =
+                if (n > 0) "Recycle ($n)" else "Recycle"
         }
     }
 

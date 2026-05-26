@@ -163,6 +163,17 @@
                 android:hint="https://…"
                 android:inputType="textUri"
                 android:imeOptions="actionDone" />
+
+            <!-- ===== Recycle Bin ===== -->
+            <TextView style="@style/SettingsSection" android:text="Recycle Bin" />
+
+            <TextView style="@style/SettingsLabel" android:text="Auto-empty after N days (0 = never)" />
+            <EditText
+                android:id="@+id/input_bin_retention_days"
+                style="@style/SettingsInput"
+                android:hint="0"
+                android:inputType="number"
+                android:imeOptions="actionDone" />
         </LinearLayout>
     </ScrollView>
 </LinearLayout>

@@ -197,10 +197,10 @@ class MigrationTest {
     fun repositoryUsableAfterMigration() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV1Schema(driver)
-        // Schema.version is now 6; openExisting → bootstrap queries the current tables
-        // (notebook incl. modified_at + folder_id, app_state incl. settings_json), so
-        // migrate all the way to the current version.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 6L)
+        // Schema.version is now 7; openExisting → bootstrap queries the current tables
+        // (notebook incl. modified_at + folder_id + soft-delete cols, app_state incl.
+        // settings_json) AND reads the notebook_live view, so migrate all the way up.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 7L)
 
         // openExisting (no schema.create) must work against the migrated DB.
         val repo = NotebookRepository.openExisting(driver)
@@ -223,8 +223,8 @@ class MigrationTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV2Schema(driver)
 
-        // Migrate to the current version (6); this still runs the v2->v3 step plus v3->v4, v4->v5, v5->v6.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 6L)
+        // Migrate to the current version (7); runs v2->v3 plus v3->v4, v4->v5, v5->v6, v6->v7.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 7L)
 
         assertTrue(tableExists(driver, "notebook"), "notebook table exists after v2->v3")
         assertTrue(tableExists(driver, "app_state"), "app_state table exists after v2->v3")
@@ -467,6 +467,107 @@ class MigrationTest {
             0
         )
         assertEquals(null, rootFolderId, "notebook with no folder_id reads back NULL = root")
+
+        driver.close()
+    }
+
+    /** Build a minimal-but-complete v6 schema with one live notebook + page + app_state row. */
+    private fun createV6Schema(driver: JdbcSqliteDriver) {
+        driver.execute(
+            null,
+            """
+            CREATE TABLE folder (
+                id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL, modified_at INTEGER NOT NULL DEFAULT 0,
+                parent_folder_id TEXT REFERENCES folder(id)
+            )
+            """.trimIndent(),
+            0
+        )
+        driver.execute(
+            null,
+            """
+            CREATE TABLE notebook (
+                id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL, modified_at INTEGER NOT NULL DEFAULT 0,
+                folder_id TEXT REFERENCES folder(id)
+            )
+            """.trimIndent(),
+            0
+        )
+        driver.execute(
+            null,
+            """
+            CREATE TABLE page (
+                id TEXT PRIMARY KEY NOT NULL, notebook_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL, template TEXT, template_pitch_mm INTEGER
+            )
+            """.trimIndent(),
+            0
+        )
+        driver.execute(
+            null,
+            """
+            CREATE TABLE stroke (
+                id TEXT PRIMARY KEY NOT NULL, page_id TEXT NOT NULL, color INTEGER NOT NULL DEFAULT -16777216,
+                pen_width_min INTEGER NOT NULL DEFAULT 7, pen_width_max INTEGER NOT NULL DEFAULT 35,
+                points BLOB NOT NULL, z INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+            0
+        )
+        driver.execute(
+            null,
+            """
+            CREATE TABLE app_state (
+                id INTEGER PRIMARY KEY NOT NULL CHECK (id = 0), active_notebook_id TEXT, active_page_id TEXT,
+                settings_json TEXT NOT NULL DEFAULT '{}', clipboard_json TEXT
+            )
+            """.trimIndent(),
+            0
+        )
+        driver.execute(null, "INSERT INTO notebook(id, name, sort_order, created_at, modified_at) VALUES ('n1', 'Kept', 0, 1, 1)", 0)
+        driver.execute(null, "INSERT INTO page(id, notebook_id, sort_order, created_at, template, template_pitch_mm) VALUES ('p1', 'n1', 0, 1, 'DOT', 5)", 0)
+        driver.execute(null, "INSERT INTO app_state(id, active_notebook_id, active_page_id) VALUES (0, 'n1', 'p1')", 0)
+        driver.execute(null, "PRAGMA user_version = 6", 0)
+    }
+
+    /**
+     * library-and-tools E1: migrating v6 -> v7 adds the soft-delete columns + indexes on
+     * folder/notebook, leaves existing rows live (NULL deleted_at), AND creates the
+     * notebook_live/folder_live views so the repointed live queries work on an UPGRADED
+     * device (SQLDelight only emits CREATE VIEW in create(), so the migration must do it).
+     */
+    @Test
+    fun v6ToV7AddsSoftDeleteColumnsIndexesAndLiveViewsAndKeepsRowsLive() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        createV6Schema(driver)
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 6L, newVersion = 7L)
+
+        // Columns added on both tables.
+        for (col in setOf("deleted_at", "deleted_batch_id", "deleted_root_id")) {
+            assertTrue(columnNames(driver, "folder").contains(col), "folder gains $col")
+            assertTrue(columnNames(driver, "notebook").contains(col), "notebook gains $col")
+        }
+        // Indexes added.
+        assertTrue(indexExists(driver, "folder_deleted_at"), "folder deleted_at index exists")
+        assertTrue(indexExists(driver, "notebook_deleted_at"), "notebook deleted_at index exists")
+
+        // Pre-existing notebook is still live (deleted_at backfilled to NULL).
+        var deletedAtIsNull = false
+        driver.executeQuery(
+            null,
+            "SELECT deleted_at IS NULL FROM notebook WHERE id = 'n1'",
+            { cursor -> cursor.next(); deletedAtIsNull = (cursor.getLong(0) ?: 0L) == 1L; QueryResult.Value(Unit) },
+            0
+        )
+        assertTrue(deletedAtIsNull, "existing notebook has NULL deleted_at after migration = live")
+
+        // The views were created by the migration: the repository's live query returns the
+        // pre-existing notebook (this would throw "no such table: notebook_live" if not).
+        val repo = NotebookRepository.openExisting(driver)
+        assertTrue(repo.listNotebooks().any { it.id == "n1" }, "live query (via notebook_live view) returns the kept notebook")
 
         driver.close()
     }
