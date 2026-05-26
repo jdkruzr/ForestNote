@@ -1,6 +1,7 @@
 plugins {
     id("forestnote.android.library")
     id("app.cash.sqldelight")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -21,6 +22,7 @@ dependencies {
     implementation(project(":core:ink"))
     implementation(libs.findLibrary("sqldelight-android-driver").get())
     implementation(libs.findLibrary("sqldelight-runtime").get())
+    implementation(libs.findLibrary("kotlinx-serialization-json").get())
 
     testImplementation(libs.findLibrary("sqldelight-sqlite-driver").get())
 }

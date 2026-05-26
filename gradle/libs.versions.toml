@@ -2,6 +2,7 @@
 agp = "8.7.0"
 kotlin = "2.0.21"
 sqldelight = "2.0.2"
+kotlinx-serialization = "1.7.3"
 androidx-core = "1.15.0"
 androidx-appcompat = "1.7.0"
 androidx-ink = "1.0.0"
@@ -34,6 +35,9 @@ sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", ver
 sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }
 sqldelight-gradlePlugin = { module = "app.cash.sqldelight:gradle-plugin", version.ref = "sqldelight" }
 sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
+
+# Kotlinx Serialization (Settings JSON blob in :core:format)
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 
 # Testing
 junit = { module = "junit:junit", version.ref = "junit" }
