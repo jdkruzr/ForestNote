@@ -130,6 +130,13 @@ class MainActivity : Activity() {
             refreshNotebookLabel()
         }
 
+        // AC4.1: cold launch resumes the editor on the last-active notebook; if there is no
+        // active notebook (defensive — bootstrap normally prevents this), open the Library
+        // overlay instead so the user has a +Notebook affordance.
+        store.listNotebooks { notebooks, activeId ->
+            if (LaunchLogic.shouldOpenLibraryOnLaunch(activeId, notebooks.size)) openLibrary()
+        }
+
         // Create and wire ToolBar
         toolBar = ToolBar(toolBarRoot, isEInk) { tool ->
             drawView.activeTool = tool
