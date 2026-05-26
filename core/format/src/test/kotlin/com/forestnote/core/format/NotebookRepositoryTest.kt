@@ -335,4 +335,84 @@ class NotebookRepositoryTest {
 
         repo.close()
     }
+
+    // -- folders (C2) -------------------------------------------------------
+
+    @Test
+    fun createRootFoldersAppendBySortOrder() {
+        // AC5.3: root folders mint a ULID at sort_order = max+1 within the (null) parent.
+        val repo = createRepository()
+        val aId = repo.createFolder("A", null)
+        val bId = repo.createFolder("B", null)
+
+        val a = repo.findFolder(aId)!!
+        assertEquals(26, aId.length, "folder id is a 26-char ULID")
+        assertEquals(0L, a.sortOrder, "first root folder is sort_order 0")
+        assertEquals(null, a.parentFolderId, "root folder has null parent")
+
+        val b = repo.findFolder(bId)!!
+        assertEquals(1L, b.sortOrder, "second root folder is sort_order 1")
+        repo.close()
+    }
+
+    @Test
+    fun createFolderSortOrderIsScopedToParent() {
+        // AC5.3: sort order is per-parent, not global.
+        val repo = createRepository()
+        val pId = repo.createFolder("p", null)
+        val childId = repo.createFolder("child", pId)
+
+        assertEquals(0L, repo.findFolder(childId)!!.sortOrder, "first child of p is sort_order 0")
+        assertEquals(pId, repo.findFolder(childId)!!.parentFolderId, "child's parent is p")
+        repo.close()
+    }
+
+    @Test
+    fun renameFolderChangesName() {
+        // AC5.4: renameFolder.
+        val repo = createRepository()
+        val id = repo.createFolder("Original", null)
+        repo.renameFolder(id, "Renamed")
+        assertEquals("Renamed", repo.findFolder(id)?.name, "folder name reflects rename")
+        repo.close()
+    }
+
+    @Test
+    fun getFoldersForParentScopesAndOrders() {
+        // AC5.4: getFoldersForParent returns root folders (parent null) and a parent's children.
+        val repo = createRepository()
+        val aId = repo.createFolder("A", null)
+        val bId = repo.createFolder("B", null)
+        val childId = repo.createFolder("child", aId)
+
+        val roots = repo.getFoldersForParent(null)
+        assertEquals(listOf(aId, bId), roots.map { it.id }, "root folders ordered by sort_order")
+
+        val aChildren = repo.getFoldersForParent(aId)
+        assertEquals(listOf(childId), aChildren.map { it.id }, "only A's children returned")
+        repo.close()
+    }
+
+    @Test
+    fun findUnknownFolderReturnsNull() {
+        val repo = createRepository()
+        assertEquals(null, repo.findFolder("nope"), "unknown folder id returns null")
+        repo.close()
+    }
+
+    @Test
+    fun folderPathAndDescendantsOverBuiltTree() {
+        // AC5.4: build a 3-level tree and verify path is root-first + descendants are complete.
+        val repo = createRepository()
+        val gpId = repo.createFolder("gp", null)
+        val pId = repo.createFolder("p", gpId)
+        val cId = repo.createFolder("c", pId)
+
+        assertEquals(listOf(gpId, pId, cId), repo.folderPath(cId).map { it.id }, "path is root-first")
+        assertTrue(
+            repo.descendantFolderIds(gpId).toSet() == setOf(pId, cId),
+            "descendants of gp are p and c"
+        )
+        repo.close()
+    }
 }
