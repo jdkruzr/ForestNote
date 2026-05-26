@@ -24,7 +24,7 @@ data class PenParams(
          * with DST_OVER, opaque-over-opaque cannot darken on overlap, which is the
          * hard no-darkening guarantee. (Diverges from WiNote's translucent alpha.)
          */
-        val HIGHLIGHTER_GRAY: Int = 0xFFB8B8B8.toInt()
+        val HIGHLIGHTER_GRAY: Int = 0xFFDCDCDC.toInt()
 
         /**
          * Resolve params for [variant] at width [level] (AC10). The level picks the base
