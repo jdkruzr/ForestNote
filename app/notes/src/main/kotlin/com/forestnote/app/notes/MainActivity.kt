@@ -315,12 +315,61 @@ class MainActivity : Activity() {
             onNewNotebook = { promptNewNotebook(libraryView.currentFolderId) },
             onNewFolder = { promptNewFolder(libraryView.currentFolderId) },
             onFolderProperties = { folder -> openFolderProperties(folder) },
-            onOpenSettings = { openSettings() }
+            onOpenSettings = { openSettings() },
+            onBulkMove = { ids -> showMoveTargetDialog(ids) },
+            onBulkDelete = { ids -> confirmBulkDelete(ids) }
         ))
     }
 
     /** Dismiss the Library overlay and return to the editor. */
     private fun closeLibrary() { libraryView.hide() }
+
+    /**
+     * Bulk-move dialog (D2): pick a destination folder (or Library root) for the selected
+     * notebooks. Destinations come from [MoveTargetLogic] (root first, breadcrumb-labelled);
+     * the move runs in one transaction, then the Library reloads and select mode exits.
+     */
+    private fun showMoveTargetDialog(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        store.listAllFolders { folders ->
+            val targets = MoveTargetLogic.targets(folders)
+            val labels = targets.map { it.label }.toTypedArray()
+            AlertDialog.Builder(this)
+                .setTitle("Move ${ids.size} to…")
+                .setItems(labels) { _, which ->
+                    store.bulkMoveNotebooks(ids.toList(), targets[which].folderId) {
+                        if (libraryView.isShowing) libraryView.reload()
+                        libraryView.exitSelectMode()
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    /**
+     * Bulk-delete confirmation (D3): hard-delete the selected notebooks (and their pages +
+     * strokes) in one transaction. reloadCurrentPage() lets the editor follow if the active
+     * notebook was deleted (the repo has already switched it); then the Library reloads and
+     * select mode exits. Soft delete + recycle bin arrive in milestone E.
+     */
+    private fun confirmBulkDelete(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        val n = ids.size
+        val what = if (n == 1) "notebook" else "notebooks"
+        AlertDialog.Builder(this)
+            .setTitle("Delete $n $what")
+            .setMessage("Delete $n $what and all their pages?")
+            .setPositiveButton("Delete") { _, _ ->
+                store.bulkDeleteNotebooks(ids.toList()) {
+                    reloadCurrentPage()
+                    if (libraryView.isShowing) libraryView.reload()
+                    libraryView.exitSelectMode()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
 
     /** Show the full-screen Settings overlay over the editor (B2). */
     private fun openSettings() {
@@ -421,7 +470,8 @@ class MainActivity : Activity() {
             return
         }
         if (libraryView.isShowing) {
-            closeLibrary()
+            // In select mode, back exits selection first rather than closing the Library.
+            if (libraryView.isSelectMode) libraryView.exitSelectMode() else closeLibrary()
             return
         }
         @Suppress("DEPRECATION")

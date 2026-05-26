@@ -342,6 +342,40 @@ class NotebookRepository private constructor(
         FolderPathLogic.descendants(rootId, listAllFolders())
 
     /**
+     * Move every notebook in [ids] to [destFolderId] (null = Library root) in one transaction
+     * (D2). Does not bump modified_at — a move isn't a content edit, parallel to renameNotebook.
+     * Empty list, already-in-folder, and unknown ids are all harmless no-ops.
+     */
+    fun bulkMoveNotebooks(ids: List<String>, destFolderId: String?) {
+        if (ids.isEmpty()) return
+        db.transaction {
+            ids.forEach { db.notebookQueries.setNotebookFolder(destFolderId, it) }
+        }
+    }
+
+    /**
+     * Hard-delete every notebook in [ids] (children-first, no FK-cascade reliance) in one
+     * transaction (D3). The active-notebook fallback is decided ONCE after the whole batch:
+     * a per-id fallback could switch to a survivor that's deleted later in the same batch,
+     * leaving a dangling active id. If the active notebook was in the set, switch to a
+     * remaining one, or bootstrap a fresh notebook + page (never zero notebooks).
+     */
+    fun bulkDeleteNotebooks(ids: List<String>) {
+        if (ids.isEmpty()) return
+        db.transaction {
+            ids.forEach { id ->
+                db.notebookQueries.deleteStrokesForNotebook(id)
+                db.notebookQueries.deletePagesForNotebook(id)
+                db.notebookQueries.deleteNotebook(id)
+            }
+        }
+        if (currentNotebookId in ids) {
+            val remaining = db.notebookQueries.listNotebooks().executeAsList()
+            if (remaining.isEmpty()) bootstrap() else switchNotebook(remaining.first().id)
+        }
+    }
+
+    /**
      * Delete a notebook and everything under it in one transaction (no FK-cascade
      * reliance, AC2.3). If the active notebook is deleted, switch to a remaining one;
      * if none remain, bootstrap a fresh notebook + page (never zero notebooks, AC2.4).

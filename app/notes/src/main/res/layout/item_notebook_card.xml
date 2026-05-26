@@ -10,13 +10,30 @@
     android:layout_margin="4dp"
     android:background="@color/white">
 
-    <ImageView
-        android:id="@+id/card_thumb"
+    <!-- Thumbnail with a Select-mode check badge overlaid top-left (D1). The badge is a plain
+         ImageView (not a CheckBox) so it never steals touches — the whole card is the hitbox. -->
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="120dp"
-        android:scaleType="centerCrop"
-        android:background="@color/card_placeholder"
-        android:contentDescription="Notebook thumbnail" />
+        android:layout_height="120dp">
+
+        <ImageView
+            android:id="@+id/card_thumb"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:background="@color/card_placeholder"
+            android:contentDescription="Notebook thumbnail" />
+
+        <ImageView
+            android:id="@+id/card_check"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="top|start"
+            android:layout_margin="4dp"
+            android:src="@drawable/ic_check_circle"
+            android:importantForAccessibility="no"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <TextView
         android:id="@+id/card_datestamp"

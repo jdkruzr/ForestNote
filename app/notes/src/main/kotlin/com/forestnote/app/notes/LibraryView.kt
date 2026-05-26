@@ -28,7 +28,10 @@ class LibraryView {
         val onNewNotebook: () -> Unit,
         val onNewFolder: () -> Unit,
         val onFolderProperties: (FolderCard) -> Unit,
-        val onOpenSettings: () -> Unit
+        val onOpenSettings: () -> Unit,
+        // Bulk actions on the current selection (D1 wires the UI; D2/D3 fill in the dialogs).
+        val onBulkMove: (Set<String>) -> Unit,
+        val onBulkDelete: (Set<String>) -> Unit
     )
 
     private var root: View? = null
@@ -37,14 +40,26 @@ class LibraryView {
     private var store: NotebookStore? = null
     private var adapter: LibraryAdapter? = null
     private var breadcrumbView: BreadcrumbView? = null
+    private var callbacks: Callbacks? = null
     // The folder the back chevron walks up to (one level up), set from the last path resolution.
     private var backTarget: String? = null
+
+    // Select mode (D1): a notebook tap toggles its checkbox instead of opening; folders stay
+    // tap-to-enter. Selection is cleared whenever the user navigates between folders.
+    private var selectMode: Boolean = false
+    private val selectedIds: MutableSet<String> = mutableSetOf()
 
     /** The folder currently being viewed (null = root). Read by MainActivity for create-in-folder. */
     var currentFolderId: String? = null
         private set
 
     val isShowing: Boolean get() = root != null
+
+    /** Whether the Library is currently in multi-select mode (read by MainActivity for back handling). */
+    val isSelectMode: Boolean get() = selectMode
+
+    /** A defensive copy of the currently-selected notebook ids. */
+    fun selectedNotebookIds(): Set<String> = selectedIds.toSet()
 
     fun show(host: ViewGroup, store: NotebookStore, callbacks: Callbacks) {
         if (isShowing) return
@@ -65,12 +80,14 @@ class LibraryView {
             onOpenFolder = { folder -> enterFolder(folder.id) },
             onFolderProperties = callbacks.onFolderProperties,
             onOpenNotebook = callbacks.onOpenNotebook,
-            onNotebookProperties = callbacks.onNotebookProperties
+            onNotebookProperties = callbacks.onNotebookProperties,
+            onToggleNotebook = { card -> toggleSelection(card.id) }
         )
         adapter = libraryAdapter
         grid.adapter = libraryAdapter
 
         breadcrumbView = BreadcrumbView(view.findViewById(R.id.breadcrumb_container)) { folderId ->
+            exitSelectMode()
             currentFolderId = folderId
             reload()
         }
@@ -85,10 +102,27 @@ class LibraryView {
             setOnClickListener { callbacks.onNewFolder() }
         }
         view.findViewById<View>(R.id.btn_library_back).setOnClickListener {
+            exitSelectMode()
             currentFolderId = backTarget
             reload()
         }
 
+        // Select toggle (D1): enabled this phase. Flips in/out of multi-select.
+        view.findViewById<View>(R.id.btn_library_select).apply {
+            isEnabled = true
+            alpha = 1f
+            setOnClickListener { if (selectMode) exitSelectMode() else enterSelectMode() }
+        }
+        view.findViewById<View>(R.id.btn_select_done).setOnClickListener { exitSelectMode() }
+        view.findViewById<View>(R.id.btn_select_move).setOnClickListener {
+            if (selectedIds.isNotEmpty()) this.callbacks?.onBulkMove(selectedIds.toSet())
+        }
+        view.findViewById<View>(R.id.btn_select_delete).setOnClickListener {
+            if (selectedIds.isNotEmpty()) this.callbacks?.onBulkDelete(selectedIds.toSet())
+        }
+
+        this.callbacks = callbacks
+        renderSelectChrome()
         reload()
     }
 
@@ -135,8 +169,51 @@ class LibraryView {
     }
 
     private fun enterFolder(folderId: String) {
+        exitSelectMode()
         currentFolderId = folderId
         reload()
+    }
+
+    private fun enterSelectMode() {
+        selectMode = true
+        selectedIds.clear()
+        renderSelectChrome()
+    }
+
+    /** Leave select mode and clear the selection. Safe to call when not in select mode. */
+    fun exitSelectMode() {
+        if (!selectMode && selectedIds.isEmpty()) return
+        selectMode = false
+        selectedIds.clear()
+        renderSelectChrome()
+    }
+
+    private fun toggleSelection(id: String) {
+        if (id in selectedIds) selectedIds.remove(id) else selectedIds.add(id)
+        renderSelectChrome()
+    }
+
+    /** Reflect the current select state into the header caption, the bottom bar, and the grid. */
+    private fun renderSelectChrome() {
+        val view = root ?: return
+        adapter?.setSelectionState(selectMode, selectedIds.toSet())
+
+        view.findViewById<TextView>(R.id.text_library_select_caption).text =
+            SelectModeLogic.captionFor(selectMode)
+
+        val barVisibility = if (selectMode) View.VISIBLE else View.GONE
+        view.findViewById<View>(R.id.select_bar_rule).visibility = barVisibility
+        view.findViewById<View>(R.id.select_action_bar).visibility = barVisibility
+
+        view.findViewById<TextView>(R.id.text_select_count).text =
+            SelectModeLogic.countLabel(selectedIds.size)
+        val actionsEnabled = SelectModeLogic.actionsEnabled(selectedIds)
+        view.findViewById<View>(R.id.btn_select_move).apply {
+            isEnabled = actionsEnabled; alpha = if (actionsEnabled) 1f else 0.3f
+        }
+        view.findViewById<View>(R.id.btn_select_delete).apply {
+            isEnabled = actionsEnabled; alpha = if (actionsEnabled) 1f else 0.3f
+        }
     }
 
     fun hide() {
@@ -148,8 +225,11 @@ class LibraryView {
         store = null
         adapter = null
         breadcrumbView = null
+        callbacks = null
         backTarget = null
         currentFolderId = null
+        selectMode = false
+        selectedIds.clear()
     }
 
     private companion object { const val COLUMNS = 4 }

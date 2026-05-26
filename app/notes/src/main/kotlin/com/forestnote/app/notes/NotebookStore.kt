@@ -316,11 +316,39 @@ class NotebookStore(
         }
     }
 
+    /** Every folder in the library, off-thread — for the D2 bulk-move destination picker. */
+    fun listAllFolders(onResult: (List<FolderMeta>) -> Unit) {
+        executor.execute {
+            val folders = runCatching { repo?.listAllFolders() ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to list all folders", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(folders) }
+        }
+    }
+
+    /** Move [ids] to [destFolderId] (null = root) in one transaction (D2); callback posted when done. */
+    fun bulkMoveNotebooks(ids: List<String>, destFolderId: String?, onDone: () -> Unit) {
+        executor.execute {
+            runCatching { repo?.bulkMoveNotebooks(ids, destFolderId) }
+                .onFailure { android.util.Log.e(TAG, "failed to bulk move notebooks", it) }
+            poster { onDone() }
+        }
+    }
+
     /** Delete a notebook (and everything under it); callback posted when done. */
     fun deleteNotebook(notebookId: String, onDone: () -> Unit) {
         executor.execute {
             runCatching { repo?.deleteNotebook(notebookId) }
                 .onFailure { android.util.Log.e(TAG, "failed to delete notebook", it) }
+            poster { onDone() }
+        }
+    }
+
+    /** Hard-delete [ids] (and everything under them) in one transaction (D3); callback posted when done. */
+    fun bulkDeleteNotebooks(ids: List<String>, onDone: () -> Unit) {
+        executor.execute {
+            runCatching { repo?.bulkDeleteNotebooks(ids) }
+                .onFailure { android.util.Log.e(TAG, "failed to bulk delete notebooks", it) }
             poster { onDone() }
         }
     }
