@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One Library notebook card (C3a): a placeholder ink-thumbnail tile over a footer of
+     optional monospaced datestamp, bold name, and "Np · 2h ago" meta. C3b swaps the
+     placeholder tile for a real first-page render. Card width fills its grid column;
+     the tile uses a fixed 3:4-ish height tuned for the Mini's 4-column grid. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:layout_margin="4dp"
+    android:background="@color/white">
+
+    <ImageView
+        android:id="@+id/card_thumb"
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:scaleType="centerCrop"
+        android:background="@color/card_placeholder"
+        android:contentDescription="Notebook thumbnail" />
+
+    <TextView
+        android:id="@+id/card_datestamp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="2dp"
+        android:typeface="monospace"
+        android:textColor="@color/gray_dark"
+        android:textSize="10sp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/card_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/black"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <TextView
+        android:id="@+id/card_meta"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/gray_dark"
+        android:textSize="10sp"
+        android:maxLines="1"
+        android:ellipsize="end" />
+</LinearLayout>
