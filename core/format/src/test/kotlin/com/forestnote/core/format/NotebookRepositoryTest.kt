@@ -335,4 +335,181 @@ class NotebookRepositoryTest {
 
         repo.close()
     }
+
+    // -- folders (C2) -------------------------------------------------------
+
+    @Test
+    fun createRootFoldersAppendBySortOrder() {
+        // AC5.3: root folders mint a ULID at sort_order = max+1 within the (null) parent.
+        val repo = createRepository()
+        val aId = repo.createFolder("A", null)
+        val bId = repo.createFolder("B", null)
+
+        val a = repo.findFolder(aId)!!
+        assertEquals(26, aId.length, "folder id is a 26-char ULID")
+        assertEquals(0L, a.sortOrder, "first root folder is sort_order 0")
+        assertEquals(null, a.parentFolderId, "root folder has null parent")
+
+        val b = repo.findFolder(bId)!!
+        assertEquals(1L, b.sortOrder, "second root folder is sort_order 1")
+        repo.close()
+    }
+
+    @Test
+    fun createFolderSortOrderIsScopedToParent() {
+        // AC5.3: sort order is per-parent, not global.
+        val repo = createRepository()
+        val pId = repo.createFolder("p", null)
+        val childId = repo.createFolder("child", pId)
+
+        assertEquals(0L, repo.findFolder(childId)!!.sortOrder, "first child of p is sort_order 0")
+        assertEquals(pId, repo.findFolder(childId)!!.parentFolderId, "child's parent is p")
+        repo.close()
+    }
+
+    @Test
+    fun renameFolderChangesName() {
+        // AC5.4: renameFolder.
+        val repo = createRepository()
+        val id = repo.createFolder("Original", null)
+        repo.renameFolder(id, "Renamed")
+        assertEquals("Renamed", repo.findFolder(id)?.name, "folder name reflects rename")
+        repo.close()
+    }
+
+    @Test
+    fun getFoldersForParentScopesAndOrders() {
+        // AC5.4: getFoldersForParent returns root folders (parent null) and a parent's children.
+        val repo = createRepository()
+        val aId = repo.createFolder("A", null)
+        val bId = repo.createFolder("B", null)
+        val childId = repo.createFolder("child", aId)
+
+        val roots = repo.getFoldersForParent(null)
+        assertEquals(listOf(aId, bId), roots.map { it.id }, "root folders ordered by sort_order")
+
+        val aChildren = repo.getFoldersForParent(aId)
+        assertEquals(listOf(childId), aChildren.map { it.id }, "only A's children returned")
+        repo.close()
+    }
+
+    @Test
+    fun findUnknownFolderReturnsNull() {
+        val repo = createRepository()
+        assertEquals(null, repo.findFolder("nope"), "unknown folder id returns null")
+        repo.close()
+    }
+
+    @Test
+    fun folderPathAndDescendantsOverBuiltTree() {
+        // AC5.4: build a 3-level tree and verify path is root-first + descendants are complete.
+        val repo = createRepository()
+        val gpId = repo.createFolder("gp", null)
+        val pId = repo.createFolder("p", gpId)
+        val cId = repo.createFolder("c", pId)
+
+        assertEquals(listOf(gpId, pId, cId), repo.folderPath(cId).map { it.id }, "path is root-first")
+        assertTrue(
+            repo.descendantFolderIds(gpId).toSet() == setOf(pId, cId),
+            "descendants of gp are p and c"
+        )
+        repo.close()
+    }
+
+    // -- Library cards (C3a) ------------------------------------------------
+
+    @Test
+    fun listNotebookCardsInRootReturnsPageCountsAndOrder() {
+        // AC4.2/AC4.3: root notebooks with page counts, in sort order.
+        val repo = createRepository()
+        // The bootstrap notebook is the first root card (1 page). Add a second notebook
+        // with extra pages so page counts differ and ordering is observable.
+        val firstId = repo.listNotebooks().first().id
+        val secondId = repo.createNotebook("Second")
+        repo.switchNotebook(secondId)
+        repo.createPage()
+        repo.createPage() // Second now has 3 pages (initial + 2)
+
+        val cards = repo.listNotebookCardsInFolder(null)
+        assertEquals(listOf(firstId, secondId), cards.map { it.id }, "root cards in sort order")
+        assertEquals(1L, cards.first { it.id == firstId }.pageCount, "bootstrap notebook has 1 page")
+        assertEquals(3L, cards.first { it.id == secondId }.pageCount, "second notebook has 3 pages")
+        assertEquals("Second", cards.first { it.id == secondId }.name, "card carries the notebook name")
+        repo.close()
+    }
+
+    @Test
+    fun folderScopedCardQueriesPartitionByFolder() {
+        // AC4.2/AC4.4: notebooks and folders are scoped to their container.
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver)
+        val rootNotebookId = repo.listNotebooks().first().id
+
+        val folderId = repo.createFolder("Work", null)
+        val nestedId = repo.createFolder("Sub", folderId)
+        // Place a notebook inside the folder via a direct insert (createNotebook(folderId)
+        // lands in C4 Task 5; this keeps the Task-1 query test self-contained).
+        driver.execute(
+            null,
+            "INSERT INTO notebook(id, name, sort_order, created_at, modified_at, folder_id) " +
+                "VALUES ('nf1', 'Inside', 0, 0, 0, '$folderId')",
+            0
+        )
+
+        val rootNotebooks = repo.listNotebookCardsInFolder(null)
+        assertEquals(listOf(rootNotebookId), rootNotebooks.map { it.id }, "root excludes the in-folder notebook")
+        val folderNotebooks = repo.listNotebookCardsInFolder(folderId)
+        assertEquals(listOf("nf1"), folderNotebooks.map { it.id }, "the folder contains its notebook")
+
+        val rootFolders = repo.listFolderCardsForParent(null)
+        assertEquals(listOf(folderId), rootFolders.map { it.id }, "Work is a root folder")
+        assertEquals(1L, rootFolders.first().notebookCount, "Work has one notebook inside")
+        val childFolders = repo.listFolderCardsForParent(folderId)
+        assertEquals(listOf(nestedId), childFolders.map { it.id }, "Sub is nested under Work, not at root")
+        repo.close()
+    }
+
+    // -- thumbnail source reads (C3b) ---------------------------------------
+
+    @Test
+    fun firstPageAndStrokeReadsForThumbnails() {
+        // AC4.2: arbitrary-page reads the thumbnail pipeline needs, without changing context.
+        val repo = createRepository()
+        val firstPage = repo.currentPageId()
+        assertEquals(firstPage, repo.firstPageIdForNotebook(repo.currentNotebookId()),
+            "firstPageIdForNotebook returns the bootstrap notebook's first page")
+
+        val a = Stroke(points = listOf(StrokePoint(1, 2, 500, 0L), StrokePoint(3, 4, 500, 1L)))
+        val b = Stroke(points = listOf(StrokePoint(5, 6, 500, 2L)))
+        repo.saveStroke(a)
+        repo.saveStroke(b)
+
+        assertEquals(2L, repo.countStrokesForPage(firstPage), "two strokes counted on the page")
+
+        val loaded = repo.loadStrokesForPage(firstPage)
+        assertEquals(setOf(a.id, b.id), loaded.map { it.id }.toSet(), "arbitrary-page load round-trips ids")
+        assertEquals(a.points, loaded.first { it.id == a.id }.points, "points round-trip")
+
+        assertEquals(null, repo.firstPageIdForNotebook("nope"), "unknown notebook → null first page")
+        repo.close()
+    }
+
+    @Test
+    fun createNotebookInFolderLandsInThatFolder() {
+        // AC4.4: a notebook created with a folder id reads back inside the folder, not at root.
+        val repo = createRepository()
+        val folderId = repo.createFolder("Work", null)
+        val inFolderId = repo.createNotebook("Inside", folderId)
+
+        assertEquals(
+            listOf(inFolderId),
+            repo.listNotebookCardsInFolder(folderId).map { it.id },
+            "the notebook created in the folder appears there"
+        )
+        assertTrue(
+            repo.listNotebookCardsInFolder(null).none { it.id == inFolderId },
+            "and is absent from root"
+        )
+        repo.close()
+    }
 }

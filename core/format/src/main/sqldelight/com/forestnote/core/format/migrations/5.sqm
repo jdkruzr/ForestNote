@@ -1,0 +1,16 @@
+-- v5 -> v6: Folder hierarchy. NON-destructive.
+--  * folder table — optional containers for notebooks; parent_folder_id NULL = root.
+--  * notebook.folder_id — which folder a notebook lives in; NULL = root.
+-- PRAGMA foreign_keys stays OFF (project-wide), so these FKs are declarative only.
+CREATE TABLE folder (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    modified_at INTEGER NOT NULL DEFAULT 0,
+    parent_folder_id TEXT REFERENCES folder(id)
+);
+CREATE INDEX folder_parent_folder_id ON folder(parent_folder_id);
+
+ALTER TABLE notebook ADD COLUMN folder_id TEXT REFERENCES folder(id);
+CREATE INDEX notebook_folder_id ON notebook(folder_id);

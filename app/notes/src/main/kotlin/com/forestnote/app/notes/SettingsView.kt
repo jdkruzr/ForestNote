@@ -9,6 +9,7 @@ import android.widget.RadioButton
 import android.widget.RadioGroup
 import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.format.Settings
+import com.forestnote.core.format.StartView
 
 /**
  * Full-screen Settings overlay (library-and-tools B2). A peer view to the editor:
@@ -77,6 +78,8 @@ class SettingsView {
         )
         val idToTemplate = templateIds.entries.associate { (k, v) -> v to k }
 
+        val rgStartView = view.findViewById<RadioGroup>(R.id.rg_start_view)
+
         val syncInput = view.findViewById<EditText>(R.id.input_sync_url)
         val selectionInput = view.findViewById<EditText>(R.id.input_selection_url)
         val fulltextInput = view.findViewById<EditText>(R.id.input_fulltext_url)
@@ -96,6 +99,7 @@ class SettingsView {
             rgTemplate.check(templateIds.getValue(s.defaultTemplate))
             applyPitchVisibility(s.defaultTemplate)
             pitchButtons[SettingsFormLogic.selectedPitchIndex(s.defaultPitchMm)].isChecked = true
+            rgStartView.check(if (s.startView == StartView.LIBRARY) R.id.rb_start_library else R.id.rb_start_last)
             syncInput.setText(s.syncServerUrl)
             selectionInput.setText(s.selectionRecognitionUrl)
             fulltextInput.setText(s.fullTextTranscriptionUrl)
@@ -115,6 +119,12 @@ class SettingsView {
             if (loading || checkedId == -1) return@setOnCheckedChangeListener
             val mm = SettingsFormLogic.pitchForIndex(checkedId - PITCH_ID_BASE)
             store.updateSettings({ it.copy(defaultPitchMm = mm) })
+        }
+
+        rgStartView.setOnCheckedChangeListener { _, checkedId ->
+            if (loading) return@setOnCheckedChangeListener
+            val startView = if (checkedId == R.id.rb_start_library) StartView.LIBRARY else StartView.LAST_NOTEBOOK
+            store.updateSettings({ it.copy(startView = startView) })
         }
 
         wireUrl(syncInput) { s, v -> s.copy(syncServerUrl = v) }.also { it.guard = { loading } }

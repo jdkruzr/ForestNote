@@ -29,6 +29,7 @@ class SettingsStorageTest {
             it.copy(
                 defaultTemplate = PageTemplate.RULED,
                 defaultPitchMm = 7,
+                startView = StartView.LIBRARY,
                 syncServerUrl = "https://sync.example"
             )
         }
@@ -37,6 +38,7 @@ class SettingsStorageTest {
         val s = repo2.settings()
         assertEquals(PageTemplate.RULED, s.defaultTemplate)
         assertEquals(7, s.defaultPitchMm)
+        assertEquals(StartView.LIBRARY, s.startView)
         assertEquals("https://sync.example", s.syncServerUrl)
     }
 

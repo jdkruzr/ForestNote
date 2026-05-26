@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- View tag for the notebook id a card's thumbnail ImageView is loading, so a
+         recycled view's late render can be discarded (C3b recycling guard). -->
+    <item name="tag_notebook_id" type="id" />
+</resources>

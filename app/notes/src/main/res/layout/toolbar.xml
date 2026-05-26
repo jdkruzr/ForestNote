@@ -256,7 +256,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Template"
+            android:text="Template ▾"
             android:gravity="center"
             android:textSize="9sp"
             android:textColor="@color/black"

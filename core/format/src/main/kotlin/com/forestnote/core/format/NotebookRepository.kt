@@ -16,6 +16,42 @@ data class NotebookMeta(
 )
 
 /**
+ * Per-notebook data for a Library card: identity, name, timestamps, and page count
+ * (computed in one query to avoid an N+1 of countPages during RecyclerView recycling).
+ */
+data class NotebookCard(
+    val id: String,
+    val name: String,
+    val createdAt: Long,
+    val modifiedAt: Long,
+    val pageCount: Long
+)
+
+/**
+ * Per-folder data for a Library card: identity, name, parent, and the count of
+ * notebooks directly inside it (one query, no N+1 during recycling).
+ */
+data class FolderCard(
+    val id: String,
+    val name: String,
+    val parentFolderId: String?,
+    val notebookCount: Long
+)
+
+/**
+ * Public folder metadata so the UI never touches generated row types.
+ * [parentFolderId] NULL means a root-level folder.
+ */
+data class FolderMeta(
+    val id: String,
+    val name: String,
+    val sortOrder: Long,
+    val createdAt: Long,
+    val modifiedAt: Long,
+    val parentFolderId: String?
+)
+
+/**
  * Public page metadata so the UI never touches generated row types.
  * [template] / [templatePitchMm] are the per-page override: NULL means
  * "inherit the global default" from [Settings].
@@ -109,7 +145,7 @@ class NotebookRepository private constructor(
         var notebooks = db.notebookQueries.listNotebooks().executeAsList()
         if (notebooks.isEmpty()) {
             val nid = Ulid.generate()
-            db.notebookQueries.insertNotebook(nid, "Notebook 1", 0, now, now)
+            db.notebookQueries.insertNotebook(nid, "Notebook 1", 0, now, now, null)
             notebooks = db.notebookQueries.listNotebooks().executeAsList()
         }
         val state = db.notebookQueries.getAppState().executeAsOneOrNull()
@@ -182,6 +218,16 @@ class NotebookRepository private constructor(
         db.notebookQueries.listNotebooks().executeAsList()
             .map { NotebookMeta(it.id, it.name, it.created_at, it.modified_at) }
 
+    /** Notebooks directly inside [folderId] (null = root) with page counts, for the Library grid. */
+    fun listNotebookCardsInFolder(folderId: String?): List<NotebookCard> =
+        db.notebookQueries.listNotebookCardsInFolder(folderId).executeAsList()
+            .map { NotebookCard(it.id, it.name, it.created_at, it.modified_at, it.page_count) }
+
+    /** Folders directly under [parentId] (null = root) with notebook counts, for the Library grid. */
+    fun listFolderCardsForParent(parentId: String?): List<FolderCard> =
+        db.notebookQueries.listFolderCardsForParent(parentId).executeAsList()
+            .map { FolderCard(it.id, it.name, it.parent_folder_id, it.notebook_count) }
+
     /** Number of pages under [notebookId] (0 for an unknown notebook). */
     fun countPages(notebookId: String): Long =
         db.notebookQueries.countPagesForNotebook(notebookId).executeAsOne()
@@ -227,14 +273,17 @@ class NotebookRepository private constructor(
         persistActive()
     }
 
-    /** Create a notebook appended at sort_order = max+1, with one initial page (AC2.1). */
-    fun createNotebook(name: String): String {
+    /**
+     * Create a notebook appended at sort_order = max+1, with one initial page (AC2.1).
+     * [folderId] places it inside a folder (C4); null = root (the editor's default).
+     */
+    fun createNotebook(name: String, folderId: String? = null): String {
         val nid = Ulid.generate()
         val now = clock()
         val so = db.notebookQueries.nextNotebookSortOrder().executeAsOne()
         val (seedTemplate, seedPitch) = defaultTemplateSeed()
         db.transaction {
-            db.notebookQueries.insertNotebook(nid, name, so, now, now)
+            db.notebookQueries.insertNotebook(nid, name, so, now, now, folderId)
             // A notebook always has at least one page; its first page is seeded with the
             // global default (concrete), since it has no predecessor to copy (B4).
             val pid = Ulid.generate()
@@ -248,6 +297,49 @@ class NotebookRepository private constructor(
     fun renameNotebook(notebookId: String, name: String) {
         db.notebookQueries.renameNotebook(name, notebookId)
     }
+
+    // -- folders (C2) -------------------------------------------------------
+
+    private fun Folder.toFolderMeta() = FolderMeta(
+        id = id,
+        name = name,
+        sortOrder = sort_order,
+        createdAt = created_at,
+        modifiedAt = modified_at,
+        parentFolderId = parent_folder_id
+    )
+
+    /** Mints a ULID folder appended at sort_order = max+1 within its parent (AC5.3). */
+    fun createFolder(name: String, parentFolderId: String?): String {
+        val fid = Ulid.generate()
+        val now = clock()
+        val so = db.notebookQueries.nextFolderSortOrder(parentFolderId).executeAsOne()
+        db.notebookQueries.insertFolder(fid, name, so, now, now, parentFolderId)
+        return fid
+    }
+
+    /** Rename a folder (AC5.4). Does not bump modified_at, parallel to renameNotebook. */
+    fun renameFolder(folderId: String, name: String) {
+        db.notebookQueries.renameFolder(name, folderId)
+    }
+
+    /** Folders directly under [parentFolderId] (null = root), ordered by sort_order (AC5.4). */
+    fun getFoldersForParent(parentFolderId: String?): List<FolderMeta> =
+        db.notebookQueries.getFoldersForParent(parentFolderId).executeAsList().map { it.toFolderMeta() }
+
+    fun listAllFolders(): List<FolderMeta> =
+        db.notebookQueries.listAllFolders().executeAsList().map { it.toFolderMeta() }
+
+    fun findFolder(folderId: String): FolderMeta? =
+        db.notebookQueries.findFolder(folderId).executeAsOneOrNull()?.toFolderMeta()
+
+    /** The root-first folder path ending at [folderId] (cycle-guarded). */
+    fun folderPath(folderId: String): List<FolderMeta> =
+        FolderPathLogic.path(folderId, listAllFolders())
+
+    /** All descendant folder ids under [rootId] (excludes [rootId]). */
+    fun descendantFolderIds(rootId: String): List<String> =
+        FolderPathLogic.descendants(rootId, listAllFolders())
 
     /**
      * Delete a notebook and everything under it in one transaction (no FK-cascade
@@ -357,6 +449,26 @@ class NotebookRepository private constructor(
                 )
             }
     }
+
+    /** First page id of [notebookId] (the one a thumbnail renders), or null if none. */
+    fun firstPageIdForNotebook(notebookId: String): String? =
+        db.notebookQueries.firstPageIdForNotebook(notebookId).executeAsOneOrNull()
+
+    /** Stroke count on [pageId] — a cheap input to the thumbnail cache key. */
+    fun countStrokesForPage(pageId: String): Long =
+        db.notebookQueries.countStrokesForPage(pageId).executeAsOne()
+
+    /** Load strokes for an arbitrary page without changing the active page context. */
+    fun loadStrokesForPage(pageId: String): List<Stroke> =
+        db.notebookQueries.getStrokesForPage(pageId).executeAsList().map { row ->
+            Stroke(
+                id = row.id,
+                points = StrokeSerializer.decode(row.points),
+                color = row.color.toInt(),
+                penWidthMin = row.pen_width_min.toInt(),
+                penWidthMax = row.pen_width_max.toInt()
+            )
+        }
 
     /**
      * Delete a single stroke by its stable ULID. Used by stroke eraser.

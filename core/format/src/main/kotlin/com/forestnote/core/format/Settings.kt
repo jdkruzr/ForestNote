@@ -11,6 +11,14 @@ import kotlinx.serialization.json.Json
 enum class PageTemplate { BLANK, DOT, RULED, GRID }
 
 /**
+ * What the app opens on a cold launch. [LAST_NOTEBOOK] resumes the editor on the
+ * last-active notebook (the default / historical behaviour); [LIBRARY] always opens
+ * the Library overlay. Either way, the Library still opens defensively when there is
+ * no notebook to resume into. Stored by name in [Settings.startView].
+ */
+enum class StartView { LAST_NOTEBOOK, LIBRARY }
+
+/**
  * The user's global settings, persisted as a single JSON blob in
  * `app_state.settings_json`. Every field is defaulted so an absent or partial
  * blob (older build) decodes cleanly, and unknown keys (newer build) are
@@ -26,6 +34,8 @@ data class Settings(
     val defaultTemplate: PageTemplate = PageTemplate.BLANK,
     /** Global default template pitch in millimetres (used when template != BLANK). */
     val defaultPitchMm: Int = 5,
+    /** What a cold launch opens (resume last notebook, or the Library). */
+    val startView: StartView = StartView.LAST_NOTEBOOK,
     val syncServerUrl: String = "",
     val selectionRecognitionUrl: String = "",
     val fullTextTranscriptionUrl: String = "",

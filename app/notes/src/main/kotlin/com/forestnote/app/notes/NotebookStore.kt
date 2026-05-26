@@ -3,6 +3,9 @@ package com.forestnote.app.notes
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.forestnote.core.format.FolderCard
+import com.forestnote.core.format.FolderMeta
+import com.forestnote.core.format.NotebookCard
 import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.format.PageMeta
@@ -17,6 +20,9 @@ import java.util.concurrent.TimeUnit
 // pattern: Imperative Shell
 // Owns the executor, the repository handle, and all I/O orchestration + logging.
 // Pure geometry (StrokeGeometry.reconcileErase) is delegated to core:ink.
+
+/** The cheap inputs to a notebook's first-page thumbnail cache key (C3b). */
+data class ThumbnailSource(val pageId: String, val strokeCount: Long, val modifiedAt: Long)
 
 /**
  * Single owner of all persistence. Runs every database operation on one background
@@ -122,6 +128,63 @@ class NotebookStore(
     }
 
     /**
+     * Read the cheap inputs to a notebook's first-page thumbnail cache key in one
+     * background hop. Null if the notebook has no page or the read fails (AC4.2).
+     */
+    fun thumbnailSource(notebookId: String, onResult: (ThumbnailSource?) -> Unit) {
+        executor.execute {
+            val src = runCatching {
+                val r = repo ?: return@runCatching null
+                val pageId = r.firstPageIdForNotebook(notebookId) ?: return@runCatching null
+                ThumbnailSource(pageId, r.countStrokesForPage(pageId), r.modifiedAtOf(notebookId))
+            }.onFailure { android.util.Log.e(TAG, "failed to read thumbnail source", it) }
+                .getOrNull()
+            poster { onResult(src) }
+        }
+    }
+
+    /** Load strokes for an arbitrary page (a thumbnail render), off-thread. */
+    fun loadStrokesForPage(pageId: String, onResult: (List<Stroke>) -> Unit) {
+        executor.execute {
+            val strokes = runCatching { repo?.loadStrokesForPage(pageId) ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to load strokes for page", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(strokes) }
+        }
+    }
+
+    /** Notebooks directly inside [folderId] (null = root) with page counts, off-thread (AC4.2). */
+    fun listNotebookCardsInFolder(folderId: String?, onResult: (List<NotebookCard>) -> Unit) {
+        executor.execute {
+            val cards = runCatching { repo?.listNotebookCardsInFolder(folderId) ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to list notebook cards", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(cards) }
+        }
+    }
+
+    /** Library-wide totals (every notebook, every folder) for the header summary line. */
+    fun libraryTotals(onResult: (notebookCount: Int, folderCount: Int) -> Unit) {
+        executor.execute {
+            val totals = runCatching {
+                (repo?.listNotebooks()?.size ?: 0) to (repo?.listAllFolders()?.size ?: 0)
+            }.onFailure { android.util.Log.e(TAG, "failed to read library totals", it) }
+                .getOrDefault(0 to 0)
+            poster { onResult(totals.first, totals.second) }
+        }
+    }
+
+    /** Folders directly under [parentId] (null = root) with notebook counts, off-thread (AC4.2). */
+    fun listFolderCardsForParent(parentId: String?, onResult: (List<FolderCard>) -> Unit) {
+        executor.execute {
+            val cards = runCatching { repo?.listFolderCardsForParent(parentId) ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to list folder cards", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(cards) }
+        }
+    }
+
+    /**
      * List the current notebook's pages plus the active page id, off-thread; posted to
      * the main thread for the "N / M" indicator and the page picker.
      */
@@ -190,10 +253,13 @@ class NotebookStore(
         }
     }
 
-    /** Create a notebook (with one initial page); posts the new notebook id. Does not switch. */
-    fun createNotebook(name: String, onCreated: (newNotebookId: String) -> Unit) {
+    /**
+     * Create a notebook (with one initial page) inside [folderId] (null = root); posts the
+     * new notebook id. Does not switch.
+     */
+    fun createNotebook(name: String, folderId: String? = null, onCreated: (newNotebookId: String) -> Unit) {
         executor.execute {
-            val id = runCatching { repo?.createNotebook(name) ?: "" }
+            val id = runCatching { repo?.createNotebook(name, folderId) ?: "" }
                 .onFailure { android.util.Log.e(TAG, "failed to create notebook", it) }
                 .getOrDefault("")
             poster { onCreated(id) }
@@ -206,6 +272,47 @@ class NotebookStore(
             runCatching { repo?.renameNotebook(notebookId, name) }
                 .onFailure { android.util.Log.e(TAG, "failed to rename notebook", it) }
             poster { onDone() }
+        }
+    }
+
+    // -- folders (C2): off-thread wrappers over the repository's folder CRUD/reads --
+
+    /** Create a folder under [parentFolderId] (null = root); posts the new folder id. */
+    fun createFolder(name: String, parentFolderId: String?, onCreated: (newFolderId: String) -> Unit) {
+        executor.execute {
+            val id = runCatching { repo?.createFolder(name, parentFolderId) ?: "" }
+                .onFailure { android.util.Log.e(TAG, "failed to create folder", it) }
+                .getOrDefault("")
+            poster { onCreated(id) }
+        }
+    }
+
+    /** Rename a folder; callback posted when done. */
+    fun renameFolder(folderId: String, name: String, onDone: () -> Unit) {
+        executor.execute {
+            runCatching { repo?.renameFolder(folderId, name) }
+                .onFailure { android.util.Log.e(TAG, "failed to rename folder", it) }
+            poster { onDone() }
+        }
+    }
+
+    /** List the folders directly under [parentFolderId] (null = root); posts the result. */
+    fun getFoldersForParent(parentFolderId: String?, onResult: (List<FolderMeta>) -> Unit) {
+        executor.execute {
+            val folders = runCatching { repo?.getFoldersForParent(parentFolderId) ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to list folders", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(folders) }
+        }
+    }
+
+    /** Compute the root-first folder path ending at [folderId]; posts the result. */
+    fun folderPath(folderId: String, onResult: (List<FolderMeta>) -> Unit) {
+        executor.execute {
+            val path = runCatching { repo?.folderPath(folderId) ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to compute folder path", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(path) }
         }
     }
 

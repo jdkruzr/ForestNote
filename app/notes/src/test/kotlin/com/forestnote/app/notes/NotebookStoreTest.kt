@@ -1,6 +1,9 @@
 package com.forestnote.app.notes
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.forestnote.core.format.FolderCard
+import com.forestnote.core.format.FolderMeta
+import com.forestnote.core.format.NotebookCard
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.format.PageMeta
 import com.forestnote.core.format.PageTemplate
@@ -385,6 +388,73 @@ class NotebookStoreTest {
         val page = pages.first { it.id == pageId }
         assertEquals(PageTemplate.RULED, page.template)
         assertEquals(6, page.templatePitchMm)
+        store.shutdown()
+    }
+
+    // C2: a createFolder -> getFoldersForParent(null) round-trip returns the folder through the store callbacks.
+    @Test
+    fun createFolderThenListReturnsItThroughTheStore() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+
+        val folderId = awaitResult<String> { cb -> store.createFolder("Work", null) { cb(it) } }
+        assertEquals(26, folderId.length, "store posts the new folder's 26-char ULID")
+
+        val roots = awaitResult<List<FolderMeta>> { cb -> store.getFoldersForParent(null) { cb(it) } }
+        assertEquals(listOf(folderId), roots.map { it.id }, "the created root folder is listed through the store")
+        assertEquals("Work", roots.first().name, "the listed folder carries its name")
+
+        store.shutdown()
+    }
+
+    // C4: folder + notebook cards are scoped to the current folder (root here) through the store.
+    @Test
+    fun folderAndNotebookCardsScopedToRootThroughTheStore() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+        val newNotebookId = awaitResult<String> { cb -> store.createNotebook("Cards") { cb(it) } }
+        val folderId = awaitResult<String> { cb -> store.createFolder("Work", null) { cb(it) } }
+
+        val notebooks = awaitResult<List<NotebookCard>> { cb -> store.listNotebookCardsInFolder(null) { cb(it) } }
+        val created = notebooks.first { it.id == newNotebookId }
+        assertEquals("Cards", created.name, "notebook card carries the name")
+        assertTrue(created.pageCount >= 1, "a created notebook has at least its initial page")
+
+        val folders = awaitResult<List<FolderCard>> { cb -> store.listFolderCardsForParent(null) { cb(it) } }
+        assertEquals(listOf(folderId), folders.map { it.id }, "the created root folder is listed")
+        assertEquals(0L, folders.first().notebookCount, "a fresh folder has no notebooks")
+
+        store.shutdown()
+    }
+
+    // C3b: thumbnailSource returns the first page + stroke count; loadStrokesForPage reads it back.
+    @Test
+    fun thumbnailSourceAndArbitraryPageLoadThroughTheStore() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+        val saved = horizontalStroke()
+        store.save(saved)
+
+        val activeNotebookId = awaitResult<String> { cb -> store.listNotebooks { _, active -> cb(active) } }
+        val src = awaitResult<ThumbnailSource?> { cb -> store.thumbnailSource(activeNotebookId) { cb(it) } }
+        assertTrue(src != null, "thumbnailSource is non-null for a notebook with a page")
+        assertTrue(src!!.strokeCount >= 1, "stroke count reflects the saved stroke")
+
+        val strokes = awaitResult<List<Stroke>> { cb -> store.loadStrokesForPage(src.pageId) { cb(it) } }
+        assertEquals(listOf(saved.id), strokes.map { it.id }, "arbitrary-page load returns the saved stroke")
+
         store.shutdown()
     }
 

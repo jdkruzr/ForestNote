@@ -1,6 +1,6 @@
 # ForestNote
 
-Last verified: 2026-05-25
+Last verified: 2026-05-26
 
 E-ink note-taking app for the Viwoods AiPaper Mini tablet. Uses reverse-engineered fast ink APIs for low-latency stylus rendering with a fallback path for generic Android devices.
 
@@ -33,7 +33,7 @@ E-ink note-taking app for the Viwoods AiPaper Mini tablet. Uses reverse-engineer
 - Pressure stored as millipressure (0-1000 integer)
 - Notebook/page/stroke identity is a client-minted ULID (String), assigned at construction — no "unsaved" id state
 - All DB access is off the main thread, serialized through `NotebookStore` (single background thread); UI never touches `NotebookRepository` directly
-- Scope: multiple notebooks, each with multiple pages. One SQLite library file holds `notebook → page → stroke`; the active notebook+page are restored on launch from an `app_state` row
+- Scope: multiple notebooks (optionally nested in folders), each with multiple pages. One SQLite library file holds `folder → notebook → page → stroke`; the active notebook+page are restored on launch from an `app_state` row (when there is none to resume, the app opens into the Library)
 
 ## Boundaries
 - Safe to edit: `app/`, `core/`

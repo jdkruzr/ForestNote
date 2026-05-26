@@ -6,16 +6,16 @@ import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
-import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
-import android.widget.ListView
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.TextView
+import com.forestnote.core.format.FolderCard
 import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.format.PageTemplate
+import com.forestnote.core.format.StartView
 import com.forestnote.core.ink.BackendDetector
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
@@ -43,7 +43,7 @@ class MainActivity : Activity() {
     private lateinit var store: NotebookStore
     private lateinit var toolBar: ToolBar
     private lateinit var pageIndicator: TextView
-    private lateinit var btnNotebooks: TextView
+    private lateinit var btnNotebooks: ImageButton
     private lateinit var btnNext: ImageButton
     private var isEInk = false
 
@@ -53,6 +53,9 @@ class MainActivity : Activity() {
     // Full-screen Settings overlay (B2). Reuses this Activity's single store; shown over
     // the editor and dismissed by its Back header or the system back button.
     private val settingsView = SettingsView()
+    // Full-screen Library overlay (C3a). Like settingsView, reuses this Activity's single
+    // store; reached by tapping the notebook label and dismissed by the system back button.
+    private val libraryView = LibraryView()
     // Shared with DrawView (same instance); DrawView updates its extents on layout, so
     // virtualLongAxis is current by the time paste() reads it for the in-bounds offset.
     private val pageTransform = PageTransform()
@@ -115,9 +118,9 @@ class MainActivity : Activity() {
         }
         pageIndicator.setOnClickListener { showPagePicker() }
 
-        // Notebook label opens the notebook picker.
+        // Notebook label opens the Library overlay (C6: the picker is fully superseded).
         btnNotebooks = findViewById(R.id.btn_notebooks)
-        btnNotebooks.setOnClickListener { showNotebookPicker() }
+        btnNotebooks.setOnClickListener { openLibrary() }
 
         // Non-blocking restore: the canvas is interactive immediately; previously-saved
         // ink appears when the async load returns, merged with anything drawn meanwhile.
@@ -125,7 +128,18 @@ class MainActivity : Activity() {
         store.load { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             refreshPageIndicator()
-            refreshNotebookLabel()
+        }
+
+        // AC4.1: cold launch resumes the editor on the last-active notebook, unless the
+        // user's startView preference is the Library. The Library also opens defensively
+        // when there is no active notebook (bootstrap normally prevents that state).
+        store.loadSettings { settings ->
+            store.listNotebooks { notebooks, activeId ->
+                val startOnLibrary = settings.startView == StartView.LIBRARY
+                if (LaunchLogic.shouldOpenLibraryOnLaunch(activeId, notebooks.size, startOnLibrary)) {
+                    openLibrary()
+                }
+            }
         }
 
         // Create and wire ToolBar
@@ -258,7 +272,6 @@ class MainActivity : Activity() {
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()       // clears e-ink ghosting on switch (AC6.4)
             refreshPageIndicator()
-            refreshNotebookLabel()
         }
     }
 
@@ -269,58 +282,45 @@ class MainActivity : Activity() {
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()
             refreshPageIndicator()
-            refreshNotebookLabel()
         }
     }
 
-    /** Reload the notebook list + active id; show the active notebook's name on the label. */
-    private fun refreshNotebookLabel() {
-        store.listNotebooks { notebooks, activeId ->
-            btnNotebooks.text = notebooks.firstOrNull { it.id == activeId }?.name ?: "Notebook"
-        }
-    }
-
-    /** Swap to another notebook: clear canvas, load its active/first page, refresh labels. */
+    /** Swap to another notebook: clear canvas, load its active/first page. */
     private fun goToNotebook(notebookId: String) {
         drawView.clearAll()
         store.switchNotebook(notebookId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()
             refreshPageIndicator()
-            refreshNotebookLabel()
         }
     }
 
-    /** Notebook picker: tap a row to switch, long-press a row for its Properties dialog. */
-    private fun showNotebookPicker() {
-        store.listNotebooks { notebooks, _ ->
-            val listView = ListView(this)
-            listView.adapter = ArrayAdapter(
-                this, android.R.layout.simple_list_item_1, notebooks.map { it.name }
-            )
-            val dialog = AlertDialog.Builder(this)
-                .setTitle("Notebooks")
-                .setView(listView)
-                .setPositiveButton("New Notebook") { _, _ -> promptNewNotebook() }
-                // Interim Settings entry: the picker is C6's Library-home predecessor, so
-                // Settings lives here until the Library header (AC4.6) replaces the picker.
-                .setNeutralButton("Settings") { _, _ -> openSettings() }
-                .setNegativeButton("Cancel", null)
-                .create()
-            listView.setOnItemClickListener { _, _, which, _ ->
-                dialog.dismiss()
-                goToNotebook(notebooks[which].id)
-            }
-            listView.setOnItemLongClickListener { _, _, which, _ ->
-                // Dismiss the picker first so Properties is a standalone dialog (it's the
-                // same entry point AC4.5's Library card will reuse once C3a lands).
-                dialog.dismiss()
-                openNotebookProperties(notebooks[which], canDelete = notebooks.size > 1)
-                true
-            }
-            dialog.show()
-        }
+    /**
+     * Show the full-screen Library overlay (C3a). Replaces the old notebook picker: the
+     * grid is the list/switch, +Notebook creates, the gear opens Settings. Tap a card to
+     * open it in the editor; long-press for its Properties dialog (AC4.4/AC4.5).
+     */
+    private fun openLibrary() {
+        if (libraryView.isShowing) return
+        val content = findViewById<android.view.ViewGroup>(android.R.id.content)
+        libraryView.show(content, store, LibraryView.Callbacks(
+            onOpenNotebook = { card -> libraryView.hide(); goToNotebook(card.id) },
+            onNotebookProperties = { card ->
+                // Build a NotebookMeta from the card to reuse the A9 Properties dialog (AC4.5).
+                openNotebookProperties(
+                    NotebookMeta(card.id, card.name, card.createdAt, card.modifiedAt),
+                    canDelete = true
+                )
+            },
+            onNewNotebook = { promptNewNotebook(libraryView.currentFolderId) },
+            onNewFolder = { promptNewFolder(libraryView.currentFolderId) },
+            onFolderProperties = { folder -> openFolderProperties(folder) },
+            onOpenSettings = { openSettings() }
+        ))
     }
+
+    /** Dismiss the Library overlay and return to the editor. */
+    private fun closeLibrary() { libraryView.hide() }
 
     /** Show the full-screen Settings overlay over the editor (B2). */
     private fun openSettings() {
@@ -420,6 +420,10 @@ class MainActivity : Activity() {
             closeSettings()
             return
         }
+        if (libraryView.isShowing) {
+            closeLibrary()
+            return
+        }
         @Suppress("DEPRECATION")
         super.onBackPressed()
     }
@@ -429,14 +433,50 @@ class MainActivity : Activity() {
         java.text.SimpleDateFormat("MMM d, yyyy h:mm a", java.util.Locale.getDefault())
             .format(java.util.Date(epochMs))
 
-    private fun promptNewNotebook() {
+    /** New-notebook dialog. [parentFolderId] places it in the folder being viewed (null = root). */
+    private fun promptNewNotebook(parentFolderId: String? = null) {
         val input = EditText(this).apply { hint = "Notebook name" }
         AlertDialog.Builder(this)
             .setTitle("New Notebook")
             .setView(input)
             .setPositiveButton("Create") { _, _ ->
                 val name = input.text.toString().trim().ifEmpty { "Untitled" }
-                store.createNotebook(name) { newId -> goToNotebook(newId) }
+                // Created from the Library (or editor): open the new notebook, hiding the
+                // Library if it's showing (no-op when invoked from the editor).
+                store.createNotebook(name, parentFolderId) { newId -> libraryView.hide(); goToNotebook(newId) }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** New-folder dialog (mirrors promptNewNotebook). Creates inside [parentFolderId] (null = root). */
+    private fun promptNewFolder(parentFolderId: String? = null) {
+        val input = EditText(this).apply { hint = "Folder name" }
+        AlertDialog.Builder(this)
+            .setTitle("New Folder")
+            .setView(input)
+            .setPositiveButton("Create") { _, _ ->
+                val name = input.text.toString().trim().ifEmpty { "Untitled" }
+                store.createFolder(name, parentFolderId) { libraryView.reload() }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /**
+     * Folder Properties (C4): a minimal rename dialog. No Delete — folder soft-delete is
+     * the E/recycle-bin area, out of scope here (AC4.5's delete clause for folders).
+     */
+    private fun openFolderProperties(folder: FolderCard) {
+        val input = EditText(this).apply { setText(folder.name) }
+        AlertDialog.Builder(this)
+            .setTitle("Folder Properties")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val name = input.text.toString().trim().ifEmpty { folder.name }
+                if (name != folder.name) {
+                    store.renameFolder(folder.id, name) { libraryView.reload() }
+                }
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -466,7 +506,9 @@ class MainActivity : Activity() {
             .setPositiveButton("Save") { _, _ ->
                 val name = nameInput.text.toString().trim().ifEmpty { notebook.name }
                 if (name != notebook.name) {
-                    store.renameNotebook(notebook.id, name) { refreshNotebookLabel() }
+                    store.renameNotebook(notebook.id, name) {
+                        if (libraryView.isShowing) libraryView.reload()
+                    }
                 }
             }
             .setNegativeButton("Cancel", null)
@@ -484,7 +526,7 @@ class MainActivity : Activity() {
                 store.deleteNotebook(notebook.id) {
                     // Repo already switched to a remaining/bootstrapped notebook.
                     reloadCurrentPage()
-                    refreshNotebookLabel()
+                    if (libraryView.isShowing) libraryView.reload()
                 }
             }
             .setNegativeButton("Cancel", null)

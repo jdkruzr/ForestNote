@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One Library folder card (C4): a folder glyph tile (same 3:4-ish footprint as a
+     notebook card, for grid alignment) over a bold name + "N notebooks" count line. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:layout_margin="4dp"
+    android:background="@color/white">
+
+    <ImageView
+        android:id="@+id/folder_glyph"
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:scaleType="centerInside"
+        android:padding="24dp"
+        android:background="@color/card_placeholder"
+        android:src="@drawable/ic_folder"
+        android:contentDescription="Folder" />
+
+    <TextView
+        android:id="@+id/folder_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="2dp"
+        android:textColor="@color/black"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <TextView
+        android:id="@+id/folder_count"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/gray_dark"
+        android:textSize="10sp"
+        android:maxLines="1"
+        android:ellipsize="end" />
+</LinearLayout>
