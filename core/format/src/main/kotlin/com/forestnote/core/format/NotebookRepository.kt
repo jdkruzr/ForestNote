@@ -759,21 +759,78 @@ class NotebookRepository private constructor(
      * already enabled, returns the existing site_id and does not re-backfill. Returns the site_id.
      */
     fun enableSync(): String {
+        val site = mintSiteId()
+        backfillOutbox()
+        return site
+    }
+
+    /**
+     * Mint + persist this install's `site_id` (capture goes live from here), WITHOUT backfilling.
+     * Idempotent — returns the existing site_id if already minted. The join handshake mints first,
+     * pulls, then [backfillOutbox]s, so a fresh device doesn't upload before it sees the server.
+     */
+    fun mintSiteId(): String {
         db.notebookQueries.ensureSyncState()
         db.notebookQueries.getSyncState().executeAsOne().site_id?.let { return it }
         val site = Ulid.generate(clock())
-        db.transaction {
-            db.notebookQueries.setSyncSiteId(site)
-            val now = clock()
-            // One op per existing row, parent-first (order is irrelevant to LWW). wall_ts = now:
-            // pre-sync libraries have disjoint ULIDs across devices, so a backfill timestamp can
-            // never lose a cross-device conflict, and later real edits get a higher op_seq.
-            db.notebookQueries.allFolderIds().executeAsList().forEach { enqueueOp("folder", it, now) }
-            db.notebookQueries.allNotebookIds().executeAsList().forEach { enqueueOp("notebook", it, now) }
-            db.notebookQueries.allPageIds().executeAsList().forEach { enqueueOp("page", it, now) }
-            db.notebookQueries.allStrokeIds().executeAsList().forEach { enqueueOp("stroke", it, now) }
-        }
+        db.notebookQueries.setSyncSiteId(site)
         return site
+    }
+
+    /**
+     * Enqueue an upload op for every local row that has no `sync_row_meta` yet — i.e. genuinely
+     * local content the server hasn't seen. Rows that arrived via a pull are already stamped, so
+     * they are skipped: backfill is idempotent and never re-uploads relayed rows. wall_ts = now is
+     * safe (pre-sync libraries have disjoint ULIDs across devices, so a backfill can't lose a
+     * cross-device conflict, and later real edits get a higher op_seq). No-op when sync is off.
+     */
+    fun backfillOutbox() {
+        if (syncSiteId() == null) return
+        db.transaction {
+            val now = clock()
+            db.notebookQueries.allFolderIds().executeAsList().forEach { if (lacksMeta("folder", it)) enqueueOp("folder", it, now) }
+            db.notebookQueries.allNotebookIds().executeAsList().forEach { if (lacksMeta("notebook", it)) enqueueOp("notebook", it, now) }
+            db.notebookQueries.allPageIds().executeAsList().forEach { if (lacksMeta("page", it)) enqueueOp("page", it, now) }
+            db.notebookQueries.allStrokeIds().executeAsList().forEach { if (lacksMeta("stroke", it)) enqueueOp("stroke", it, now) }
+        }
+    }
+
+    private fun lacksMeta(table: String, pk: String): Boolean =
+        db.notebookQueries.getRowMeta(table, pk).executeAsOneOrNull() == null
+
+    /**
+     * True iff the library is an untouched fresh install: exactly one live notebook with exactly
+     * one live page, no strokes on it, and no folders. The join handshake captures this BEFORE
+     * pulling so it can discard the auto-created bootstrap notebook once the server delivers real
+     * content (rather than uploading a stray empty notebook to every device).
+     */
+    fun isPristineBootstrap(): Boolean {
+        val nbs = db.notebookQueries.listNotebooks().executeAsList()
+        if (nbs.size != 1) return false
+        if (db.notebookQueries.listAllFolders().executeAsList().isNotEmpty()) return false
+        val pages = db.notebookQueries.listPagesForNotebook(nbs.first().id).executeAsList()
+        if (pages.size != 1) return false
+        return db.notebookQueries.countStrokesForPage(pages.first().id).executeAsOne() == 0L
+    }
+
+    /**
+     * Hard-delete the untouched bootstrap [notebookId] and its page(s) — local reclaim only, since
+     * a pristine bootstrap has no `sync_row_meta` and was never uploaded. Re-points the active
+     * notebook/page to a surviving (pulled) one so the repo's "always a valid active row"
+     * invariant holds. Call only after a pull has delivered at least one other notebook.
+     */
+    fun discardBootstrapNotebook(notebookId: String) {
+        db.transaction {
+            db.notebookQueries.deleteStrokesForNotebook(notebookId)
+            db.notebookQueries.deletePagesForNotebook(notebookId)
+            db.notebookQueries.deleteNotebook(notebookId) // raw hard-delete query
+        }
+        val live = db.notebookQueries.listNotebooks().executeAsList()
+        if (currentNotebookId == notebookId || live.none { it.id == currentNotebookId }) {
+            currentNotebookId = live.firstOrNull()?.id ?: return
+            currentPageId = db.notebookQueries.listPagesForNotebook(currentNotebookId).executeAsList().firstOrNull()?.id ?: currentPageId
+            persistActive()
+        }
     }
 
     /** True once [enableSync] has minted a site_id (capture is active). */
