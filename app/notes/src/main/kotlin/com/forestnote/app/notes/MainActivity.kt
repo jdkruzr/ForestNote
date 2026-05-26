@@ -11,8 +11,11 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ListView
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import com.forestnote.core.format.NotebookMeta
+import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.ink.BackendDetector
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
@@ -168,6 +171,9 @@ class MainActivity : Activity() {
         toolBar.setOnPasteClicked { paste() }
         clipboard.addListener { strokes -> toolBar.setPasteEnabled(strokes.isNotEmpty()) }
         toolBar.setPasteEnabled(!clipboard.isEmpty())
+
+        // Template cell: per-page template override picker (B4).
+        toolBar.setOnTemplateClicked { openPageTemplate() }
 
         // E-ink optimizations
         if (isEInk) {
@@ -330,6 +336,84 @@ class MainActivity : Activity() {
         refreshPageIndicator()
     }
 
+    /**
+     * Per-page template override picker (B4). Prefills from the active page's stored
+     * override ("Use default" when NULL), lets the user pick Blank/Dot/Ruled/Grid +
+     * pitch, and writes via setPageTemplate (NULL clears the override → inherit the
+     * global default). On save the editor re-resolves + repaints the effective config.
+     */
+    private fun openPageTemplate() {
+        // Need the active page's current override + the global default for pitch prefill.
+        store.loadSettings { settings ->
+            store.listPages { pages, activeId ->
+                val page = pages.firstOrNull { it.id == activeId } ?: return@listPages
+                val view = layoutInflater.inflate(R.layout.dialog_page_template, null)
+                val rgTemplate = view.findViewById<RadioGroup>(R.id.rg_pt_template)
+                val rowPitch = view.findViewById<View>(R.id.row_pt_pitch)
+                val rgPitch = view.findViewById<RadioGroup>(R.id.rg_pt_pitch)
+
+                // Build pitch radios from the shared presets.
+                val pitchButtons = SettingsFormLogic.pitchPresetsMm.mapIndexed { i, mm ->
+                    RadioButton(this).apply {
+                        id = PITCH_ID_BASE + i
+                        text = "$mm mm"
+                    }
+                }
+                pitchButtons.forEach { rgPitch.addView(it) }
+
+                val templateToId = mapOf(
+                    PageTemplate.BLANK to R.id.rb_pt_blank,
+                    PageTemplate.DOT to R.id.rb_pt_dot,
+                    PageTemplate.RULED to R.id.rb_pt_ruled,
+                    PageTemplate.GRID to R.id.rb_pt_grid
+                )
+
+                fun isDrawnTemplateChecked(): Boolean =
+                    rgTemplate.checkedRadioButtonId.let {
+                        it == R.id.rb_pt_dot || it == R.id.rb_pt_ruled || it == R.id.rb_pt_grid
+                    }
+                fun applyPitchVisibility() {
+                    rowPitch.visibility = if (isDrawnTemplateChecked()) View.VISIBLE else View.GONE
+                }
+
+                // Prefill: NULL override → "Use default"; else the stored template + pitch.
+                if (page.template == null) {
+                    rgTemplate.check(R.id.rb_pt_default)
+                } else {
+                    rgTemplate.check(templateToId.getValue(page.template!!))
+                }
+                pitchButtons[SettingsFormLogic.selectedPitchIndex(page.templatePitchMm ?: settings.defaultPitchMm)]
+                    .isChecked = true
+                applyPitchVisibility()
+                rgTemplate.setOnCheckedChangeListener { _, _ -> applyPitchVisibility() }
+
+                AlertDialog.Builder(this)
+                    .setTitle("Page template")
+                    .setView(view)
+                    .setPositiveButton("Save") { _, _ ->
+                        if (rgTemplate.checkedRadioButtonId == R.id.rb_pt_default) {
+                            // Freeze-at-creation model: "Use default" snapshots the CURRENT
+                            // global default onto the page (concrete), so the page won't
+                            // track future default changes (B4 decision).
+                            store.setPageTemplate(page.id, settings.defaultTemplate, settings.defaultPitchMm) {
+                                refreshPageIndicator()
+                            }
+                        } else {
+                            val template = templateToId.entries.first { it.value == rgTemplate.checkedRadioButtonId }.key
+                            val pitch = if (template == PageTemplate.BLANK) {
+                                null
+                            } else {
+                                SettingsFormLogic.pitchForIndex(rgPitch.checkedRadioButtonId - PITCH_ID_BASE)
+                            }
+                            store.setPageTemplate(page.id, template, pitch) { refreshPageIndicator() }
+                        }
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+        }
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (settingsView.isShowing) {
@@ -488,5 +572,8 @@ class MainActivity : Activity() {
         // misreports density (densityDpi=320, xdpi≈146), so neither is usable for
         // physical mm sizing — use this measured constant for template pitch.
         const val AIPAPER_MINI_PPI = 293f
+
+        // Base for code-generated pitch RadioButton ids in the page-template dialog.
+        const val PITCH_ID_BASE = 0x71_00_01
     }
 }

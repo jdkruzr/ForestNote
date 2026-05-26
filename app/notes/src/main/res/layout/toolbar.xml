@@ -229,4 +229,39 @@
             android:paddingBottom="2dp" />
     </LinearLayout>
 
+    <LinearLayout
+        android:id="@+id/cell_template"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="Template"
+        android:background="?attr/selectableItemBackground">
+
+        <ImageButton
+            android:id="@+id/btn_template"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:src="@drawable/ic_template"
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="no"
+            android:background="@null"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Template"
+            android:gravity="center"
+            android:textSize="9sp"
+            android:textColor="@color/black"
+            android:maxLines="1"
+            android:paddingBottom="2dp" />
+    </LinearLayout>
+
 </LinearLayout>

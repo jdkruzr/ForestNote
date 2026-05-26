@@ -128,3 +128,9 @@ UPDATE app_state SET settings_json = ? WHERE id = 0;
 
 setPageTemplate:
 UPDATE page SET template = ?, template_pitch_mm = ? WHERE id = ?;
+
+-- One-time bake (B4): freeze legacy "inherit" pages (template IS NULL) to a
+-- concrete template so they stop tracking the global default. Idempotent — once
+-- baked, no page is NULL, so re-running is a no-op.
+bakeNullPageTemplates:
+UPDATE page SET template = ?, template_pitch_mm = ? WHERE template IS NULL;

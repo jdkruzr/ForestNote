@@ -39,9 +39,11 @@ class ToolBar(
     private val lblPaste: TextView = root.findViewById(R.id.label_paste)
     private val btnClear: View = root.findViewById(R.id.cell_clear)
     private val btnRefresh: View = root.findViewById(R.id.cell_refresh)
+    private val btnTemplate: View = root.findViewById(R.id.cell_template)
 
     private var activePasteCallback: (() -> Unit)? = null
     private var pasteEnabled = false
+    private var activeTemplateCallback: (() -> Unit)? = null
 
     // Group cells whose active state is highlighted (Fountain = Pen group; Lasso; Erase = erasers).
     private val highlightCells = listOf(btnFountain, btnLasso, btnErase)
@@ -85,6 +87,8 @@ class ToolBar(
         btnRefresh.setOnClickListener { activeRefreshCallback?.invoke() }
         // Paste is an action cell, gated on a non-empty clipboard (greyed when empty).
         btnPaste.setOnClickListener { if (pasteEnabled) activePasteCallback?.invoke() }
+        // Template is an action cell: opens the per-page template picker (B4).
+        btnTemplate.setOnClickListener { activeTemplateCallback?.invoke() }
 
         // On e-ink, remove ripple background to prevent ghosting
         if (isEInk) {
@@ -94,6 +98,7 @@ class ToolBar(
             btnPaste.background = null
             btnClear.background = null
             btnRefresh.background = null
+            btnTemplate.background = null
         }
         setPasteEnabled(false)
 
@@ -161,6 +166,11 @@ class ToolBar(
     /** Set the callback to invoke when the Paste cell is tapped (only fires when enabled). */
     fun setOnPasteClicked(callback: () -> Unit) {
         activePasteCallback = callback
+    }
+
+    /** Set the callback to invoke when the Template cell is tapped (opens the per-page picker). */
+    fun setOnTemplateClicked(callback: () -> Unit) {
+        activeTemplateCallback = callback
     }
 
     /** Enable/disable the Paste cell: greyed (alpha 0.3) + no-op when the clipboard is empty. */

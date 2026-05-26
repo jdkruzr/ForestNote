@@ -20,7 +20,7 @@ Persists a notebook library to a single SQLite file (.forestnote) using SQLDelig
 - BLOB encoding for points: 5 ints per point (x, y, pressure, tsHigh, tsLow), little-endian. Compact and fast.
 - Single library file `default.forestnote` holding `notebook → page → stroke`; an `app_state` singleton row (id=0) records the active notebook+page, plus `settings_json` (the `Settings` blob) and `clipboard_json` (persisted clipboard; column added in v5, wiring deferred)
 - Settings stored as ONE JSON column (`app_state.settings_json`), not a key/value table: read on launch, written rarely, never queried by field. `Settings.json` codec uses `ignoreUnknownKeys` + `encodeDefaults` so the blob round-trips across build versions and adding a field never needs a migration
-- Per-page template override lives on `page.template`/`page.template_pitch_mm`; NULL = inherit `Settings.defaultTemplate`/`defaultPitchMm`. New pages are created NULL (inherit)
+- Per-page template lives on `page.template`/`page.template_pitch_mm`. **Freeze-at-creation (B4):** pages always store a CONCRETE template — the global default seeds only at creation (new notebook's first page from `Settings`; later pages copy their predecessor's columns). Changing the global default never retroactively changes existing pages. Legacy `template IS NULL` pages are baked to the current default once on open (`bakeNullPageTemplates`, idempotent). NULL is a transient/legacy state only; the resolver (`page.template ?: default`) remains as a safety fallback
 - `PRAGMA foreign_keys` is OFF, so `ON DELETE CASCADE` is inert — all multi-row deletes run through `db.transaction { }` deleting children first (strokes → pages → notebook)
 - Factory methods (open/forTesting/openExisting) instead of public constructor: controls lifecycle
 
@@ -35,7 +35,7 @@ Persists a notebook library to a single SQLite file (.forestnote) using SQLDelig
 - `NotebookRepository.kt` - Storage facade (notebook/page/stroke CRUD, switch, bootstrap, app_state restore)
 - `StrokeSerializer.kt` - Binary point encoding/decoding
 - `Settings.kt` - `@Serializable Settings` data class (global default template/pitch + sync/AI/CalDAV URLs, all defaulted) + `PageTemplate` enum + the shared `Settings.json` codec
-- `notebook.sq` - SQLDelight v5 schema (notebook/page/stroke/app_state; `notebook.modified_at`; `app_state.settings_json`/`clipboard_json`; `page.template`/`template_pitch_mm`) and queries (incl. `getSettingsJson`/`setSettingsJson`, `setPageTemplate`, `countPagesForNotebook`, `touchNotebook`)
+- `notebook.sq` - SQLDelight v5 schema (notebook/page/stroke/app_state; `notebook.modified_at`; `app_state.settings_json`/`clipboard_json`; `page.template`/`template_pitch_mm`) and queries (incl. `getSettingsJson`/`setSettingsJson`, `setPageTemplate`, `bakeNullPageTemplates`, `countPagesForNotebook`, `touchNotebook`)
 - `migrations/` - `1.sqm` (v1→v2), `2.sqm` (v2→v3) both DESTRUCTIVE resets; `3.sqm` (v3→v4) adds `notebook.modified_at` (non-destructive, backfilled = created_at); `4.sqm` (v4→v5) adds settings/clipboard + per-page template columns (non-destructive)
 
 ## Gotchas
