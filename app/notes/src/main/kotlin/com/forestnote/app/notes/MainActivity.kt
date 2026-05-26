@@ -47,6 +47,9 @@ class MainActivity : Activity() {
     // In-process clipboard for lasso Cut/Copy/Paste (held across A7 selection + A8 paste).
     private val clipboard = InProcessClipboard()
     private lateinit var selectionMenu: SelectionMenuView
+    // Full-screen Settings overlay (B2). Reuses this Activity's single store; shown over
+    // the editor and dismissed by its Back header or the system back button.
+    private val settingsView = SettingsView()
     // Shared with DrawView (same instance); DrawView updates its extents on layout, so
     // virtualLongAxis is current by the time paste() reads it for the in-bounds offset.
     private val pageTransform = PageTransform()
@@ -278,6 +281,9 @@ class MainActivity : Activity() {
                 .setTitle("Notebooks")
                 .setView(listView)
                 .setPositiveButton("New Notebook") { _, _ -> promptNewNotebook() }
+                // Interim Settings entry: the picker is C6's Library-home predecessor, so
+                // Settings lives here until the Library header (AC4.6) replaces the picker.
+                .setNeutralButton("Settings") { _, _ -> openSettings() }
                 .setNegativeButton("Cancel", null)
                 .create()
             listView.setOnItemClickListener { _, _, which, _ ->
@@ -293,6 +299,30 @@ class MainActivity : Activity() {
             }
             dialog.show()
         }
+    }
+
+    /** Show the full-screen Settings overlay over the editor (B2). */
+    private fun openSettings() {
+        if (settingsView.isShowing) return
+        val content = findViewById<android.view.ViewGroup>(android.R.id.content)
+        settingsView.show(content, store) { closeSettings() }
+    }
+
+    /** Dismiss the Settings overlay and return to the editor. */
+    private fun closeSettings() {
+        settingsView.hide()
+        // A template/pitch change while in Settings affects the editor's rendering once
+        // B3 lands; for now there is nothing to repaint.
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (settingsView.isShowing) {
+            closeSettings()
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
     }
 
     /** Format an epoch-ms timestamp for the Properties dialog (device locale). */
