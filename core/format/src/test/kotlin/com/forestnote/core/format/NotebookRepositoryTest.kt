@@ -493,4 +493,23 @@ class NotebookRepositoryTest {
         assertEquals(null, repo.firstPageIdForNotebook("nope"), "unknown notebook → null first page")
         repo.close()
     }
+
+    @Test
+    fun createNotebookInFolderLandsInThatFolder() {
+        // AC4.4: a notebook created with a folder id reads back inside the folder, not at root.
+        val repo = createRepository()
+        val folderId = repo.createFolder("Work", null)
+        val inFolderId = repo.createNotebook("Inside", folderId)
+
+        assertEquals(
+            listOf(inFolderId),
+            repo.listNotebookCardsInFolder(folderId).map { it.id },
+            "the notebook created in the folder appears there"
+        )
+        assertTrue(
+            repo.listNotebookCardsInFolder(null).none { it.id == inFolderId },
+            "and is absent from root"
+        )
+        repo.close()
+    }
 }

@@ -62,7 +62,7 @@ listNotebooks:
 SELECT * FROM notebook ORDER BY sort_order ASC, created_at ASC;
 
 insertNotebook:
-INSERT INTO notebook(id, name, sort_order, created_at, modified_at) VALUES (?, ?, ?, ?, ?);
+INSERT INTO notebook(id, name, sort_order, created_at, modified_at, folder_id) VALUES (?, ?, ?, ?, ?, ?);
 
 renameNotebook:
 UPDATE notebook SET name = ? WHERE id = ?;

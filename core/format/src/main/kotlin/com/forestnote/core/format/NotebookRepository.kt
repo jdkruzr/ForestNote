@@ -145,7 +145,7 @@ class NotebookRepository private constructor(
         var notebooks = db.notebookQueries.listNotebooks().executeAsList()
         if (notebooks.isEmpty()) {
             val nid = Ulid.generate()
-            db.notebookQueries.insertNotebook(nid, "Notebook 1", 0, now, now)
+            db.notebookQueries.insertNotebook(nid, "Notebook 1", 0, now, now, null)
             notebooks = db.notebookQueries.listNotebooks().executeAsList()
         }
         val state = db.notebookQueries.getAppState().executeAsOneOrNull()
@@ -273,14 +273,17 @@ class NotebookRepository private constructor(
         persistActive()
     }
 
-    /** Create a notebook appended at sort_order = max+1, with one initial page (AC2.1). */
-    fun createNotebook(name: String): String {
+    /**
+     * Create a notebook appended at sort_order = max+1, with one initial page (AC2.1).
+     * [folderId] places it inside a folder (C4); null = root (the editor's default).
+     */
+    fun createNotebook(name: String, folderId: String? = null): String {
         val nid = Ulid.generate()
         val now = clock()
         val so = db.notebookQueries.nextNotebookSortOrder().executeAsOne()
         val (seedTemplate, seedPitch) = defaultTemplateSeed()
         db.transaction {
-            db.notebookQueries.insertNotebook(nid, name, so, now, now)
+            db.notebookQueries.insertNotebook(nid, name, so, now, now, folderId)
             // A notebook always has at least one page; its first page is seeded with the
             // global default (concrete), since it has no predecessor to copy (B4).
             val pid = Ulid.generate()

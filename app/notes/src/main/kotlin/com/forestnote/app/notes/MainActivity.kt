@@ -12,6 +12,7 @@ import android.widget.ImageButton
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.TextView
+import com.forestnote.core.format.FolderCard
 import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.ink.BackendDetector
@@ -309,7 +310,9 @@ class MainActivity : Activity() {
                     canDelete = true
                 )
             },
-            onNewNotebook = { promptNewNotebook() },
+            onNewNotebook = { promptNewNotebook(libraryView.currentFolderId) },
+            onNewFolder = { promptNewFolder(libraryView.currentFolderId) },
+            onFolderProperties = { folder -> openFolderProperties(folder) },
             onOpenSettings = { openSettings() }
         ))
     }
@@ -428,7 +431,8 @@ class MainActivity : Activity() {
         java.text.SimpleDateFormat("MMM d, yyyy h:mm a", java.util.Locale.getDefault())
             .format(java.util.Date(epochMs))
 
-    private fun promptNewNotebook() {
+    /** New-notebook dialog. [parentFolderId] places it in the folder being viewed (null = root). */
+    private fun promptNewNotebook(parentFolderId: String? = null) {
         val input = EditText(this).apply { hint = "Notebook name" }
         AlertDialog.Builder(this)
             .setTitle("New Notebook")
@@ -437,7 +441,40 @@ class MainActivity : Activity() {
                 val name = input.text.toString().trim().ifEmpty { "Untitled" }
                 // Created from the Library (or editor): open the new notebook, hiding the
                 // Library if it's showing (no-op when invoked from the editor).
-                store.createNotebook(name) { newId -> libraryView.hide(); goToNotebook(newId) }
+                store.createNotebook(name, parentFolderId) { newId -> libraryView.hide(); goToNotebook(newId) }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** New-folder dialog (mirrors promptNewNotebook). Creates inside [parentFolderId] (null = root). */
+    private fun promptNewFolder(parentFolderId: String? = null) {
+        val input = EditText(this).apply { hint = "Folder name" }
+        AlertDialog.Builder(this)
+            .setTitle("New Folder")
+            .setView(input)
+            .setPositiveButton("Create") { _, _ ->
+                val name = input.text.toString().trim().ifEmpty { "Untitled" }
+                store.createFolder(name, parentFolderId) { libraryView.reload() }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /**
+     * Folder Properties (C4): a minimal rename dialog. No Delete — folder soft-delete is
+     * the E/recycle-bin area, out of scope here (AC4.5's delete clause for folders).
+     */
+    private fun openFolderProperties(folder: FolderCard) {
+        val input = EditText(this).apply { setText(folder.name) }
+        AlertDialog.Builder(this)
+            .setTitle("Folder Properties")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val name = input.text.toString().trim().ifEmpty { folder.name }
+                if (name != folder.name) {
+                    store.renameFolder(folder.id, name) { libraryView.reload() }
+                }
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -469,7 +506,7 @@ class MainActivity : Activity() {
                 if (name != notebook.name) {
                     store.renameNotebook(notebook.id, name) {
                         refreshNotebookLabel()
-                        if (libraryView.isShowing) libraryView.refresh(store)
+                        if (libraryView.isShowing) libraryView.reload()
                     }
                 }
             }
@@ -489,7 +526,7 @@ class MainActivity : Activity() {
                     // Repo already switched to a remaining/bootstrapped notebook.
                     reloadCurrentPage()
                     refreshNotebookLabel()
-                    if (libraryView.isShowing) libraryView.refresh(store)
+                    if (libraryView.isShowing) libraryView.reload()
                 }
             }
             .setNegativeButton("Cancel", null)
