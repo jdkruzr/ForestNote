@@ -6,7 +6,7 @@ Last verified: 2026-05-25
 Abstracts device-specific e-ink rendering behind a common interface and provides the stroke data model, coordinate system, and geometry operations used by all other modules.
 
 ## Contracts
-- **Exposes**: `InkBackend` interface, `BackendDetector.detect()`, `Stroke`/`StrokeBuilder`/`StrokePoint` types, `Tool` sealed class (`Pen`/`StrokeEraser`/`PixelEraser`/`Lasso`), `PenVariant` enum, `PageTransform`, `PressureCurve`, `StrokeGeometry`, `Ulid`
+- **Exposes**: `InkBackend` interface, `BackendDetector.detect()`, `Stroke`/`StrokeBuilder`/`StrokePoint` types, `Tool` sealed class (`Pen`/`StrokeEraser`/`PixelEraser`/`Lasso`), `PenVariant` enum, `PageTransform` (virtual↔screen + `ppi`/`pitchPx(mm)` for physical mm→px), `PressureCurve`, `StrokeGeometry`, `Ulid`
 - **Guarantees**: `BackendDetector.detect()` always returns a working backend (GenericBackend fallback). All stroke/point data uses virtual coordinates. PageTransform is the sole virtual-to-screen converter.
 - **Expects**: Android Context for backend init. View dimensions for PageTransform.update().
 
@@ -36,7 +36,7 @@ Abstracts device-specific e-ink rendering behind a common interface and provides
 - `BackendDetector.kt` - Runtime backend selection (Viwoods > Generic)
 - `Stroke.kt` - Immutable Stroke (ULID id) + mutable StrokeBuilder
 - `Ulid.kt` - Dependency-free, time-sortable ULID generator (stroke/page identity)
-- `PageTransform.kt` - Virtual/screen coordinate conversion
+- `PageTransform.kt` - Virtual/screen coordinate conversion; `ppi` + `pitchPx(mm)` for physical-mm template pitch (caller sets `ppi` — use true panel PPI, never `densityDpi`)
 - `StrokeGeometry.kt` - Intersection testing and stroke splitting for erasers
 
 ## Gotchas
