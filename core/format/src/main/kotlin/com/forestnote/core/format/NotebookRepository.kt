@@ -262,6 +262,49 @@ class NotebookRepository private constructor(
         db.notebookQueries.renameNotebook(name, notebookId)
     }
 
+    // -- folders (C2) -------------------------------------------------------
+
+    private fun Folder.toFolderMeta() = FolderMeta(
+        id = id,
+        name = name,
+        sortOrder = sort_order,
+        createdAt = created_at,
+        modifiedAt = modified_at,
+        parentFolderId = parent_folder_id
+    )
+
+    /** Mints a ULID folder appended at sort_order = max+1 within its parent (AC5.3). */
+    fun createFolder(name: String, parentFolderId: String?): String {
+        val fid = Ulid.generate()
+        val now = clock()
+        val so = db.notebookQueries.nextFolderSortOrder(parentFolderId).executeAsOne()
+        db.notebookQueries.insertFolder(fid, name, so, now, now, parentFolderId)
+        return fid
+    }
+
+    /** Rename a folder (AC5.4). Does not bump modified_at, parallel to renameNotebook. */
+    fun renameFolder(folderId: String, name: String) {
+        db.notebookQueries.renameFolder(name, folderId)
+    }
+
+    /** Folders directly under [parentFolderId] (null = root), ordered by sort_order (AC5.4). */
+    fun getFoldersForParent(parentFolderId: String?): List<FolderMeta> =
+        db.notebookQueries.getFoldersForParent(parentFolderId).executeAsList().map { it.toFolderMeta() }
+
+    fun listAllFolders(): List<FolderMeta> =
+        db.notebookQueries.listAllFolders().executeAsList().map { it.toFolderMeta() }
+
+    fun findFolder(folderId: String): FolderMeta? =
+        db.notebookQueries.findFolder(folderId).executeAsOneOrNull()?.toFolderMeta()
+
+    /** The root-first folder path ending at [folderId] (cycle-guarded). */
+    fun folderPath(folderId: String): List<FolderMeta> =
+        FolderPathLogic.path(folderId, listAllFolders())
+
+    /** All descendant folder ids under [rootId] (excludes [rootId]). */
+    fun descendantFolderIds(rootId: String): List<String> =
+        FolderPathLogic.descendants(rootId, listAllFolders())
+
     /**
      * Delete a notebook and everything under it in one transaction (no FK-cascade
      * reliance, AC2.3). If the active notebook is deleted, switch to a remaining one;
