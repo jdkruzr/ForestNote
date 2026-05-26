@@ -79,6 +79,18 @@ DELETE FROM notebook WHERE id = ?;
 nextNotebookSortOrder:
 SELECT coalesce(max(sort_order), -1) + 1 FROM notebook;
 
+-- One row per notebook with its page count, for the Library grid. The correlated
+-- subquery avoids an N+1 of countPages() per card (which would flicker on recycle).
+listNotebookCards:
+SELECT
+    n.id,
+    n.name,
+    n.created_at,
+    n.modified_at,
+    (SELECT count(*) FROM page WHERE page.notebook_id = n.id) AS page_count
+FROM notebook n
+ORDER BY n.sort_order ASC, n.created_at ASC;
+
 -- folders --
 
 listAllFolders:

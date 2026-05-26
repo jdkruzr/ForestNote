@@ -415,4 +415,26 @@ class NotebookRepositoryTest {
         )
         repo.close()
     }
+
+    // -- Library cards (C3a) ------------------------------------------------
+
+    @Test
+    fun listNotebookCardsReturnsPageCountsAndOrder() {
+        // AC4.2/AC4.3: each notebook with its page count, in sort order.
+        val repo = createRepository()
+        // The bootstrap notebook is the first card (1 page). Add a second notebook with
+        // extra pages so page counts differ and ordering is observable.
+        val firstId = repo.listNotebooks().first().id
+        val secondId = repo.createNotebook("Second")
+        repo.switchNotebook(secondId)
+        repo.createPage()
+        repo.createPage() // Second now has 3 pages (initial + 2)
+
+        val cards = repo.listNotebookCards()
+        assertEquals(listOf(firstId, secondId), cards.map { it.id }, "cards in sort order")
+        assertEquals(1L, cards.first { it.id == firstId }.pageCount, "bootstrap notebook has 1 page")
+        assertEquals(3L, cards.first { it.id == secondId }.pageCount, "second notebook has 3 pages")
+        assertEquals("Second", cards.first { it.id == secondId }.name, "card carries the notebook name")
+        repo.close()
+    }
 }

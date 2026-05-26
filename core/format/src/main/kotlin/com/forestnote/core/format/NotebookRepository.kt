@@ -16,6 +16,18 @@ data class NotebookMeta(
 )
 
 /**
+ * Per-notebook data for a Library card: identity, name, timestamps, and page count
+ * (computed in one query to avoid an N+1 of countPages during RecyclerView recycling).
+ */
+data class NotebookCard(
+    val id: String,
+    val name: String,
+    val createdAt: Long,
+    val modifiedAt: Long,
+    val pageCount: Long
+)
+
+/**
  * Public folder metadata so the UI never touches generated row types.
  * [parentFolderId] NULL means a root-level folder.
  */
@@ -194,6 +206,11 @@ class NotebookRepository private constructor(
     fun listNotebooks(): List<NotebookMeta> =
         db.notebookQueries.listNotebooks().executeAsList()
             .map { NotebookMeta(it.id, it.name, it.created_at, it.modified_at) }
+
+    /** Every notebook with its page count, for the Library grid (AC4.2/AC4.3). */
+    fun listNotebookCards(): List<NotebookCard> =
+        db.notebookQueries.listNotebookCards().executeAsList()
+            .map { NotebookCard(it.id, it.name, it.created_at, it.modified_at, it.page_count) }
 
     /** Number of pages under [notebookId] (0 for an unknown notebook). */
     fun countPages(notebookId: String): Long =
