@@ -15,6 +15,7 @@ import android.widget.TextView
 import com.forestnote.core.format.FolderCard
 import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.format.PageTemplate
+import com.forestnote.core.format.StartView
 import com.forestnote.core.ink.BackendDetector
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
@@ -129,11 +130,16 @@ class MainActivity : Activity() {
             refreshPageIndicator()
         }
 
-        // AC4.1: cold launch resumes the editor on the last-active notebook; if there is no
-        // active notebook (defensive — bootstrap normally prevents this), open the Library
-        // overlay instead so the user has a +Notebook affordance.
-        store.listNotebooks { notebooks, activeId ->
-            if (LaunchLogic.shouldOpenLibraryOnLaunch(activeId, notebooks.size)) openLibrary()
+        // AC4.1: cold launch resumes the editor on the last-active notebook, unless the
+        // user's startView preference is the Library. The Library also opens defensively
+        // when there is no active notebook (bootstrap normally prevents that state).
+        store.loadSettings { settings ->
+            store.listNotebooks { notebooks, activeId ->
+                val startOnLibrary = settings.startView == StartView.LIBRARY
+                if (LaunchLogic.shouldOpenLibraryOnLaunch(activeId, notebooks.size, startOnLibrary)) {
+                    openLibrary()
+                }
+            }
         }
 
         // Create and wire ToolBar

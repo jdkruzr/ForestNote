@@ -100,6 +100,21 @@
                     android:orientation="horizontal" />
             </LinearLayout>
 
+            <!-- ===== Startup ===== -->
+            <TextView style="@style/SettingsSection" android:text="Startup" />
+
+            <TextView style="@style/SettingsLabel" android:text="When the app opens" />
+
+            <RadioGroup
+                android:id="@+id/rg_start_view"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <RadioButton android:id="@+id/rb_start_last" style="@style/SettingsRadio" android:text="Last notebook" />
+                <RadioButton android:id="@+id/rb_start_library" style="@style/SettingsRadio" android:text="Library" />
+            </RadioGroup>
+
             <!-- ===== Sync ===== -->
             <TextView style="@style/SettingsSection" android:text="Sync" />
 
