@@ -3,6 +3,7 @@ package com.forestnote.app.notes
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.forestnote.core.format.FolderMeta
 import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.format.PageMeta
@@ -206,6 +207,47 @@ class NotebookStore(
             runCatching { repo?.renameNotebook(notebookId, name) }
                 .onFailure { android.util.Log.e(TAG, "failed to rename notebook", it) }
             poster { onDone() }
+        }
+    }
+
+    // -- folders (C2): off-thread wrappers over the repository's folder CRUD/reads --
+
+    /** Create a folder under [parentFolderId] (null = root); posts the new folder id. */
+    fun createFolder(name: String, parentFolderId: String?, onCreated: (newFolderId: String) -> Unit) {
+        executor.execute {
+            val id = runCatching { repo?.createFolder(name, parentFolderId) ?: "" }
+                .onFailure { android.util.Log.e(TAG, "failed to create folder", it) }
+                .getOrDefault("")
+            poster { onCreated(id) }
+        }
+    }
+
+    /** Rename a folder; callback posted when done. */
+    fun renameFolder(folderId: String, name: String, onDone: () -> Unit) {
+        executor.execute {
+            runCatching { repo?.renameFolder(folderId, name) }
+                .onFailure { android.util.Log.e(TAG, "failed to rename folder", it) }
+            poster { onDone() }
+        }
+    }
+
+    /** List the folders directly under [parentFolderId] (null = root); posts the result. */
+    fun getFoldersForParent(parentFolderId: String?, onResult: (List<FolderMeta>) -> Unit) {
+        executor.execute {
+            val folders = runCatching { repo?.getFoldersForParent(parentFolderId) ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to list folders", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(folders) }
+        }
+    }
+
+    /** Compute the root-first folder path ending at [folderId]; posts the result. */
+    fun folderPath(folderId: String, onResult: (List<FolderMeta>) -> Unit) {
+        executor.execute {
+            val path = runCatching { repo?.folderPath(folderId) ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to compute folder path", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(path) }
         }
     }
 

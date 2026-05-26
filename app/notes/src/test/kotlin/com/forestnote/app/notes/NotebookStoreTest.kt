@@ -1,6 +1,7 @@
 package com.forestnote.app.notes
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.forestnote.core.format.FolderMeta
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.format.PageMeta
 import com.forestnote.core.format.PageTemplate
@@ -385,6 +386,26 @@ class NotebookStoreTest {
         val page = pages.first { it.id == pageId }
         assertEquals(PageTemplate.RULED, page.template)
         assertEquals(6, page.templatePitchMm)
+        store.shutdown()
+    }
+
+    // C2: a createFolder -> getFoldersForParent(null) round-trip returns the folder through the store callbacks.
+    @Test
+    fun createFolderThenListReturnsItThroughTheStore() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() }
+        )
+
+        val folderId = awaitResult<String> { cb -> store.createFolder("Work", null) { cb(it) } }
+        assertEquals(26, folderId.length, "store posts the new folder's 26-char ULID")
+
+        val roots = awaitResult<List<FolderMeta>> { cb -> store.getFoldersForParent(null) { cb(it) } }
+        assertEquals(listOf(folderId), roots.map { it.id }, "the created root folder is listed through the store")
+        assertEquals("Work", roots.first().name, "the listed folder carries its name")
+
         store.shutdown()
     }
 
