@@ -3,6 +3,7 @@ package com.forestnote.app.notes
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.forestnote.core.format.FolderCard
 import com.forestnote.core.format.FolderMeta
 import com.forestnote.core.format.NotebookCard
 import com.forestnote.core.format.NotebookMeta
@@ -152,11 +153,21 @@ class NotebookStore(
         }
     }
 
-    /** List every notebook with its page count off-thread, for the Library grid (AC4.2). */
-    fun listNotebookCards(onResult: (List<NotebookCard>) -> Unit) {
+    /** Notebooks directly inside [folderId] (null = root) with page counts, off-thread (AC4.2). */
+    fun listNotebookCardsInFolder(folderId: String?, onResult: (List<NotebookCard>) -> Unit) {
         executor.execute {
-            val cards = runCatching { repo?.listNotebookCards() ?: emptyList() }
+            val cards = runCatching { repo?.listNotebookCardsInFolder(folderId) ?: emptyList() }
                 .onFailure { android.util.Log.e(TAG, "failed to list notebook cards", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(cards) }
+        }
+    }
+
+    /** Folders directly under [parentId] (null = root) with notebook counts, off-thread (AC4.2). */
+    fun listFolderCardsForParent(parentId: String?, onResult: (List<FolderCard>) -> Unit) {
+        executor.execute {
+            val cards = runCatching { repo?.listFolderCardsForParent(parentId) ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to list folder cards", it) }
                 .getOrDefault(emptyList())
             poster { onResult(cards) }
         }
@@ -231,10 +242,13 @@ class NotebookStore(
         }
     }
 
-    /** Create a notebook (with one initial page); posts the new notebook id. Does not switch. */
-    fun createNotebook(name: String, onCreated: (newNotebookId: String) -> Unit) {
+    /**
+     * Create a notebook (with one initial page) inside [folderId] (null = root); posts the
+     * new notebook id. Does not switch.
+     */
+    fun createNotebook(name: String, folderId: String? = null, onCreated: (newNotebookId: String) -> Unit) {
         executor.execute {
-            val id = runCatching { repo?.createNotebook(name) ?: "" }
+            val id = runCatching { repo?.createNotebook(name, folderId) ?: "" }
                 .onFailure { android.util.Log.e(TAG, "failed to create notebook", it) }
                 .getOrDefault("")
             poster { onCreated(id) }

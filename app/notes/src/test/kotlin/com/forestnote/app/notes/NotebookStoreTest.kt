@@ -1,6 +1,7 @@
 package com.forestnote.app.notes
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.forestnote.core.format.FolderCard
 import com.forestnote.core.format.FolderMeta
 import com.forestnote.core.format.NotebookCard
 import com.forestnote.core.format.NotebookRepository
@@ -410,21 +411,26 @@ class NotebookStoreTest {
         store.shutdown()
     }
 
-    // C3a: listNotebookCards returns each notebook with a page count through the store.
+    // C4: folder + notebook cards are scoped to the current folder (root here) through the store.
     @Test
-    fun listNotebookCardsReturnsCreatedNotebookWithPageCount() {
+    fun folderAndNotebookCardsScopedToRootThroughTheStore() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val store = NotebookStore(
             repoProvider = { NotebookRepository.forTesting(driver) },
             executor = Executors.newSingleThreadExecutor(),
             poster = { it.run() }
         )
-        val newId = awaitResult<String> { cb -> store.createNotebook("Cards") { cb(it) } }
+        val newNotebookId = awaitResult<String> { cb -> store.createNotebook("Cards") { cb(it) } }
+        val folderId = awaitResult<String> { cb -> store.createFolder("Work", null) { cb(it) } }
 
-        val cards = awaitResult<List<NotebookCard>> { cb -> store.listNotebookCards { cb(it) } }
-        val created = cards.first { it.id == newId }
-        assertEquals("Cards", created.name, "card carries the notebook name")
+        val notebooks = awaitResult<List<NotebookCard>> { cb -> store.listNotebookCardsInFolder(null) { cb(it) } }
+        val created = notebooks.first { it.id == newNotebookId }
+        assertEquals("Cards", created.name, "notebook card carries the name")
         assertTrue(created.pageCount >= 1, "a created notebook has at least its initial page")
+
+        val folders = awaitResult<List<FolderCard>> { cb -> store.listFolderCardsForParent(null) { cb(it) } }
+        assertEquals(listOf(folderId), folders.map { it.id }, "the created root folder is listed")
+        assertEquals(0L, folders.first().notebookCount, "a fresh folder has no notebooks")
 
         store.shutdown()
     }
