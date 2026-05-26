@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Full-screen Library overlay (library-and-tools C3a). Opaque white + clickable so it
-     covers the editor and swallows touches (mirrors view_settings.xml). A 30dp header
-     row (matching the navbar height) over a 1px rule, then a RecyclerView card grid.
-     Header cells, left→right: Settings, back chevron (gone until C5), breadcrumb, item
-     count, spacer, Select / +Folder / Recycle Bin (greyed until later phases), +Notebook
-     (active). -->
+<!-- Full-screen Library overlay (library-and-tools C3a–C5). Opaque white + clickable so it
+     covers the editor and swallows touches (mirrors view_settings.xml). A header row (icon+
+     caption cells, matching the editor toolbar convention) over a 1px rule, then a
+     RecyclerView card grid. Header cells, left→right: Settings, Up (back, gone until in a
+     folder), breadcrumb, count, then Select / Recycle (greyed until later phases) + Folder /
+     Notebook (active). Each action is a vertical cell (the cell is the hitbox; the inner
+     ImageButton is non-clickable so taps fall through), the same pattern as toolbar.xml. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/library_root"
     android:layout_width="match_parent"
@@ -17,31 +18,77 @@
     <LinearLayout
         android:id="@+id/library_header"
         android:layout_width="match_parent"
-        android:layout_height="30dp"
+        android:layout_height="44dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:background="@color/white">
 
-        <ImageButton
+        <!-- Settings -->
+        <LinearLayout
             android:id="@+id/btn_library_settings"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:scaleType="fitCenter"
-            android:padding="4dp"
-            android:background="@color/white"
-            android:src="@drawable/ic_settings"
-            android:contentDescription="Settings" />
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="Settings"
+            android:background="?attr/selectableItemBackground">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_settings"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Settings"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
 
-        <ImageButton
+        <!-- Up (back one level; shown only inside a folder) -->
+        <LinearLayout
             android:id="@+id/btn_library_back"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:scaleType="fitCenter"
-            android:padding="4dp"
-            android:background="@color/white"
-            android:src="@drawable/ic_arrow_left"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:clickable="true"
+            android:focusable="true"
             android:contentDescription="Up one level"
-            android:visibility="gone" />
+            android:background="?attr/selectableItemBackground"
+            android:visibility="gone">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_arrow_left"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Up"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/breadcrumb_container"
@@ -57,56 +104,142 @@
             android:id="@+id/text_item_count"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingEnd="4dp"
+            android:paddingEnd="8dp"
             android:text=""
             android:textColor="@color/gray_dark"
-            android:textSize="12sp" />
+            android:textSize="11sp"
+            android:maxLines="1"
+            android:ellipsize="end" />
 
-        <ImageButton
+        <!-- Select (multi-select; greyed until a later phase) -->
+        <LinearLayout
             android:id="@+id/btn_library_select"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:scaleType="fitCenter"
-            android:padding="4dp"
-            android:background="@color/white"
-            android:src="@drawable/ic_select"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
             android:contentDescription="Select"
             android:enabled="false"
-            android:alpha="0.3" />
+            android:alpha="0.3">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_select"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Select"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
 
-        <ImageButton
-            android:id="@+id/btn_library_add_folder"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:scaleType="fitCenter"
-            android:padding="4dp"
-            android:background="@color/white"
-            android:src="@drawable/ic_create_folder"
-            android:contentDescription="New folder"
-            android:enabled="false"
-            android:alpha="0.3" />
-
-        <ImageButton
+        <!-- Recycle Bin (greyed until the E area) -->
+        <LinearLayout
             android:id="@+id/btn_library_recycle_bin"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:scaleType="fitCenter"
-            android:padding="4dp"
-            android:background="@color/white"
-            android:src="@drawable/ic_delete"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
             android:contentDescription="Recycle bin"
             android:enabled="false"
-            android:alpha="0.3" />
+            android:alpha="0.3">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_delete"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Recycle"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
 
-        <ImageButton
+        <!-- New folder -->
+        <LinearLayout
+            android:id="@+id/btn_library_add_folder"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="New folder"
+            android:background="?attr/selectableItemBackground">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_create_folder"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Folder"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
+
+        <!-- New notebook -->
+        <LinearLayout
             android:id="@+id/btn_library_add_notebook"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:scaleType="fitCenter"
-            android:padding="4dp"
-            android:background="@color/white"
-            android:src="@drawable/ic_add"
-            android:contentDescription="New notebook" />
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="New notebook"
+            android:background="?attr/selectableItemBackground">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_add"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Notebook"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
     </LinearLayout>
 
     <View

@@ -163,6 +163,17 @@ class NotebookStore(
         }
     }
 
+    /** Library-wide totals (every notebook, every folder) for the header summary line. */
+    fun libraryTotals(onResult: (notebookCount: Int, folderCount: Int) -> Unit) {
+        executor.execute {
+            val totals = runCatching {
+                (repo?.listNotebooks()?.size ?: 0) to (repo?.listAllFolders()?.size ?: 0)
+            }.onFailure { android.util.Log.e(TAG, "failed to read library totals", it) }
+                .getOrDefault(0 to 0)
+            poster { onResult(totals.first, totals.second) }
+        }
+    }
+
     /** Folders directly under [parentId] (null = root) with notebook counts, off-thread (AC4.2). */
     fun listFolderCardsForParent(parentId: String?, onResult: (List<FolderCard>) -> Unit) {
         executor.execute {

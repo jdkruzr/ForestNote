@@ -123,8 +123,14 @@ class LibraryView {
                 if (folderId != currentFolderId) return@listNotebookCardsInFolder
                 val items = folders.map { LibraryItem.Folder(it) } + notebooks.map { LibraryItem.Notebook(it) }
                 adapter.submit(items)
-                view.findViewById<TextView>(R.id.text_item_count).text = "${folders.size + notebooks.size}"
             }
+        }
+
+        // Header summary is a library-wide total (not the current folder's count).
+        store.libraryTotals { notebookCount, folderCount ->
+            val nb = if (notebookCount == 1) "1 notebook" else "$notebookCount notebooks"
+            val fl = if (folderCount == 1) "1 folder" else "$folderCount folders"
+            view.findViewById<TextView>(R.id.text_item_count).text = "$nb across $fl total"
         }
     }
 
