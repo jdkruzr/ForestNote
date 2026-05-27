@@ -27,7 +27,10 @@ import com.forestnote.core.ink.TextBox
 class TextBoxEditor(
     private val container: FrameLayout,
     private val fontResolver: (name: String, weight: Int) -> Typeface,
-    private val onCommit: (id: String, text: String, screenHeightPx: Float) -> Unit
+    private val onCommit: (id: String, text: String, screenHeightPx: Float) -> Unit,
+    /** Fired after the IME comes up (begin) and after it goes down (teardown) — the keyboard
+     *  shifts the (panned) layout, so the host GC-refreshes the editor once the shift settles. */
+    private val onImeShifted: () -> Unit = {}
 ) {
     private var editText: EditText? = null
     private var boxId: String? = null
@@ -78,6 +81,7 @@ class TextBoxEditor(
         et.requestFocus()
         val imm = ctx.getSystemService(InputMethodManager::class.java)
         et.post { imm?.showSoftInput(et, InputMethodManager.SHOW_IMPLICIT) }
+        onImeShifted() // keyboard coming up shifts the layout → host clears the ghost
     }
 
     /** Commit the active edit (no-op if inactive): report text + final height, then tear down. */
@@ -96,5 +100,6 @@ class TextBoxEditor(
         container.removeView(et)
         editText = null
         boxId = null
+        onImeShifted() // keyboard going down shifts the layout back → host clears the ghost
     }
 }

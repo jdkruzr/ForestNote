@@ -18,6 +18,7 @@ import android.text.TextPaint
 import android.view.MotionEvent
 import android.view.View
 import com.forestnote.core.format.PageTemplate
+import com.forestnote.core.ink.DisplayMode
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
 import com.forestnote.core.ink.PenParams
@@ -459,12 +460,32 @@ class DrawView @JvmOverloads constructor(
     }
 
     /**
-     * Trigger a full e-ink panel refresh (GC mode) to clear ghosting artifacts.
-     * Redraws all strokes from the authoritative in-memory list and pushes
-     * the clean bitmap to both foreground and background layers.
+     * Re-composite the page and re-push it to the WritingSurface at the CURRENT picture mode
+     * (FAST after init). Cheap; good enough for editor↔editor transitions (page/notebook switch).
+     * Does NOT clear grayscale ghosting on its own — use [gcRefresh] for big visual transitions.
      */
     fun fullRefresh() {
         redrawBitmap()
+    }
+
+    /**
+     * Full GC (ghost-clearing) e-ink refresh: re-composite the page, then push it to the panel in
+     * GC mode for one frame before restoring FAST (so pen latency is unaffected). Use at the heavy
+     * transitions where [fullRefresh]'s FAST 1-bit repaint leaves residual ghosting — returning to
+     * the editor from a full-screen overlay, or after the IME shifts the layout. No-op cost on the
+     * generic backend (its display-mode + overlay calls are no-ops; the invalidate still repaints).
+     */
+    fun gcRefresh() {
+        composeStaticBitmap()
+        val bmp = writingBitmap ?: run { invalidate(); return }
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        backend?.setDisplayMode(DisplayMode.FULL_REFRESH)
+        backend?.pushBackgroundBitmap(bmp, loc)
+        backend?.resetOverlay(bmp, loc, width, height)
+        backend?.setDisplayMode(DisplayMode.FAST)
+        bitmapProvided = true
+        invalidate()
     }
 
     // ========== Bitmap Management ==========

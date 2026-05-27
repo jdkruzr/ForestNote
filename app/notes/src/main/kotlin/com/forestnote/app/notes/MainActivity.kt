@@ -68,6 +68,10 @@ class MainActivity : Activity() {
     private lateinit var selectionMenu: SelectionMenuView
     private lateinit var textBoxEditor: TextBoxEditor
     private lateinit var textBoxMenu: TextBoxMenuView
+
+    /** Whether the editor's ink/text has been painted this session. False until we either launch
+     *  into the editor or first reveal it from the Library — see the launch sequencing in onCreate. */
+    private var editorLoaded = false
     // Full-screen Settings overlay (B2). Reuses this Activity's single store; shown over
     // the editor and dismissed by its Back header or the system back button.
     private val settingsView = SettingsView()
@@ -156,18 +160,12 @@ class MainActivity : Activity() {
         btnNotebooks = findViewById(R.id.btn_notebooks)
         btnNotebooks.setOnClickListener { openLibrary() }
 
-        // Non-blocking restore: the canvas is interactive immediately; previously-saved
-        // ink appears when the async load returns, merged with anything drawn meanwhile.
-        // The active notebook+page are the ones restored from app_state (AC5.1).
-        store.load { strokes ->
-            drawView.mergeLoadedStrokes(strokes)
-            refreshPageIndicator()
-        }
-        store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
-
-        // AC4.1: cold launch resumes the editor on the last-active notebook, unless the
-        // user's startView preference is the Library. The Library also opens defensively
-        // when there is no active notebook (bootstrap normally prevents that state).
+        // AC4.1: cold launch resumes the editor on the last-active notebook, unless the user's
+        // startView preference is the Library (or there's no notebook to resume into). We decide
+        // BEFORE painting the editor: painting it and then slamming the Library overlay on top
+        // leaves the half-drawn editor ghosting under the Library on e-ink. So when we're heading
+        // to the Library, we DON'T render the editor now — closeLibrary() / goToNotebook() render
+        // it when it actually becomes visible.
         store.loadSettings { settings ->
             // A10: seed per-variant pen widths from settings, then prime the canvas with the
             // active variant's width. (toolBar is assigned below in onCreate; this async
@@ -181,7 +179,9 @@ class MainActivity : Activity() {
             store.listNotebooks { notebooks, activeId ->
                 val startOnLibrary = settings.startView == StartView.LIBRARY
                 if (LaunchLogic.shouldOpenLibraryOnLaunch(activeId, notebooks.size, startOnLibrary)) {
-                    openLibrary()
+                    openLibrary() // editor paint deferred (see closeLibrary / goToNotebook)
+                } else {
+                    loadEditor()
                 }
             }
         }
@@ -193,7 +193,10 @@ class MainActivity : Activity() {
         textBoxEditor = TextBoxEditor(
             container = canvasContainer,
             fontResolver = { name, weight -> drawView.fontResolver(name, weight) },
-            onCommit = { id, text, heightPx -> drawView.commitTextBox(id, text, heightPx) }
+            onCommit = { id, text, heightPx -> drawView.commitTextBox(id, text, heightPx) },
+            // The IME pop/dismiss pans the (non-resizing) window; once it settles, GC-refresh the
+            // editor to clear the shift ghosting. 350ms ≈ keyboard slide + pan settle.
+            onImeShifted = { drawView.postDelayed({ drawView.gcRefresh() }, 350L) }
         )
         drawView.onTextEditRequested = { box, rect ->
             textBoxEditor.begin(box, rect, drawView.screenTextSize(box.fontSize))
@@ -281,9 +284,9 @@ class MainActivity : Activity() {
             showClearConfirmation()
         }
 
-        // Wire Refresh button — full GC panel refresh to clear ghosting
+        // Wire Refresh button — a true GC panel refresh (the button exists to clear ghosting).
         toolBar.setOnRefreshClicked {
-            drawView.fullRefresh()
+            drawView.gcRefresh()
         }
 
         // Paste cell: enabled live whenever the clipboard is non-empty (AC1.6).
@@ -436,13 +439,29 @@ class MainActivity : Activity() {
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
 
-    /** Swap to another notebook: clear canvas, load its active/first page. */
+    /** Swap to another notebook: clear canvas, load its active/first page. Entered from the Library,
+     *  so GC-refresh to clear any overlay ghost (and it counts as the editor's first paint). */
     private fun goToNotebook(notebookId: String) {
         textBoxEditor.commit()
+        editorLoaded = true
         drawView.clearAll()
         store.switchNotebook(notebookId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
-            drawView.fullRefresh()
+            drawView.gcRefresh()
+            refreshPageIndicator()
+        }
+        store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
+    }
+
+    /**
+     * Load + paint the active page's ink and text boxes into the editor. This is the deferred
+     * initial render: at launch we skip it when heading into the Library (so the editor doesn't
+     * ghost under the overlay), then call it the first time the editor actually becomes visible.
+     */
+    private fun loadEditor() {
+        editorLoaded = true
+        store.load { strokes ->
+            drawView.mergeLoadedStrokes(strokes)
             refreshPageIndicator()
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
@@ -477,8 +496,20 @@ class MainActivity : Activity() {
         ))
     }
 
-    /** Dismiss the Library overlay and return to the editor. */
-    private fun closeLibrary() { libraryView.hide() }
+    /**
+     * Dismiss the Library overlay and return to the editor, GC-refreshing so the overlay leaves no
+     * ghost. If the editor was never painted this session (we launched straight into the Library),
+     * this is its first reveal — load + paint it now; [loadEditor]'s render GC-refreshes via merge.
+     */
+    private fun closeLibrary() {
+        libraryView.hide()
+        if (!editorLoaded) {
+            loadEditor()
+            drawView.post { drawView.gcRefresh() }
+        } else {
+            drawView.gcRefresh()
+        }
+    }
 
     /** Show the full-screen Recycle Bin overlay over the Library (E3). */
     private fun openRecycleBin() {
