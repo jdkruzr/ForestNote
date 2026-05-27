@@ -21,12 +21,14 @@ class HttpUrlTransport(
     private val authHeader: String,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
     private val connectTimeoutMs: Int = 15_000,
-    private val readTimeoutMs: Int = 30_000
+    private val readTimeoutMs: Int = 30_000,
+    private val log: (String) -> Unit = {}
 ) : SyncTransport {
 
     override suspend fun post(request: SyncRequest): SyncOutcome = withContext(Dispatchers.IO) {
         var conn: HttpURLConnection? = null
         try {
+            log("connecting POST $endpoint")
             conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 doOutput = true
@@ -38,6 +40,7 @@ class HttpUrlTransport(
             }
             conn.outputStream.use { it.write(json.encodeToString(SyncRequest.serializer(), request).toByteArray(Charsets.UTF_8)) }
             val code = conn.responseCode
+            log("HTTP $code from $endpoint")
             if (code == HttpURLConnection.HTTP_OK) {
                 val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                 SyncOutcome.Ok(json.decodeFromString(SyncResponse.serializer(), body))
@@ -46,6 +49,7 @@ class HttpUrlTransport(
                 SyncOutcome.HttpError(code, body)
             }
         } catch (e: Throwable) {
+            log("transport exception: $e")
             SyncOutcome.TransportError(e)
         } finally {
             conn?.disconnect()

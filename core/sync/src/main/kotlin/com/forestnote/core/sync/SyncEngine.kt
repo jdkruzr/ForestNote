@@ -40,13 +40,17 @@ class SyncEngine(
     private val transport: SyncTransport,
     private val schemaHash: String = SCHEMA_HASH,
     private val clock: () -> Long = { System.currentTimeMillis() },
-    private val onRejected: (List<RejectedOp>) -> Unit = {}
+    private val onRejected: (List<RejectedOp>) -> Unit = {},
+    private val log: (String) -> Unit = {}
 ) {
     private val _status = MutableStateFlow<SyncStatus>(SyncStatus.Idle)
     val status: StateFlow<SyncStatus> = _status.asStateFlow()
 
     suspend fun syncOnce(): SyncResult {
-        val site = store.siteId() ?: return SyncResult.NotEnabled
+        val site = store.siteId() ?: run {
+            log("syncOnce: not enabled (no site_id) — nothing sent")
+            return SyncResult.NotEnabled
+        }
         _status.value = SyncStatus.Syncing
         while (true) {
             val request = SyncRequest(
@@ -55,10 +59,15 @@ class SyncEngine(
                 cursor = store.cursor(),
                 ops = store.pendingOps().map { it.toWire() }
             )
+            log("POST /sync/v1 site=$site cursor=${request.cursor} ops=${request.ops.size} schema=${schemaHash.take(8)}…")
             when (val outcome = transport.post(request)) {
                 is SyncOutcome.Ok -> {
                     val resp = outcome.response
-                    if (resp.rejected.isNotEmpty()) onRejected(resp.rejected)
+                    log("← 200 accepted_through=${resp.acceptedThrough} relayed=${resp.ops.size} rejected=${resp.rejected.size} cursor=${resp.cursor} has_more=${resp.hasMore}")
+                    if (resp.rejected.isNotEmpty()) {
+                        resp.rejected.forEach { log("  rejected (${it.siteId},${it.opSeq}): ${it.reason}") }
+                        onRejected(resp.rejected)
+                    }
                     // accepted_through counts both applied and permanently-rejected ops as settled,
                     // so pruning here also drops quarantined ops from the outbox (§4.1/§7.2).
                     store.markAckedThrough(resp.acceptedThrough)
@@ -70,24 +79,31 @@ class SyncEngine(
                     }
                     // has_more: loop — pendingOps/cursor now reflect the just-applied page.
                 }
-                is SyncOutcome.HttpError -> return fail(
-                    when (outcome.code) {
-                        401 -> SyncResult.AuthRequired
-                        409 -> SyncResult.SchemaMismatch
-                        in 500..599 -> SyncResult.Retryable("server ${outcome.code}")
-                        else -> SyncResult.Failed("http ${outcome.code}") // 400, 413
-                    },
-                    "sync failed: HTTP ${outcome.code}"
-                )
-                is SyncOutcome.TransportError -> return fail(
-                    SyncResult.Retryable(outcome.cause.message ?: "transport error"),
-                    "sync failed: ${outcome.cause.message ?: outcome.cause::class.simpleName}"
-                )
+                is SyncOutcome.HttpError -> {
+                    log("← HTTP ${outcome.code}${outcome.body?.let { " body=${it.take(200)}" } ?: ""}")
+                    return fail(
+                        when (outcome.code) {
+                            401 -> SyncResult.AuthRequired
+                            409 -> SyncResult.SchemaMismatch
+                            in 500..599 -> SyncResult.Retryable("server ${outcome.code}")
+                            else -> SyncResult.Failed("http ${outcome.code}") // 400, 413
+                        },
+                        "sync failed: HTTP ${outcome.code}"
+                    )
+                }
+                is SyncOutcome.TransportError -> {
+                    log("← transport error: ${outcome.cause}")
+                    return fail(
+                        SyncResult.Retryable(outcome.cause.message ?: "transport error"),
+                        "sync failed: ${outcome.cause.message ?: outcome.cause::class.simpleName}"
+                    )
+                }
             }
         }
     }
 
     private fun fail(result: SyncResult, message: String): SyncResult {
+        log(message)
         _status.value = SyncStatus.Error(message)
         return result
     }

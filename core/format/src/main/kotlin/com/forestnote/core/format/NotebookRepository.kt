@@ -907,6 +907,15 @@ class NotebookRepository private constructor(
         db.notebookQueries.setCursor(cursor)
     }
 
+    /** True once the initial pull-first join handshake has completed at least once. */
+    fun syncJoined(): Boolean = db.notebookQueries.getSyncState().executeAsOneOrNull()?.joined == 1L
+
+    /** Record whether the initial join handshake has completed (gates resume()'s path). */
+    fun setSyncJoined(joined: Boolean) {
+        db.notebookQueries.ensureSyncState()
+        db.notebookQueries.setJoined(if (joined) 1L else 0L)
+    }
+
     // -- Sync apply (Phase 4) ----------------------------------------------------
     //
     // Merge relayed ops (authored by other devices) into the local mirror by the same row-level

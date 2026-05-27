@@ -26,6 +26,18 @@ class JoinHandshakeTest {
     private fun cols(json: String) = Json.parseToJsonElement(json).jsonObject
 
     @Test
+    fun `joined flag defaults false and round-trips`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver) { 1000L }
+        assertFalse(repo.syncJoined(), "a never-synced device has not joined")
+        repo.mintSiteId()
+        assertFalse(repo.syncJoined(), "minting a site_id alone is not a completed join")
+        repo.setSyncJoined(true)
+        assertTrue(repo.syncJoined(), "the join-complete flag persists")
+        repo.close()
+    }
+
+    @Test
     fun `mintSiteId mints once without backfilling`() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val repo = NotebookRepository.forTesting(driver) { 1000L }

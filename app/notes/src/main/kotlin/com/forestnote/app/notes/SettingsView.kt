@@ -4,6 +4,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.RadioButton
 import android.widget.RadioGroup
@@ -89,6 +90,7 @@ class SettingsView {
         val chatInput = view.findViewById<EditText>(R.id.input_chat_url)
         val caldavInput = view.findViewById<EditText>(R.id.input_caldav_url)
         val binRetentionInput = view.findViewById<EditText>(R.id.input_bin_retention_days)
+        val debugLogsCheck = view.findViewById<CheckBox>(R.id.check_debug_logs)
 
         // While populating from loaded values, suppress the change listeners so the
         // programmatic set doesn't immediately write back.
@@ -113,7 +115,13 @@ class SettingsView {
             chatInput.setText(s.chatUrl)
             caldavInput.setText(s.caldavServerUrl)
             binRetentionInput.setText(s.recycleBinRetentionDays.toString())
+            debugLogsCheck.isChecked = s.debugLogging
             loading = false
+        }
+
+        debugLogsCheck.setOnCheckedChangeListener { _, checked ->
+            if (loading) return@setOnCheckedChangeListener
+            store.updateSettings({ it.copy(debugLogging = checked) })
         }
 
         rgTemplate.setOnCheckedChangeListener { _, checkedId ->

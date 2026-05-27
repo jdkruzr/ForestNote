@@ -84,7 +84,8 @@ CREATE TABLE sync_state (
     site_id      TEXT,                        -- this install's ULID; minted lazily on first sync (NULL until then)
     next_op_seq  INTEGER NOT NULL DEFAULT 1,  -- next op_seq to assign (monotonic, starts at 1, never reused)
     cursor       INTEGER NOT NULL DEFAULT 0,  -- last global seq applied from the server (0 = never synced)
-    acked_op_seq INTEGER NOT NULL DEFAULT 0   -- contiguous accepted_through (outbox pruned at/below this)
+    acked_op_seq INTEGER NOT NULL DEFAULT 0,  -- contiguous accepted_through (outbox pruned at/below this)
+    joined       INTEGER NOT NULL DEFAULT 0   -- 1 once the initial pull-first join handshake has completed
 );
 
 -- Outbound oplog: one full-row-UPSERT op per local mutation, appended in the SAME
@@ -409,6 +410,9 @@ UPDATE sync_state SET acked_op_seq = ? WHERE id = 0;
 
 setCursor:
 UPDATE sync_state SET cursor = ? WHERE id = 0;
+
+setJoined:
+UPDATE sync_state SET joined = ? WHERE id = 0;
 
 -- Bump a notebook's local modified_at to at least [wall_ts] (never moves it backwards).
 bumpNotebookModifiedAtMax:

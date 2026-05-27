@@ -499,6 +499,8 @@ class NotebookStore(
     suspend fun syncCurrentNotebookId(): String = onDb { it.currentNotebookId() }
     suspend fun syncNotebookIds(): List<String> = onDb { it.listNotebooks().map { nb -> nb.id } }
     suspend fun syncDiscardBootstrapNotebook(id: String) = onDb { it.discardBootstrapNotebook(id) }
+    suspend fun syncJoined(): Boolean = onDb { it.syncJoined() }
+    suspend fun syncMarkJoined() = onDb { it.setSyncJoined(true) }
 
     /** Read the persisted sync config (server URL + credentials), off-thread. */
     suspend fun syncSettings(): Settings = onDb { it.settings() }
