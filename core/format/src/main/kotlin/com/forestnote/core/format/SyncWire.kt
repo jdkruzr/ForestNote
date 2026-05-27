@@ -71,6 +71,39 @@ internal object SyncWire {
             put("z", z)
         }.toString()
 
+    fun textBoxCols(
+        pageId: String,
+        x: Long,
+        y: Long,
+        width: Long,
+        height: Long,
+        text: String,
+        fontName: String,
+        fontSize: Long,
+        color: Long,
+        weight: Long,
+        borderWidth: Long,
+        z: Long,
+        createdAt: Long,
+        deletedAt: Long?
+    ): String =
+        buildJsonObject {
+            put("border_width", borderWidth)
+            put("color", color and 0xFFFFFFFFL) // signed ARGB Int (sign-extended Long) -> unsigned int64
+            put("created_at", createdAt)
+            put("deleted_at", deletedAt)
+            put("font_name", fontName)
+            put("font_size", fontSize)
+            put("height", height)
+            put("page_id", pageId)
+            put("text", text)
+            put("weight", weight)
+            put("width", width)
+            put("x", x)
+            put("y", y)
+            put("z", z)
+        }.toString()
+
     // -- decode (inverse of the encoders above) ----------------------------------
     //
     // The apply path (Phase 4) turns a relayed op's wire `cols` back into the column values to
@@ -82,6 +115,22 @@ internal object SyncWire {
     data class FolderRow(val name: String, val sortOrder: Long, val createdAt: Long, val deletedAt: Long?, val parentFolderId: String?)
     data class PageRow(val notebookId: String, val sortOrder: Long, val createdAt: Long, val deletedAt: Long?, val template: String?, val templatePitchMm: Long?)
     data class StrokeRow(val pageId: String, val color: Long, val penWidthMin: Long, val penWidthMax: Long, val points: ByteArray, val z: Long, val createdAt: Long, val deletedAt: Long?)
+    data class TextBoxRow(
+        val pageId: String,
+        val x: Long,
+        val y: Long,
+        val width: Long,
+        val height: Long,
+        val text: String,
+        val fontName: String,
+        val fontSize: Long,
+        val color: Long,
+        val weight: Long,
+        val borderWidth: Long,
+        val z: Long,
+        val createdAt: Long,
+        val deletedAt: Long?
+    )
 
     fun decodeNotebook(cols: JsonObject) = NotebookRow(
         folderId = str(cols, "folder_id"),
@@ -116,6 +165,24 @@ internal object SyncWire {
         penWidthMin = num(cols, "pen_width_min")!!,
         penWidthMax = num(cols, "pen_width_max")!!,
         points = Base64.getDecoder().decode(str(cols, "points")!!),
+        z = num(cols, "z")!!,
+        createdAt = num(cols, "created_at")!!,
+        deletedAt = num(cols, "deleted_at")
+    )
+
+    fun decodeTextBox(cols: JsonObject) = TextBoxRow(
+        pageId = str(cols, "page_id")!!,
+        x = num(cols, "x")!!,
+        y = num(cols, "y")!!,
+        width = num(cols, "width")!!,
+        height = num(cols, "height")!!,
+        text = str(cols, "text")!!,
+        fontName = str(cols, "font_name")!!,
+        fontSize = num(cols, "font_size")!!,
+        // unsigned int64 wire color -> low 32 bits as signed Int, sign-extended to the DB Long.
+        color = num(cols, "color")!!.toInt().toLong(),
+        weight = num(cols, "weight")!!,
+        borderWidth = num(cols, "border_width")!!,
         z = num(cols, "z")!!,
         createdAt = num(cols, "created_at")!!,
         deletedAt = num(cols, "deleted_at")

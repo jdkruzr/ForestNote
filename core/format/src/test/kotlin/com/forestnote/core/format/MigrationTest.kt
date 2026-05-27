@@ -198,10 +198,10 @@ class MigrationTest {
     fun repositoryUsableAfterMigration() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV1Schema(driver)
-        // Schema.version is now 8; openExisting → bootstrap queries the current tables
-        // (notebook incl. modified_at + folder_id + soft-delete cols, app_state incl.
-        // settings_json) AND reads the notebook_live view, so migrate all the way up.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 9L)
+        // openExisting → bootstrap queries the current tables (notebook incl. modified_at +
+        // folder_id + soft-delete cols, app_state incl. settings_json) AND reads the notebook_live
+        // view, so migrate all the way up to the current schema.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 10L)
 
         // openExisting (no schema.create) must work against the migrated DB.
         val repo = NotebookRepository.openExisting(driver)
@@ -224,8 +224,8 @@ class MigrationTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV2Schema(driver)
 
-        // Migrate to the current version (8); runs v2->v3 plus v3->v4, v4->v5, v5->v6, v6->v7, v7->v8.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 9L)
+        // Migrate to the current version; runs v2->v3 plus every later step up to v9->v10.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 10L)
 
         assertTrue(tableExists(driver, "notebook"), "notebook table exists after v2->v3")
         assertTrue(tableExists(driver, "app_state"), "app_state table exists after v2->v3")
@@ -567,9 +567,9 @@ class MigrationTest {
 
         // The views were created by the migration: the repository's live query returns the
         // pre-existing notebook (this would throw "no such table: notebook_live" if not).
-        // The repo's generated queries target the current schema (v8), so finish the upgrade
-        // (v7->v8 adds sync-only tables + page/stroke.deleted_at; no view change) before opening.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 9L)
+        // The repo's generated queries target the current schema, so finish the upgrade before
+        // opening (v7->v8 sync tables + deleted_at; v8->v9 joined; v9->v10 text_box; no view change).
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 10L)
         val repo = NotebookRepository.openExisting(driver)
         assertTrue(repo.listNotebooks().any { it.id == "n1" }, "live query (via notebook_live view) returns the kept notebook")
 
@@ -663,6 +663,32 @@ class MigrationTest {
         )
         assertEquals(5L, nextOpSeq, "pre-existing sync_state row survives the migration")
         assertEquals(0L, joined, "joined defaults to 0 (not yet joined)")
+
+        driver.close()
+    }
+
+    /**
+     * Text boxes: migrating v9 -> v10 adds the `text_box` table non-destructively. Existing
+     * page/stroke rows are untouched; the new table is empty and usable through the repository.
+     */
+    @Test
+    fun v9ToV10AddsTextBoxTable() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        createV7PageStroke(driver)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 9L)
+        assertFalse(tableExists(driver, "text_box"), "v9 has no text_box table")
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 9L, newVersion = 10L)
+
+        assertTrue(tableExists(driver, "text_box"), "text_box table exists after v9->v10")
+        assertTrue(columnNames(driver, "text_box").contains("text"), "text_box has the text column")
+        // Pre-existing page survives (non-destructive).
+        var pageRows = 0L
+        driver.executeQuery(
+            null, "SELECT count(*) FROM page WHERE id = 'p1'",
+            { c -> c.next(); pageRows = c.getLong(0) ?: 0L; QueryResult.Value(Unit) }, 0
+        )
+        assertEquals(1L, pageRows, "pre-existing page survives the v9->v10 migration")
 
         driver.close()
     }

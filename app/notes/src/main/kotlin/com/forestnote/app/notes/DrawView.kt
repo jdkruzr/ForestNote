@@ -11,6 +11,10 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Typeface
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.view.MotionEvent
 import android.view.View
 import com.forestnote.core.format.PageTemplate
@@ -23,8 +27,10 @@ import com.forestnote.core.ink.PressureCurve
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeBuilder
 import com.forestnote.core.ink.StrokePoint
+import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.Tool
 import com.forestnote.core.ink.Ulid
+import com.forestnote.core.ink.ZBand
 import kotlin.math.max
 import kotlin.math.min
 
@@ -58,6 +64,11 @@ class DrawView @JvmOverloads constructor(
         private val TEMPLATE_LINE_COLOR = Color.parseColor("#FFB0B0B0")
         private val TEMPLATE_DOT_COLOR = Color.parseColor("#FF8A8A8A")
 
+        // Text-box placement defaults (virtual units; short axis = 10,000).
+        private const val DEFAULT_TEXT_SIZE_V = 240    // ~17sp on the Mini
+        private const val DEFAULT_TEXT_WIDTH_V = 3200  // ~a third of the short axis
+        private const val MIN_TEXT_DRAG_V = 400        // a drag smaller than this = a tap → default box
+
         /**
          * Pure function: Check if a tool type should be accepted for drawing.
          * Stylus and eraser are accepted, finger is rejected (AC1.3).
@@ -87,6 +98,75 @@ class DrawView @JvmOverloads constructor(
     private val completedStrokes = mutableListOf<Stroke>()
     private var currentStroke: StrokeBuilder? = null
 
+    // ===== Text boxes (z-ordered text elements) =====
+    // Authoritative in-memory model for the active page, rendered into the static bitmap in two
+    // bands: ZBand.BOTTOM below ink, ZBand.TOP above it. The box whose id == editingBoxId is
+    // skipped while a live EditText overlay is showing its text (Phase 3).
+    private val textBoxes = mutableListOf<TextBox>()
+    var editingBoxId: String? = null
+
+    // Active style applied to newly-created boxes (font + size chosen via the Phase 4 chooser).
+    var activeTextFontName: String = ""
+    var activeTextFontSize: Int = DEFAULT_TEXT_SIZE_V
+    var activeTextColor: Int = TextBox.COLOR_BLACK
+
+    // Drag-to-draw placement state: the anchor (pen-down) screen point and the live preview rect.
+    private var textDownScreenX = 0f
+    private var textDownScreenY = 0f
+    private var textDragScreen: RectF? = null
+
+    /**
+     * Fired when a box needs the in-place editor: a freshly placed box (drag-to-draw) or a tapped
+     * existing box (Phase 5). The host overlays an EditText at [screenRect] and drives editing;
+     * the box's id is in [editingBoxId] so its static render is suppressed meanwhile.
+     */
+    var onTextEditRequested: ((box: TextBox, screenRect: RectF) -> Unit)? = null
+
+    /** Fired when a canvas touch lands while editing — the host should commit the active editor. */
+    var onCommitEditRequested: (() -> Unit)? = null
+
+    /** Fired when a box is selected (tapped) — the host shows the Edit/Options/Delete menu. */
+    var onBoxSelected: ((box: TextBox, screenRect: RectF) -> Unit)? = null
+
+    /** Fired when the box selection clears — the host dismisses the menu. */
+    var onBoxSelectionCleared: (() -> Unit)? = null
+
+    // Selection + live-transform state for move/resize. The transforming box is drawn as an onDraw
+    // overlay at its live rect (and skipped in the static bitmap) until committed on pen-up.
+    private var selectedBoxId: String? = null
+    private var transformingBoxId: String? = null
+    private var transformBox: TextBox? = null
+    private enum class BoxGesture { NONE, CREATE, MOVE, RESIZE }
+    private var boxGesture = BoxGesture.NONE
+    private var boxResizeHandle = -1 // 0=TL, 1=TR, 2=BL, 3=BR
+    private var gestureStartVx = 0
+    private var gestureStartVy = 0
+    private var gestureOrigBox: TextBox? = null
+    private var gestureMoved = false
+
+    // Selection-handle hit slop / draw size (screen px).
+    private val handleTouchPx = 22f * resources.displayMetrics.density
+    private val handleDrawPx = 7f * resources.displayMetrics.density
+    private val boxSelectionPaint = Paint().apply {
+        color = Color.BLACK
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+        isAntiAlias = true
+        pathEffect = DashPathEffect(floatArrayOf(10f, 6f), 0f)
+    }
+    private val boxHandlePaint = Paint().apply {
+        color = Color.BLACK
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+
+    /**
+     * Resolves a stored font name (+ weight) to a Typeface for rendering. Defaults to the system
+     * default; Phase 4 injects a /system/fonts-backed catalog. Kept injectable so a box authored on
+     * another device (whose font may be absent here) still renders in a sensible fallback.
+     */
+    var fontResolver: (name: String, weight: Int) -> Typeface = { _, _ -> Typeface.DEFAULT }
+
     // Configuration
     private var backend: InkBackend? = null
     private var store: NotebookStore? = null
@@ -98,6 +178,7 @@ class DrawView @JvmOverloads constructor(
             if (value != field) {
                 clearLassoState()
                 cancelPaste() // a tool switch abandons a pending paste
+                clearBoxSelection() // and clears any text-box selection + its menu
             }
             field = value
         }
@@ -239,6 +320,14 @@ class DrawView @JvmOverloads constructor(
     }
     private val lassoPath = Path()
 
+    // Text-box paints: the text itself (TextPaint drives StaticLayout) and the optional border.
+    private val textBoxPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
+    private val boxBorderPaint = Paint().apply {
+        color = Color.BLACK
+        style = Paint.Style.STROKE
+        isAntiAlias = true
+    }
+
     // Offscreen bitmap and canvas
     private var writingBitmap: Bitmap? = null
     private var writingCanvas: Canvas? = null
@@ -272,12 +361,8 @@ class DrawView @JvmOverloads constructor(
         transform.update(w, h)
         // Ensure bitmap matches new size
         ensureBitmap()
-        // Re-lay the template + strokes for the new scale (template even with no ink).
-        writingBitmap?.eraseColor(Color.TRANSPARENT)
-        drawTemplateToBitmap()
-        for (stroke in completedStrokes) {
-            drawStrokeToBitmap(stroke)
-        }
+        // Re-lay the full static composite for the new scale (template even with no ink).
+        composeStaticBitmap()
     }
 
     fun setBackend(backend: InkBackend) {
@@ -315,11 +400,25 @@ class DrawView @JvmOverloads constructor(
         completedStrokes.clear()
         completedStrokes.addAll(merged)
         ensureBitmap()
-        writingBitmap?.eraseColor(Color.TRANSPARENT)
-        drawTemplateToBitmap()
-        for (stroke in completedStrokes) {
-            drawStrokeToBitmap(stroke)
-        }
+        composeStaticBitmap()
+        invalidate()
+    }
+
+    /**
+     * Apply an async load of the active page's text boxes. Mirrors [mergeLoadedStrokes]: loaded
+     * boxes (authoritative for the page) first, then any boxes created during the load gap, deduped
+     * by id. Page switches reset the in-memory set via [clearAll], so this never carries a previous
+     * page's boxes forward.
+     */
+    fun mergeLoadedTextBoxes(boxes: List<TextBox>) {
+        val seen = HashSet<String>(boxes.size + textBoxes.size)
+        val merged = ArrayList<TextBox>(boxes.size + textBoxes.size)
+        for (b in boxes) if (seen.add(b.id)) merged.add(b)
+        for (b in textBoxes) if (seen.add(b.id)) merged.add(b)
+        textBoxes.clear()
+        textBoxes.addAll(merged)
+        ensureBitmap()
+        composeStaticBitmap()
         invalidate()
     }
 
@@ -335,11 +434,20 @@ class DrawView @JvmOverloads constructor(
      * Clear all strokes from the page: erases the bitmap and removes all strokes from memory.
      * Does NOT persist to the database — caller must handle database deletion.
      */
-    fun clearAll() {
+    fun clearAll(clearTextBoxes: Boolean = true) {
         completedStrokes.clear()
         currentStroke = null
-        writingBitmap?.eraseColor(Color.TRANSPARENT)
-        drawTemplateToBitmap() // clearing ink leaves the page template in place
+        // The Clear tool is ink-only (clearTextBoxes = false) — boxes stay on the page. Page/
+        // notebook switches pass true so the old page's boxes are dropped before the reload, along
+        // with any selection / in-progress transform that referenced them.
+        if (clearTextBoxes) {
+            textBoxes.clear()
+            transformBox = null
+            transformingBoxId = null
+            boxGesture = BoxGesture.NONE
+            clearBoxSelection()
+        }
+        composeStaticBitmap() // clearing ink leaves the page template (and kept boxes) in place
         writingBitmap?.let { bmp ->
             val loc = IntArray(2)
             getLocationOnScreen(loc)
@@ -395,6 +503,13 @@ class DrawView @JvmOverloads constructor(
     // ========== Touch Event Handling ==========
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        // While a text box is being edited, the EditText overlay (a sibling view on top) owns its
+        // own area; any touch that reaches the canvas is therefore OUTSIDE the box → commit the
+        // edit and consume the touch (so it doesn't also start a new box / stroke).
+        if (editingBoxId != null) {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) onCommitEditRequested?.invoke()
+            return true
+        }
         // Tool-type filtering (AC1.3): stylus/eraser draw, finger ignored
         if (!shouldAcceptToolType(event.getToolType(0))) {
             return false
@@ -416,6 +531,7 @@ class DrawView @JvmOverloads constructor(
             is Tool.Pen -> handleDraw(event)
             is Tool.StrokeEraser, is Tool.PixelEraser -> handleErase(event)
             is Tool.Lasso -> handleLasso(event)
+            is Tool.Text -> handleTextPlacement(event)
         }
     }
 
@@ -583,6 +699,288 @@ class DrawView @JvmOverloads constructor(
             completedStrokes.add(s)
             store?.save(s)
         }
+        redrawBitmap()
+    }
+
+    // ===== Text box placement + editing (Tool.Text) =====
+
+    /**
+     * The Text tool's gesture, dispatched on pen-down by what's under the pen:
+     *  - a resize handle of the selected box → resize (reflows text live),
+     *  - inside an existing box → select it; a drag moves it, a tap shows its menu,
+     *  - empty space → drag out a new box (a sub-[MIN_TEXT_DRAG_V] drag = a tap → default box).
+     * The box being moved/resized is drawn as a live overlay in [onDraw] and committed on pen-up.
+     */
+    private fun handleTextPlacement(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> onTextDown(event.x, event.y)
+            MotionEvent.ACTION_MOVE -> onTextMove(event.x, event.y)
+            MotionEvent.ACTION_UP -> onTextUp(event.x, event.y)
+        }
+        return true
+    }
+
+    private fun onTextDown(x: Float, y: Float) {
+        val vx = transform.toVirtualX(x)
+        val vy = transform.toVirtualY(y)
+        gestureMoved = false
+
+        // 1) A resize handle of the currently-selected box.
+        val sel = selectedBoxId?.let { id -> textBoxes.find { it.id == id } }
+        if (sel != null) {
+            val handle = hitHandle(sel, x, y)
+            if (handle >= 0) {
+                boxGesture = BoxGesture.RESIZE
+                boxResizeHandle = handle
+                gestureOrigBox = sel
+                transformBox = sel
+                transformingBoxId = sel.id
+                onBoxSelectionCleared?.invoke() // hide the menu while resizing
+                composeStaticBitmap()
+                invalidate()
+                return
+            }
+        }
+
+        // 2) Inside an existing box (topmost first) → select + arm a possible move.
+        val hit = textBoxes.lastOrNull { boxContains(it, vx, vy) }
+        if (hit != null) {
+            selectedBoxId = hit.id
+            boxGesture = BoxGesture.MOVE
+            gestureStartVx = vx
+            gestureStartVy = vy
+            gestureOrigBox = hit
+            transformBox = hit
+            transformingBoxId = hit.id
+            onBoxSelectionCleared?.invoke() // hide until we know it's a tap (re-shown on up)
+            composeStaticBitmap()
+            invalidate()
+            return
+        }
+
+        // 3) Empty space → drag out a new box.
+        boxGesture = BoxGesture.CREATE
+        if (selectedBoxId != null) { selectedBoxId = null; onBoxSelectionCleared?.invoke() }
+        textDownScreenX = x
+        textDownScreenY = y
+        textDragScreen = RectF(x, y, x, y)
+        invalidate()
+    }
+
+    private fun onTextMove(x: Float, y: Float) {
+        when (boxGesture) {
+            BoxGesture.CREATE -> {
+                textDragScreen = RectF(
+                    min(textDownScreenX, x), min(textDownScreenY, y),
+                    max(textDownScreenX, x), max(textDownScreenY, y)
+                )
+                invalidate()
+            }
+            BoxGesture.MOVE -> {
+                val orig = gestureOrigBox ?: return
+                val dx = transform.toVirtualX(x) - gestureStartVx
+                val dy = transform.toVirtualY(y) - gestureStartVy
+                if (dx != 0 || dy != 0) gestureMoved = true
+                val nx = clampOffset(orig.x + dx, 0, PageTransform.VIRTUAL_SHORT_AXIS - orig.width)
+                val ny = clampOffset(orig.y + dy, 0, transform.virtualLongAxis - orig.height)
+                transformBox = orig.copy(x = nx, y = ny)
+                invalidate()
+            }
+            BoxGesture.RESIZE -> {
+                val orig = gestureOrigBox ?: return
+                gestureMoved = true
+                transformBox = resizedBox(orig, boxResizeHandle, transform.toVirtualX(x), transform.toVirtualY(y))
+                invalidate()
+            }
+            BoxGesture.NONE -> {}
+        }
+    }
+
+    private fun onTextUp(x: Float, y: Float) {
+        when (boxGesture) {
+            BoxGesture.CREATE -> {
+                textDragScreen = null
+                createAndEditTextBox(
+                    transform.toVirtualX(textDownScreenX), transform.toVirtualY(textDownScreenY),
+                    transform.toVirtualX(x), transform.toVirtualY(y)
+                )
+            }
+            BoxGesture.MOVE, BoxGesture.RESIZE -> {
+                val tb = transformBox
+                transformBox = null
+                transformingBoxId = null
+                if (tb != null && gestureMoved) {
+                    val idx = textBoxes.indexOfFirst { it.id == tb.id }
+                    if (idx >= 0) textBoxes[idx] = tb
+                    store?.saveTextBox(tb)
+                    selectedBoxId = tb.id
+                    redrawBitmap()
+                    onBoxSelected?.invoke(tb, boxScreenRect(tb)) // re-show menu at the new spot
+                } else {
+                    // A tap (no move): just select the box and show its menu.
+                    redrawBitmap()
+                    val b = textBoxes.find { it.id == selectedBoxId }
+                    if (b != null) onBoxSelected?.invoke(b, boxScreenRect(b))
+                }
+            }
+            BoxGesture.NONE -> {}
+        }
+        boxGesture = BoxGesture.NONE
+        gestureOrigBox = null
+        boxResizeHandle = -1
+    }
+
+    /** True if (vx,vy) is inside [box] (virtual coords). */
+    private fun boxContains(box: TextBox, vx: Int, vy: Int): Boolean =
+        vx >= box.x && vx <= box.x + box.width && vy >= box.y && vy <= box.y + box.height
+
+    /** Which corner handle of [box] a screen point grabs, within [handleTouchPx]; -1 if none.
+     *  Order: 0=top-left, 1=top-right, 2=bottom-left, 3=bottom-right. */
+    private fun hitHandle(box: TextBox, sx: Float, sy: Float): Int {
+        val corners = boxCornersScreen(box)
+        for (i in corners.indices) {
+            val (cx, cy) = corners[i]
+            if (kotlin.math.abs(sx - cx) <= handleTouchPx && kotlin.math.abs(sy - cy) <= handleTouchPx) return i
+        }
+        return -1
+    }
+
+    private fun boxCornersScreen(box: TextBox): List<Pair<Float, Float>> {
+        val l = transform.toScreenX(box.x); val t = transform.toScreenY(box.y)
+        val r = transform.toScreenX(box.x + box.width); val b = transform.toScreenY(box.y + box.height)
+        return listOf(l to t, r to t, l to b, r to b)
+    }
+
+    /** Recompute a box's rect when dragging corner [handle] to virtual (vx,vy), keeping the opposite
+     *  corner fixed and enforcing a minimum size. */
+    private fun resizedBox(box: TextBox, handle: Int, vx: Int, vy: Int): TextBox {
+        var left = box.x; var top = box.y
+        var right = box.x + box.width; var bottom = box.y + box.height
+        when (handle) {
+            0 -> { left = vx; top = vy }
+            1 -> { right = vx; top = vy }
+            2 -> { left = vx; bottom = vy }
+            3 -> { right = vx; bottom = vy }
+        }
+        val minW = box.fontSize          // at least one glyph wide
+        val minH = box.fontSize          // at least one line tall
+        if (right - left < minW) { if (handle == 0 || handle == 2) left = right - minW else right = left + minW }
+        if (bottom - top < minH) { if (handle == 0 || handle == 1) top = bottom - minH else bottom = top + minH }
+        // Keep on-page.
+        left = left.coerceIn(0, PageTransform.VIRTUAL_SHORT_AXIS)
+        right = right.coerceIn(0, PageTransform.VIRTUAL_SHORT_AXIS)
+        top = top.coerceIn(0, transform.virtualLongAxis)
+        bottom = bottom.coerceIn(0, transform.virtualLongAxis)
+        return box.copy(x = left, y = top, width = right - left, height = bottom - top)
+    }
+
+    // ===== Selected-box actions (driven by the Edit/Options/Delete menu) =====
+
+    /** The currently-selected box, or null. */
+    fun selectedBox(): TextBox? = selectedBoxId?.let { id -> textBoxes.find { it.id == id } }
+
+    /** Clear the box selection and dismiss its menu (e.g. on tool switch). */
+    fun clearBoxSelection() {
+        if (selectedBoxId == null) return
+        selectedBoxId = null
+        onBoxSelectionCleared?.invoke()
+        invalidate()
+    }
+
+    /** Re-open the in-place editor on the selected box. */
+    fun editSelectedBox() {
+        val box = selectedBox() ?: return
+        editingBoxId = box.id
+        onBoxSelectionCleared?.invoke()
+        composeStaticBitmap() // suppress its static render while the editor shows it
+        invalidate()
+        onTextEditRequested?.invoke(box, boxScreenRect(box))
+    }
+
+    /** Apply the Options dialog choices (visible border + z-band) to the selected box. */
+    fun applySelectedBoxOptions(hasBorder: Boolean, zBand: ZBand) {
+        val box = selectedBox() ?: return
+        val idx = textBoxes.indexOfFirst { it.id == box.id }
+        if (idx < 0) return
+        val updated = box.copy(
+            borderWidth = if (hasBorder) TextBox.DEFAULT_BORDER_WIDTH else 0,
+            zBand = zBand
+        )
+        textBoxes[idx] = updated
+        store?.saveTextBox(updated)
+        redrawBitmap()
+    }
+
+    /** Delete the selected box (soft-delete + remove from the model). */
+    fun deleteSelectedBox() {
+        val id = selectedBoxId ?: return
+        textBoxes.removeAll { it.id == id }
+        store?.deleteTextBox(id)
+        selectedBoxId = null
+        onBoxSelectionCleared?.invoke()
+        redrawBitmap()
+    }
+
+    /**
+     * Create a new (empty) text box from the dragged virtual rect, clamp it on-page, add it to the
+     * model as the box being edited (so its static render is suppressed), and ask the host to open
+     * the in-place editor over it.
+     */
+    private fun createAndEditTextBox(downVx: Int, downVy: Int, upVx: Int, upVy: Int) {
+        val dragW = kotlin.math.abs(upVx - downVx)
+        val dragH = kotlin.math.abs(upVy - downVy)
+        val tap = dragW < MIN_TEXT_DRAG_V || dragH < MIN_TEXT_DRAG_V
+        val w = if (tap) DEFAULT_TEXT_WIDTH_V else dragW
+        // A box must be at least ~two lines tall; it auto-grows downward as the user types.
+        val minH = activeTextFontSize * 2
+        val h = if (tap) minH else max(dragH, minH)
+        // Anchor at the rect's top-left (tap anchors at the pen-down point), clamped fully on-page.
+        val x = clampOffset(if (tap) downVx else min(downVx, upVx), 0, PageTransform.VIRTUAL_SHORT_AXIS - w)
+        val y = clampOffset(if (tap) downVy else min(downVy, upVy), 0, transform.virtualLongAxis - h)
+
+        val box = TextBox(
+            x = x, y = y, width = w, height = h,
+            text = "",
+            fontName = activeTextFontName,
+            fontSize = activeTextFontSize,
+            color = activeTextColor
+        )
+        textBoxes.add(box)
+        editingBoxId = box.id
+        composeStaticBitmap() // box skipped while editing; the EditText shows it
+        invalidate()
+        onTextEditRequested?.invoke(box, boxScreenRect(box))
+    }
+
+    /** A virtual font size mapped to screen px (so the editor matches the static render). */
+    fun screenTextSize(fontSizeVirtual: Int): Float = transform.toScreenSize(fontSizeVirtual.toFloat())
+
+    /** Screen-space rect of a text box (for positioning the editor overlay). */
+    fun boxScreenRect(box: TextBox): RectF = RectF(
+        transform.toScreenX(box.x), transform.toScreenY(box.y),
+        transform.toScreenX(box.x + box.width), transform.toScreenY(box.y + box.height)
+    )
+
+    /**
+     * Commit an in-place edit. [screenHeightPx] is the editor's final pixel height (the box grows
+     * downward as text wraps); it's converted back to virtual units. Empty text discards the box
+     * (and deletes it if it had been persisted — idempotent). Otherwise the box is updated + saved.
+     */
+    fun commitTextBox(id: String, text: String, screenHeightPx: Float) {
+        editingBoxId = null
+        val idx = textBoxes.indexOfFirst { it.id == id }
+        if (idx < 0) { redrawBitmap(); return }
+        if (text.isEmpty()) {
+            textBoxes.removeAt(idx)
+            store?.deleteTextBox(id) // no-op if it was never persisted
+            redrawBitmap()
+            return
+        }
+        // toVirtualX is a pure scale inverse, so it doubles as a px->virtual size converter.
+        val heightV = transform.toVirtualX(screenHeightPx).coerceAtLeast(textBoxes[idx].fontSize)
+        val updated = textBoxes[idx].copy(text = text, height = heightV)
+        textBoxes[idx] = updated
+        store?.saveTextBox(updated)
         redrawBitmap()
     }
 
@@ -844,12 +1242,8 @@ class DrawView @JvmOverloads constructor(
      * Called after erase operations to update the display.
      */
     private fun redrawBitmap() {
-        val canvas = writingCanvas ?: return
-        writingBitmap?.eraseColor(Color.TRANSPARENT)
-        drawTemplateToBitmap()
-        for (stroke in completedStrokes) {
-            drawStrokeToBitmap(stroke)
-        }
+        if (writingCanvas == null) return
+        composeStaticBitmap()
         // Force the WritingSurface overlay to re-composite from the clean bitmap.
         // This is equivalent to WiNote's resetFastShowContentBitmap(): re-provide
         // the bitmap as the foreground layer and render a full-screen rect so the
@@ -883,6 +1277,28 @@ class DrawView @JvmOverloads constructor(
         // Lasso overlay (A6): selection highlight + dashed polygon, in screen coords.
         if (activeTool is Tool.Lasso) {
             drawLassoOverlay(canvas)
+        }
+
+        // Text-box placement preview: the dashed rect being dragged out (screen coords).
+        textDragScreen?.let { canvas.drawRect(it, lassoPaint) }
+
+        // Live overlay for a box being moved/resized (its static render is suppressed meanwhile).
+        transformBox?.let { drawTextBox(canvas, it) }
+
+        // Selection outline + corner handles for the selected box (Text tool only). Uses the live
+        // rect while transforming, the model rect when idle-selected.
+        if (activeTool is Tool.Text) {
+            (transformBox ?: selectedBox())?.let { drawBoxSelection(canvas, it) }
+        }
+    }
+
+    /** Draw the selection outline + 4 corner handles around [box] (screen coords). */
+    private fun drawBoxSelection(canvas: Canvas, box: TextBox) {
+        val l = transform.toScreenX(box.x); val t = transform.toScreenY(box.y)
+        val r = transform.toScreenX(box.x + box.width); val b = transform.toScreenY(box.y + box.height)
+        canvas.drawRect(l, t, r, b, boxSelectionPaint)
+        for ((cx, cy) in boxCornersScreen(box)) {
+            canvas.drawRect(cx - handleDrawPx, cy - handleDrawPx, cx + handleDrawPx, cy + handleDrawPx, boxHandlePaint)
         }
     }
 
@@ -998,5 +1414,59 @@ class DrawView @JvmOverloads constructor(
 
         // Leave the shared paint in a clean (normal-composite) state.
         strokePaint.xfermode = null
+    }
+
+    /**
+     * Repaint the full static composite onto the offscreen bitmap, in z-order:
+     * template → bottom-band text boxes → ink → top-band text boxes. The single place that defines
+     * page layering, so every rebuild path (size change, load, clear, erase/redraw) funnels through
+     * here and the bands can't drift. The box being live-edited ([editingBoxId]) is skipped — its
+     * text is shown by the EditText overlay instead (Phase 3).
+     */
+    private fun composeStaticBitmap() {
+        val canvas = writingCanvas ?: return
+        writingBitmap?.eraseColor(Color.TRANSPARENT)
+        drawTemplateToBitmap()
+        for (box in textBoxes) if (box.zBand == ZBand.BOTTOM && box.id.isStaticallyDrawn()) drawTextBox(canvas, box)
+        for (stroke in completedStrokes) drawStrokeToBitmap(stroke)
+        for (box in textBoxes) if (box.zBand == ZBand.TOP && box.id.isStaticallyDrawn()) drawTextBox(canvas, box)
+    }
+
+    /** A box is drawn into the static bitmap unless it's currently being edited or transformed
+     *  (those are shown live by the EditText / the onDraw overlay instead). */
+    private fun String.isStaticallyDrawn(): Boolean = this != editingBoxId && this != transformingBoxId
+
+    /**
+     * Draw one text box onto [canvas]. Text wraps to the box width via a [StaticLayout] and is
+     * clipped to the box rect — overrunning text is retained in the model (see [TextBox]), only the
+     * render is clipped. Geometry/size are virtual units mapped to screen px; an optional border is
+     * drawn unclipped at the exact box edge. Used both for the static bitmap and the live overlay.
+     */
+    private fun drawTextBox(canvas: Canvas, box: TextBox) {
+        val left = transform.toScreenX(box.x)
+        val top = transform.toScreenY(box.y)
+        val right = transform.toScreenX(box.x + box.width)
+        val bottom = transform.toScreenY(box.y + box.height)
+
+        textBoxPaint.typeface = fontResolver(box.fontName, box.weight)
+        textBoxPaint.textSize = transform.toScreenSize(box.fontSize.toFloat())
+        textBoxPaint.color = box.color
+        val widthPx = transform.toScreenSize(box.width.toFloat()).toInt().coerceAtLeast(1)
+        val layout = StaticLayout.Builder
+            .obtain(box.text, 0, box.text.length, textBoxPaint, widthPx)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setIncludePad(false)
+            .build()
+
+        canvas.save()
+        canvas.clipRect(left, top, right, bottom)
+        canvas.translate(left, top)
+        layout.draw(canvas)
+        canvas.restore()
+
+        if (box.borderWidth > 0) {
+            boxBorderPaint.strokeWidth = box.borderWidth.toFloat()
+            canvas.drawRect(left, top, right, bottom, boxBorderPaint)
+        }
     }
 }

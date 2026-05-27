@@ -109,4 +109,54 @@ class SyncWireDecodeTest {
         assertEquals(row.deletedAt, decoded.deletedAt)
         assertEquals(points.toList(), decoded.points.toList(), "points bytes survive base64 round-trip")
     }
+
+    @Test
+    fun `text box cols round-trip`() {
+        val row = SyncWire.TextBoxRow(
+            pageId = "00000000000000000000000PG1",
+            x = 100, y = 200, width = 3000, height = 1200,
+            text = "The quick brown fox 🦊\nwraps & reflows",
+            fontName = "NotoSerif-Regular.ttf",
+            fontSize = 240,
+            color = -16777216L,  // signed ARGB black
+            weight = 400,
+            borderWidth = 2,
+            z = 0,
+            createdAt = 1700,
+            deletedAt = null
+        )
+        val encoded = obj(
+            SyncWire.textBoxCols(
+                row.pageId, row.x, row.y, row.width, row.height, row.text, row.fontName,
+                row.fontSize, row.color, row.weight, row.borderWidth, row.z, row.createdAt, row.deletedAt
+            )
+        )
+        assertEquals(row, SyncWire.decodeTextBox(encoded))
+    }
+
+    @Test
+    fun `text box cols round-trip with tombstone, top band, and signed color`() {
+        val row = SyncWire.TextBoxRow(
+            pageId = "00000000000000000000000PG2",
+            x = -50, y = 0, width = 500, height = 500,
+            text = "",
+            fontName = "Roboto-Regular.ttf",
+            fontSize = 180,
+            color = -65536L,    // signed ARGB red (0xFFFF0000)
+            weight = 700,
+            borderWidth = 0,
+            z = 1,              // top band
+            createdAt = 42,
+            deletedAt = 99
+        )
+        val encoded = obj(
+            SyncWire.textBoxCols(
+                row.pageId, row.x, row.y, row.width, row.height, row.text, row.fontName,
+                row.fontSize, row.color, row.weight, row.borderWidth, row.z, row.createdAt, row.deletedAt
+            )
+        )
+        val decoded = SyncWire.decodeTextBox(encoded)
+        assertEquals(row, decoded)
+        assertEquals(row.color, decoded.color, "unsigned-int64 wire color decodes back to the signed DB Long")
+    }
 }

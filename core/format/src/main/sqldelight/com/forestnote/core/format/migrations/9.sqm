@@ -1,0 +1,22 @@
+-- v9 -> v10: text boxes (z-ordered text element). NON-destructive.
+--  * text_box is a new table; empty on upgrade, so no backfill.
+-- No view changes: text_box has no live view, and notebook_live/folder_live are untouched, so
+-- they keep matching their base tables. create() and migrate() never both run on one DB.
+CREATE TABLE text_box (
+    id TEXT PRIMARY KEY NOT NULL,
+    page_id TEXT NOT NULL REFERENCES page(id) ON DELETE CASCADE,
+    x INTEGER NOT NULL,
+    y INTEGER NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    font_name TEXT NOT NULL,
+    font_size INTEGER NOT NULL,
+    color INTEGER NOT NULL DEFAULT -16777216,
+    weight INTEGER NOT NULL DEFAULT 400,
+    border_width INTEGER NOT NULL DEFAULT 2,
+    z INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    deleted_at INTEGER
+);
+CREATE INDEX text_box_page_id ON text_box(page_id);

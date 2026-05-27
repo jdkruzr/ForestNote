@@ -131,4 +131,48 @@ class ApplySyncOpsTest {
         assertEquals(9000L, repo.modifiedAtOf(NB), "owning notebook modified_at tracks the latest child op")
         repo.close()
     }
+
+    @Test
+    fun `relayed text box materializes and a later tombstone removes it`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver) { 1000L }
+        val pg = "00000000000000000000000PGT"
+        val tb = "00000000000000000000000TBX"
+        fun tbOp(opSeq: Long, wallTs: Long, text: String, deletedAt: Long? = null) = SyncOp(
+            "text_box", tb, REMOTE, opSeq, wallTs,
+            cols(SyncWire.textBoxCols(pg, 10, 20, 300, 100, text, "Roboto-Regular.ttf", 240, -16777216L, 400, 2, 0, wallTs, deletedAt))
+        )
+        repo.applySyncOps(
+            listOf(
+                nbOp(NB, REMOTE, 1, 3000, "NB"),
+                SyncOp("page", pg, REMOTE, 2, 4000, cols(SyncWire.pageCols(NB, 0, 4000, null, null, null))),
+                tbOp(3, 6000, "Hello")
+            )
+        )
+        assertEquals(listOf("Hello"), repo.loadTextBoxesForPage(pg).map { it.text }, "relayed text box is live")
+        assertEquals(6000L, repo.modifiedAtOf(NB), "text box op bumps owning notebook modified_at")
+
+        repo.applySyncOps(listOf(tbOp(4, 8000, "Hello", deletedAt = 8000)))
+        assertTrue(repo.loadTextBoxesForPage(pg).isEmpty(), "relayed tombstone drops the box from live reads")
+        repo.close()
+    }
+
+    @Test
+    fun `older text box op loses to newer local provenance`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver) { 1000L }
+        val pg = "00000000000000000000000PGL"
+        val tb = "00000000000000000000000TBL"
+        fun tbOp(opSeq: Long, wallTs: Long, text: String) = SyncOp(
+            "text_box", tb, REMOTE, opSeq, wallTs,
+            cols(SyncWire.textBoxCols(pg, 0, 0, 100, 100, text, "x", 200, -16777216L, 400, 0, 0, wallTs, null))
+        )
+        repo.applySyncOps(listOf(SyncOp("page", pg, REMOTE, 1, 1000, cols(SyncWire.pageCols(NB, 0, 1000, null, null, null)))))
+        repo.applySyncOps(listOf(tbOp(3, 5000, "New")))
+
+        repo.applySyncOps(listOf(tbOp(2, 3000, "Old"))) // older key -> skipped
+
+        assertEquals(listOf("New"), repo.loadTextBoxesForPage(pg).map { it.text }, "older op must not overwrite")
+        repo.close()
+    }
 }
