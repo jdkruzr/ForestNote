@@ -140,7 +140,15 @@ class SyncController(
             // Keep running the full (idempotent) join handshake until it has completed once — so a
             // first attempt that failed mid-way (no network, wrong password) still uploads pre-sync
             // content on a later resume, instead of silently degrading to a plain session.
-            if (!store.syncJoined()) enableAndJoin() else runSession()
+            if (!store.syncJoined()) {
+                enableAndJoin()
+            } else {
+                // An already-joined device that just upgraded to a build with a newer synced schema
+                // re-backfills its pre-existing rows of the new kind (e.g. text boxes) once before
+                // the session, so they upload too — not just rows touched after the upgrade.
+                store.syncRebackfillIfNeeded()
+                runSession()
+            }
             startPeriodic(s.syncIntervalMinutes)
         }
     }

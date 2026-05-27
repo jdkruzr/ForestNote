@@ -94,6 +94,13 @@ class NotebookRepository private constructor(
         internal const val TEXT_BOX_SYNC_ENABLED = true
 
         /**
+         * The synced-schema generation. Bump whenever a new syncable table/column ships so an
+         * already-joined device re-backfills its existing rows of the new kind exactly once (see
+         * [rebackfillIfSchemaAdvanced]). 0 = pre-text_box; 1 = text_box added.
+         */
+        internal const val SYNC_BACKFILL_VERSION = 1
+
+        /**
          * Open or create the library database, bootstrapping ≥1 notebook/≥1 page
          * and restoring the active context from `app_state`.
          * If the file is corrupted, deletes it and starts fresh.
@@ -869,7 +876,23 @@ class NotebookRepository private constructor(
             if (TEXT_BOX_SYNC_ENABLED) {
                 db.notebookQueries.allTextBoxIds().executeAsList().forEach { if (lacksMeta("text_box", it)) enqueueOp("text_box", it, now) }
             }
+            // A full backfill covers the current synced schema, so mark this device caught up.
+            db.notebookQueries.setBackfillVersion(SYNC_BACKFILL_VERSION.toLong())
         }
+    }
+
+    /**
+     * Re-run [backfillOutbox] once if this (already-enabled) device backfilled for an older synced
+     * schema than the current [SYNC_BACKFILL_VERSION] — e.g. it joined before `text_box` was a
+     * synced table, so those rows never got outbox ops. The backfill is idempotent (`lacksMeta`
+     * skips already-synced rows) and re-stamps the version, so this is a no-op on every later call.
+     * Sync-off / not-yet-enabled is left alone: the first [enableSync]/join does a full backfill.
+     */
+    fun rebackfillIfSchemaAdvanced() {
+        val state = db.notebookQueries.getSyncState().executeAsOneOrNull() ?: return
+        if (state.site_id == null) return
+        if (state.backfill_version >= SYNC_BACKFILL_VERSION) return
+        backfillOutbox()
     }
 
     private fun lacksMeta(table: String, pk: String): Boolean =

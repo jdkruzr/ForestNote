@@ -531,6 +531,8 @@ class NotebookStore(
     suspend fun syncDiscardBootstrapNotebook(id: String) = onDb { it.discardBootstrapNotebook(id) }
     suspend fun syncJoined(): Boolean = onDb { it.syncJoined() }
     suspend fun syncMarkJoined() = onDb { it.setSyncJoined(true) }
+    /** Re-backfill once if this joined device is behind the current synced-schema generation. */
+    suspend fun syncRebackfillIfNeeded() = onDb { it.rebackfillIfSchemaAdvanced() }
 
     /** Read the persisted sync config (server URL + credentials), off-thread. */
     suspend fun syncSettings(): Settings = onDb { it.settings() }

@@ -1,0 +1,8 @@
+-- v10 -> v11: add the synced-schema backfill generation to sync_state. NON-destructive.
+-- When the client gains a new syncable table/column (e.g. text_box), bumping
+-- NotebookRepository.SYNC_BACKFILL_VERSION lets an already-JOINED device notice its stored value
+-- is behind and re-run the idempotent backfill once, so pre-existing rows of the newly-synced
+-- table get outbox ops (without this, only rows mutated after the upgrade would ever upload).
+-- Existing rows default to 0 (pre-text_box); the first resume of a text_box-capable build
+-- re-backfills and advances it. sync_state is local-only, so this does NOT affect the schema_hash.
+ALTER TABLE sync_state ADD COLUMN backfill_version INTEGER NOT NULL DEFAULT 0;

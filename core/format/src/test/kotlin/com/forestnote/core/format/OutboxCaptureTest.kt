@@ -90,6 +90,36 @@ class OutboxCaptureTest {
     }
 
     @Test
+    fun `rebackfill uploads a newly-synced table's pre-existing rows after a schema-version bump`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver) { 1000L }
+        val pg = repo.currentPageId()
+        repo.enableSync() // a full backfill stamps backfill_version = current
+
+        // Simulate a device that JOINED at an older generation (before text_box was synced): a
+        // text box that the old build never captured (no outbox op, no row meta), and a stale
+        // backfill_version. The driver writes bypass the capture path, like the old build did.
+        driver.execute(
+            null,
+            "INSERT INTO text_box(id, page_id, x, y, width, height, text, font_name, font_size, color, weight, border_width, z, created_at) " +
+                "VALUES ('00000000000000000000000OLD', ?, 0, 0, 100, 100, 'old', '', 200, -16777216, 400, 0, 0, 1000)",
+            1
+        ) { bindString(0, pg) }
+        driver.execute(null, "UPDATE sync_state SET backfill_version = 0", 0)
+
+        repo.rebackfillIfSchemaAdvanced()
+
+        assertTrue(
+            outbox(driver).any { it.table == "text_box" && it.pk == "00000000000000000000000OLD" },
+            "the pre-existing text box is backfilled once the schema generation advances"
+        )
+        val count = outbox(driver).size
+        repo.rebackfillIfSchemaAdvanced() // caught up now → no-op
+        assertEquals(count, outbox(driver).size, "rebackfill is idempotent once the version is current")
+        repo.close()
+    }
+
+    @Test
     fun `saveStroke after enable captures one stroke op with wire-encoded cols`() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val repo = NotebookRepository.forTesting(driver) { 5000L }
