@@ -198,6 +198,18 @@
                 android:hint="0"
                 android:inputType="number"
                 android:imeOptions="actionDone" />
+
+            <!-- ===== Debug ===== -->
+            <TextView style="@style/SettingsSection" android:text="Debug" />
+
+            <CheckBox
+                android:id="@+id/check_debug_logs"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minHeight="44dp"
+                android:textSize="15sp"
+                android:textColor="@color/black"
+                android:text="Write debug logs to /sdcard/ForestNote" />
         </LinearLayout>
     </ScrollView>
 </LinearLayout>

@@ -48,6 +48,8 @@ data class Settings(
     val caldavServerUrl: String = "",
     /** Auto-empty the Recycle Bin after this many days (E4). 0 = never (default). */
     val recycleBinRetentionDays: Int = 0,
+    /** Mirror diagnostics to /sdcard/ForestNote/forestnote.log for the SSH debug loop. Off by default. */
+    val debugLogging: Boolean = false,
     /**
      * Per-variant pen width level (A10), keyed by `PenVariant.name` → `PenWidthLevel.name`.
      * Stringly-typed so this module needn't pull in core:ink's enums for serialization; the

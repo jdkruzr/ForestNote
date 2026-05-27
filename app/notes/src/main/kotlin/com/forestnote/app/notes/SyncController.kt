@@ -27,7 +27,8 @@ import kotlinx.coroutines.sync.withLock
 class SyncController(
     private val store: NotebookStore,
     private val scope: CoroutineScope,
-    private val transportFactory: (SyncConfig) -> SyncTransport = { HttpUrlTransport(it.endpoint, it.authHeader) },
+    private val log: (String) -> Unit = {},
+    private val transportFactory: (SyncConfig) -> SyncTransport = { HttpUrlTransport(it.endpoint, it.authHeader, log = log) },
     private val maxRetries: Int = 4,
     private val backoffBaseMs: Long = 1_000,
     private val now: () -> Long = { System.currentTimeMillis() }
@@ -50,8 +51,9 @@ class SyncController(
 
     /** One session with retry/backoff. No-op (Idle) when sync isn't configured. */
     suspend fun runSession(): SyncResult = mutex.withLock {
-        val cfg = config() ?: return@withLock notEnabled()
-        val engine = SyncEngine(store.syncLocalStore(), transportFactory(cfg))
+        val cfg = config() ?: run { log("runSession: sync not configured"); return@withLock notEnabled() }
+        log("runSession: endpoint=${cfg.endpoint}")
+        val engine = SyncEngine(store.syncLocalStore(), transportFactory(cfg), log = log)
         _status.value = SyncStatus.Syncing
         var attempt = 0
         while (true) {
@@ -76,19 +78,22 @@ class SyncController(
     suspend fun enableAndJoin(): SyncResult = mutex.withLock {
         val wasPristine = store.syncIsPristineBootstrap()
         val bootstrapId = store.syncCurrentNotebookId()
-        store.syncMintSiteId() // capture active from here
+        val site = store.syncMintSiteId() // capture active from here
+        log("enableAndJoin: site_id=$site pristine=$wasPristine bootstrap=$bootstrapId")
 
         val cfg = config() ?: run {
             store.syncBackfillOutbox()
+            log("enableAndJoin: no server configured — enabled locally, backfilled for later upload")
             return@withLock notEnabled()
         }
-        val engine = SyncEngine(store.syncLocalStore(), transportFactory(cfg))
+        val engine = SyncEngine(store.syncLocalStore(), transportFactory(cfg), log = log)
         _status.value = SyncStatus.Syncing
 
         val pull = engine.syncOnce()
-        if (pull !is SyncResult.Success) return@withLock finish(pull)
+        if (pull !is SyncResult.Success) { log("enableAndJoin: pull failed ($pull)"); return@withLock finish(pull) }
 
         if (SyncJoinPlan.shouldDiscardBootstrap(wasPristine, bootstrapId, store.syncNotebookIds())) {
+            log("enableAndJoin: discarding untouched bootstrap notebook $bootstrapId")
             store.syncDiscardBootstrapNotebook(bootstrapId)
         }
         store.syncBackfillOutbox()

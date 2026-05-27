@@ -52,6 +52,7 @@ class MainActivity : Activity() {
     // engine's network/DB work hops to IO / the store's executor internally.
     private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var syncController: SyncController
+    private lateinit var fileLogger: FileLogger
     private lateinit var toolBar: ToolBar
     private lateinit var pageIndicator: TextView
     private lateinit var btnNotebooks: ImageButton
@@ -89,7 +90,16 @@ class MainActivity : Activity() {
         // Open storage. The store opens the repository on its own background thread,
         // so onCreate never makes a synchronous DB call (AC1.2).
         store = NotebookStore.create(this)
-        syncController = SyncController(store, syncScope)
+        // File logging for the on-device debug loop (gated by Settings.debugLogging). Primary dir is
+        // public /sdcard/ForestNote (readable by the SSH/Termux loop, same place the crash handler
+        // reaches); falls back to app-private storage if that isn't writable.
+        fileLogger = FileLogger(dir = resolveLogDir())
+        syncController = SyncController(store, syncScope, log = { fileLogger.log("Sync", it) })
+        // Apply the persisted Debug Logs toggle and announce startup.
+        store.loadSettings { s ->
+            fileLogger.enabled = s.debugLogging
+            fileLogger.log("App", "ForestNote launched (debugLogging=${s.debugLogging})")
+        }
         // Reflect sync status in the Library header caption (no-op while the Library is hidden).
         syncScope.launch {
             syncController.status.collect { libraryView.setSyncCaption(syncCaption(it)) }
@@ -437,6 +447,11 @@ class MainActivity : Activity() {
         settingsView.hide()
         // Re-resolve + repaint the active page's template in case the default changed (B3).
         refreshPageIndicator()
+        // Pick up a flipped Debug Logs toggle without needing a relaunch.
+        store.loadSettings { s ->
+            fileLogger.enabled = s.debugLogging
+            fileLogger.log("App", "settings closed (debugLogging=${s.debugLogging})")
+        }
         // Credentials/URL may have just been entered — (re)enable sync and restart the timer.
         syncController.resume()
     }
@@ -711,6 +726,13 @@ class MainActivity : Activity() {
         } catch (_: Throwable) {
             // Ignore cleanup errors
         }
+    }
+
+    /** Public log dir the debug loop can read; falls back to app-private storage if /sdcard is denied. */
+    private fun resolveLogDir(): java.io.File {
+        val ext = java.io.File("/sdcard/ForestNote")
+        return if (runCatching { ext.mkdirs(); ext.isDirectory && ext.canWrite() }.getOrDefault(false)) ext
+        else java.io.File(filesDir, "logs")
     }
 
     /** Short Library-header caption for the current sync status. */
