@@ -52,6 +52,20 @@ class FileLoggerTest {
     }
 
     @Test
+    fun `falls back to the secondary dir when the primary write fails`() {
+        // Primary path is unwritable: a child dir under a regular file can't be created/written.
+        val blocker = tmp.newFile("not-a-dir")
+        val primary = java.io.File(blocker, "logs")
+        val fallback = tmp.newFolder("fallback")
+        val logger = FileLogger(dir = primary, fallbackDir = fallback, enabled = true, clock = { 1779908761123L })
+
+        logger.log("Sync", "lands in fallback")
+
+        assertFalse(java.io.File(primary, "forestnote.log").exists(), "primary stayed unwritten")
+        assertTrue(java.io.File(fallback, "forestnote.log").readText().contains("lands in fallback"))
+    }
+
+    @Test
     fun `rotates one generation when the cap is exceeded`() {
         val dir = tmp.newFolder("logs")
         val logger = FileLogger(dir = dir, enabled = true, maxBytes = 80, clock = { 1779908761123L })

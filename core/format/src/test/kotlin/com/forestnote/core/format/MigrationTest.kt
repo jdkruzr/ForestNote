@@ -6,6 +6,7 @@ import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
 import org.junit.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -200,7 +201,7 @@ class MigrationTest {
         // Schema.version is now 8; openExisting → bootstrap queries the current tables
         // (notebook incl. modified_at + folder_id + soft-delete cols, app_state incl.
         // settings_json) AND reads the notebook_live view, so migrate all the way up.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 8L)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 9L)
 
         // openExisting (no schema.create) must work against the migrated DB.
         val repo = NotebookRepository.openExisting(driver)
@@ -224,7 +225,7 @@ class MigrationTest {
         createV2Schema(driver)
 
         // Migrate to the current version (8); runs v2->v3 plus v3->v4, v4->v5, v5->v6, v6->v7, v7->v8.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 8L)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 9L)
 
         assertTrue(tableExists(driver, "notebook"), "notebook table exists after v2->v3")
         assertTrue(tableExists(driver, "app_state"), "app_state table exists after v2->v3")
@@ -568,7 +569,7 @@ class MigrationTest {
         // pre-existing notebook (this would throw "no such table: notebook_live" if not).
         // The repo's generated queries target the current schema (v8), so finish the upgrade
         // (v7->v8 adds sync-only tables + page/stroke.deleted_at; no view change) before opening.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 8L)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 9L)
         val repo = NotebookRepository.openExisting(driver)
         assertTrue(repo.listNotebooks().any { it.id == "n1" }, "live query (via notebook_live view) returns the kept notebook")
 
@@ -632,6 +633,36 @@ class MigrationTest {
         )
         assertEquals(1L, pageRows, "pre-existing page survives the migration")
         assertTrue(pageDeletedAtIsNull, "pre-existing page is live (NULL deleted_at) after migration")
+
+        driver.close()
+    }
+
+    /**
+     * Sync Phase 5: migrating v8 -> v9 adds the `joined` flag to sync_state, non-destructively —
+     * an existing sync_state row keeps its values and defaults joined = 0 (so an already-minted
+     * device re-runs the idempotent join handshake to upload any un-backfilled pre-sync content).
+     */
+    @Test
+    fun v8ToV9AddsJoinedFlag() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        createV7PageStroke(driver)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 8L)
+        assertFalse(columnNames(driver, "sync_state").contains("joined"), "v8 sync_state has no joined column")
+        driver.execute(null, "INSERT INTO sync_state(id, site_id, next_op_seq, cursor, acked_op_seq) VALUES (0, 'SITE', 5, 3, 2)", 0)
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 8L, newVersion = 9L)
+
+        assertTrue(columnNames(driver, "sync_state").contains("joined"), "sync_state gains joined after v8->v9")
+        var nextOpSeq = 0L
+        var joined = -1L
+        driver.executeQuery(
+            null,
+            "SELECT next_op_seq, joined FROM sync_state WHERE id = 0",
+            { c -> c.next(); nextOpSeq = c.getLong(0) ?: 0L; joined = c.getLong(1) ?: -1L; QueryResult.Value(Unit) },
+            0
+        )
+        assertEquals(5L, nextOpSeq, "pre-existing sync_state row survives the migration")
+        assertEquals(0L, joined, "joined defaults to 0 (not yet joined)")
 
         driver.close()
     }

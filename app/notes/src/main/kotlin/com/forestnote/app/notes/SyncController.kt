@@ -97,7 +97,12 @@ class SyncController(
             store.syncDiscardBootstrapNotebook(bootstrapId)
         }
         store.syncBackfillOutbox()
-        finish(engine.syncOnce()) // push the backfilled local content
+        val push = engine.syncOnce() // push the backfilled local content
+        if (push is SyncResult.Success) {
+            store.syncMarkJoined() // the full handshake completed — future sessions are plain syncs
+            log("enableAndJoin: join complete")
+        }
+        finish(push)
     }
 
     /** (Re)start the periodic timer. [intervalMinutes] <= 0 stops it (no background sync). */
@@ -132,7 +137,10 @@ class SyncController(
                 _status.value = SyncStatus.Idle
                 return@launch
             }
-            if (store.syncLocalStore().siteId() == null) enableAndJoin() else runSession()
+            // Keep running the full (idempotent) join handshake until it has completed once — so a
+            // first attempt that failed mid-way (no network, wrong password) still uploads pre-sync
+            // content on a later resume, instead of silently degrading to a plain session.
+            if (!store.syncJoined()) enableAndJoin() else runSession()
             startPeriodic(s.syncIntervalMinutes)
         }
     }

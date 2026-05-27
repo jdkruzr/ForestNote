@@ -16,6 +16,7 @@ import kotlinx.serialization.json.put
 import org.junit.Test
 import java.util.concurrent.Executors
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -77,6 +78,26 @@ class SyncControllerTest {
         assertTrue(bootstrapId !in ids, "the untouched bootstrap notebook was discarded")
         assertEquals(2, transport.requests.size, "one pull + one push")
         assertTrue(transport.requests[0].ops.isEmpty(), "the pull request carried no local ops (mint, not backfill, came first)")
+        store.shutdown()
+    }
+
+    @Test
+    fun `a failed first pull leaves the device un-joined and a later attempt completes it`() = runBlocking {
+        val store = newStore()
+        store.updateSettings({ it.copy(syncServerUrl = "https://ub.example.org", syncUsername = "u", syncPassword = "p") }, {})
+        // First attempt: the pull is rejected (e.g. bad credentials) — join must NOT be marked done.
+        val failing = ScriptedTransport(listOf(SyncOutcome.HttpError(401, "Unauthorized")))
+        val c1 = SyncController(store, CoroutineScope(Dispatchers.Unconfined), transportFactory = { failing })
+        assertEquals(SyncResult.AuthRequired, c1.enableAndJoin())
+        assertFalse(store.syncJoined(), "a failed pull does not complete the join")
+
+        // Later attempt (creds fixed): pull + push succeed -> join completes and local content uploaded.
+        val ok = ScriptedTransport(listOf(ok(0, 0), ok(2, 0)))
+        val c2 = SyncController(store, CoroutineScope(Dispatchers.Unconfined), transportFactory = { ok })
+        assertEquals(SyncResult.Success, c2.enableAndJoin())
+        assertTrue(store.syncJoined(), "the completed handshake marks the device joined")
+        assertEquals(2, ok.requests.size, "pull + push")
+        assertTrue(ok.requests[1].ops.isNotEmpty(), "the backfilled bootstrap content is pushed on the push pass")
         store.shutdown()
     }
 

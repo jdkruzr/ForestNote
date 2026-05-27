@@ -93,7 +93,7 @@ class MainActivity : Activity() {
         // File logging for the on-device debug loop (gated by Settings.debugLogging). Primary dir is
         // public /sdcard/ForestNote (readable by the SSH/Termux loop, same place the crash handler
         // reaches); falls back to app-private storage if that isn't writable.
-        fileLogger = FileLogger(dir = resolveLogDir())
+        fileLogger = FileLogger(dir = java.io.File("/sdcard/Download"), fallbackDir = java.io.File(filesDir, "logs"))
         syncController = SyncController(store, syncScope, log = { fileLogger.log("Sync", it) })
         // Apply the persisted Debug Logs toggle and announce startup.
         store.loadSettings { s ->
@@ -726,13 +726,6 @@ class MainActivity : Activity() {
         } catch (_: Throwable) {
             // Ignore cleanup errors
         }
-    }
-
-    /** Public log dir the debug loop can read; falls back to app-private storage if /sdcard is denied. */
-    private fun resolveLogDir(): java.io.File {
-        val ext = java.io.File("/sdcard/ForestNote")
-        return if (runCatching { ext.mkdirs(); ext.isDirectory && ext.canWrite() }.getOrDefault(false)) ext
-        else java.io.File(filesDir, "logs")
     }
 
     /** Short Library-header caption for the current sync status. */

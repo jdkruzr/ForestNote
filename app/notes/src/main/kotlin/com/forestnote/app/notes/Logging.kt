@@ -26,10 +26,17 @@ object LogFormatter {
  * Appends timestamped lines to `<dir>/forestnote.log`, gated by [enabled]. Rotates a single
  * generation (`.log` → `.log.1`) once the file passes [maxBytes] so it can't fill storage.
  * Thread-safe (sync runs across the executor + coroutine IO threads) and swallows all I/O errors —
- * a logger must never take down the app. [dir] is injected so tests run against a temp folder.
+ * a logger must never take down the app.
+ *
+ * Storage choice is by ATTEMPTED WRITE, not `File.canWrite()`: under Android scoped storage
+ * `canWrite()` reports false for `/sdcard/Download` even though a direct `FileWriter` there
+ * succeeds (the pattern `core:ink`'s CrashLog already relies on). So we try [dir] first and fall
+ * back to [fallbackDir] only when a write actually throws. [dir]/[fallbackDir] are injected so
+ * tests run against temp folders.
  */
 class FileLogger(
     private val dir: File,
+    private val fallbackDir: File? = null,
     @Volatile var enabled: Boolean = false,
     private val maxBytes: Long = 512 * 1024,
     private val clock: () -> Long = { System.currentTimeMillis() }
@@ -38,21 +45,26 @@ class FileLogger(
 
     fun log(tag: String, msg: String) {
         if (!enabled) return
+        val line = LogFormatter.line(clock(), 'I', tag, msg)
         synchronized(lock) {
-            try {
-                if (!dir.exists()) dir.mkdirs()
-                rotateIfNeeded()
-                FileWriter(File(dir, FILE), true).use { it.append(LogFormatter.line(clock(), 'I', tag, msg)).append('\n') }
-            } catch (_: Throwable) {
-                // Never crash on logging.
-            }
+            if (tryWrite(dir, line)) return
+            fallbackDir?.let { tryWrite(it, line) }
         }
     }
 
-    private fun rotateIfNeeded() {
-        val current = File(dir, FILE)
+    private fun tryWrite(d: File, line: String): Boolean = try {
+        if (!d.exists()) d.mkdirs()
+        rotateIfNeeded(d)
+        FileWriter(File(d, FILE), true).use { it.append(line).append('\n') }
+        true
+    } catch (_: Throwable) {
+        false // not writable here; caller tries the fallback
+    }
+
+    private fun rotateIfNeeded(d: File) {
+        val current = File(d, FILE)
         if (current.exists() && current.length() >= maxBytes) {
-            val prev = File(dir, "$FILE.1")
+            val prev = File(d, "$FILE.1")
             if (prev.exists()) prev.delete()
             current.renameTo(prev)
         }

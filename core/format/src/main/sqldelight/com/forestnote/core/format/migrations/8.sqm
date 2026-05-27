@@ -1,0 +1,7 @@
+-- v8 -> v9 (sync Phase 5): add the join-complete flag to sync_state. The initial pull-first
+-- join handshake (mint -> pull -> discard untouched bootstrap -> backfill -> push) must run to
+-- completion at least once; until then resume() keeps retrying it instead of falling back to a
+-- plain session. Non-destructive: existing rows keep their values and default joined = 0, so a
+-- device that already minted a site_id is treated as "not yet joined" and re-runs the handshake
+-- (which is idempotent) to upload any pre-sync content it never backfilled.
+ALTER TABLE sync_state ADD COLUMN joined INTEGER NOT NULL DEFAULT 0;
