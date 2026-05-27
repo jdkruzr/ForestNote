@@ -35,7 +35,7 @@ class SyncVectorTest {
     fun `every conformance vector merges to its expected state`() {
         val dir = File(javaClass.classLoader.getResource("sync-vectors")!!.toURI())
         val files = dir.listFiles { f -> f.name.endsWith(".vector.json") }!!.sortedBy { it.name }
-        assertTrue(files.size >= 17, "expected the full mirrored vector suite, found ${files.size}")
+        assertTrue(files.size >= 20, "expected the full mirrored vector suite (incl. text_box), found ${files.size}")
 
         for (file in files) {
             val root = json.parseToJsonElement(file.readText()).jsonObject

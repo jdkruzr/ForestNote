@@ -11,9 +11,11 @@ import kotlinx.serialization.json.JsonObject
  * domain [SyncOp] (core:format) is mapped to/from [WireOp] at the engine boundary so the wire
  * encoding never leaks into the storage layer.
  *
- * The v1 schema_hash gate (§6). A request carrying any other hash is refused with 409.
+ * The schema_hash gate (§6). A request carrying a hash the server doesn't accept is refused with
+ * 409. v2 = folder/notebook/page/stroke/text_box (UB accepts {v1, v2} during the rollout grace
+ * window). v1 was 9b807dc88cd0465d171892bb17e65ad94190eda058594e207caad3368eb1f2fe.
  */
-const val SCHEMA_HASH = "9b807dc88cd0465d171892bb17e65ad94190eda058594e207caad3368eb1f2fe"
+const val SCHEMA_HASH = "bc1953e2b85e766a572329e7023b4582b768094b4d27e28a632e21bedb776874"
 
 /** The current protocol version (§8). */
 const val PROTOCOL_VERSION = 1

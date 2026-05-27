@@ -86,14 +86,12 @@ class NotebookRepository private constructor(
         private const val DEFAULT_FILENAME = "default.forestnote"
 
         /**
-         * Gate for text-box sync (local-first rollout). Text boxes persist + render locally now;
-         * their ops are NOT enqueued to the outbox while this is false, because the UltraBridge
-         * server doesn't yet know the `text_box` table and would 409 on the schema-hash mismatch.
-         * Phase 6 flips this true together with bumping `SyncProtocol.SCHEMA_HASH` on both sides;
-         * `backfillOutbox` then uploads any text boxes created in the meantime. The wire/merge/apply
-         * plumbing is always present (harmless dead code until the server relays a text_box op).
+         * Gate for text-box sync. ENABLED (Phase 6 cutover, 2026-05-27): the UltraBridge server
+         * accepts schema v2 (folder/notebook/page/stroke/text_box, hash bc1953e2…), so text-box
+         * mutations now enqueue full-row-upsert ops to the outbox and `backfillOutbox` uploads any
+         * boxes created before the cutover. Paired with `SyncProtocol.SCHEMA_HASH` = the v2 value.
          */
-        internal const val TEXT_BOX_SYNC_ENABLED = false
+        internal const val TEXT_BOX_SYNC_ENABLED = true
 
         /**
          * Open or create the library database, bootstrapping ≥1 notebook/≥1 page
