@@ -116,6 +116,28 @@ class SyncController(
         timerJob = null
     }
 
+    /**
+     * App foregrounded: if a server is configured, enable+join on first run (no site_id yet) or
+     * otherwise run a normal session, then (re)start the periodic timer. No-op if unconfigured.
+     */
+    fun resume() {
+        scope.launch {
+            val s = store.syncSettings()
+            if (SyncConfig.from(s.syncServerUrl, s.syncUsername, s.syncPassword) == null) {
+                _status.value = SyncStatus.Idle
+                return@launch
+            }
+            if (store.syncLocalStore().siteId() == null) enableAndJoin() else runSession()
+            startPeriodic(s.syncIntervalMinutes)
+        }
+    }
+
+    /** App backgrounded: stop the timer and push pending changes once (best effort). */
+    fun pause() {
+        stopPeriodic()
+        syncNow()
+    }
+
     private fun finish(result: SyncResult): SyncResult {
         _status.value = when (result) {
             is SyncResult.Success -> SyncStatus.Synced(now())

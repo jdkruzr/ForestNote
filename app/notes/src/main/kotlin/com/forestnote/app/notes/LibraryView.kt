@@ -30,6 +30,8 @@ class LibraryView {
         val onFolderProperties: (FolderCard) -> Unit,
         val onOpenSettings: () -> Unit,
         val onOpenRecycleBin: () -> Unit,
+        /** Manual "Sync now" tap (Phase 5). */
+        val onSyncNow: () -> Unit,
         // Bulk actions on the current selection (D1 wires the UI; D2/D3 fill in the dialogs).
         val onBulkMove: (Set<String>) -> Unit,
         val onBulkDelete: (Set<String>) -> Unit
@@ -94,6 +96,7 @@ class LibraryView {
         }
 
         view.findViewById<View>(R.id.btn_library_settings).setOnClickListener { callbacks.onOpenSettings() }
+        view.findViewById<View>(R.id.btn_library_sync).setOnClickListener { callbacks.onSyncNow() }
         view.findViewById<View>(R.id.btn_library_add_notebook).setOnClickListener { callbacks.onNewNotebook() }
 
         // Recycle Bin: enabled this phase (E3). The count badge is filled in by reload().
@@ -132,6 +135,11 @@ class LibraryView {
         this.callbacks = callbacks
         renderSelectChrome()
         reload()
+    }
+
+    /** Update the Sync cell caption to reflect the current sync status. No-op when not showing. */
+    fun setSyncCaption(text: String) {
+        root?.findViewById<TextView>(R.id.text_library_sync_caption)?.text = text
     }
 
     /** Re-query the current folder and rebind (call after enter/exit/create/rename/delete). */

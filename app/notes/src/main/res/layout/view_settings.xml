@@ -126,6 +126,30 @@
                 android:inputType="textUri"
                 android:imeOptions="actionDone" />
 
+            <TextView style="@style/SettingsLabel" android:text="Username" />
+            <EditText
+                android:id="@+id/input_sync_username"
+                style="@style/SettingsInput"
+                android:hint="username"
+                android:inputType="text"
+                android:imeOptions="actionDone" />
+
+            <TextView style="@style/SettingsLabel" android:text="Password" />
+            <EditText
+                android:id="@+id/input_sync_password"
+                style="@style/SettingsInput"
+                android:hint="password"
+                android:inputType="textPassword"
+                android:imeOptions="actionDone" />
+
+            <TextView style="@style/SettingsLabel" android:text="Auto-sync every N minutes (0 = off)" />
+            <EditText
+                android:id="@+id/input_sync_interval"
+                style="@style/SettingsInput"
+                android:hint="15"
+                android:inputType="number"
+                android:imeOptions="actionDone" />
+
             <!-- ===== AI endpoints ===== -->
             <TextView style="@style/SettingsSection" android:text="AI endpoints" />
 

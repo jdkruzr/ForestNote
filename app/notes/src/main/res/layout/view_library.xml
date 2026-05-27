@@ -56,6 +56,41 @@
                 android:paddingBottom="2dp" />
         </LinearLayout>
 
+        <!-- Sync now: caption doubles as the sync status line (Phase 5). A plain action (no ▾) —
+             tapping runs a manual sync; the caption reflects idle/syncing/synced/error. -->
+        <LinearLayout
+            android:id="@+id/btn_library_sync"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="Sync now"
+            android:background="?attr/selectableItemBackground">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_refresh"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:id="@+id/text_library_sync_caption"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Sync"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
+
         <!-- Up (back one level; shown only inside a folder) -->
         <LinearLayout
             android:id="@+id/btn_library_back"
