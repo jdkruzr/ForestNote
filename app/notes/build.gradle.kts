@@ -21,6 +21,7 @@ val libs = extensions.getByType<VersionCatalogsExtension>().named("libs")
 dependencies {
     implementation(project(":core:ink"))
     implementation(project(":core:format"))
+    implementation(project(":core:sync"))
 
     // Ink API for erase tools (geometry types used indirectly via StrokeGeometry)
     implementation(libs.findLibrary("androidx-ink-geometry").get())
@@ -28,6 +29,13 @@ dependencies {
     // RecyclerView for the Library card grid (C3a — the app's first RecyclerView)
     implementation(libs.findLibrary("androidx-recyclerview").get())
 
+    // Coroutines for the sync controller (network/orchestration off the main thread)
+    implementation(libs.findLibrary("kotlinx-coroutines-android").get())
+    // Serialization is on core:sync's public surface (HttpUrlTransport's Json param) and used to
+    // build relay-op cols, so it must be on the app's compile classpath too.
+    implementation(libs.findLibrary("kotlinx-serialization-json").get())
+
     // Real SQLite driver for NotebookStore tests (JVM, in-memory + file-backed)
     testImplementation(libs.findLibrary("sqldelight-sqlite-driver").get())
+    testImplementation(libs.findLibrary("kotlinx-coroutines-test").get())
 }

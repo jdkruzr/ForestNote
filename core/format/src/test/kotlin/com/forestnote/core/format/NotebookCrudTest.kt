@@ -169,9 +169,11 @@ class NotebookCrudTest {
 
         assertFalse(
             repo.listPagesForCurrentNotebook().any { it.id == second },
-            "deleted page is gone from the list"
+            "deleted page is gone from the live list"
         )
-        assertEquals(0L, strokeCountForPage(driver, second), "deleted page's strokes are gone")
+        // Soft-delete (sync): the page + strokes are tombstoned, not removed, so they no longer
+        // load as live (the raw rows persist for replication — see PageStrokeSoftDeleteTest).
+        assertEquals(0, repo.loadStrokesForPage(second).size, "deleted page's strokes are no longer live")
 
         repo.close()
     }

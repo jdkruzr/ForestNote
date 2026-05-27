@@ -1,0 +1,37 @@
+{
+  "name": "folder-single",
+  "description": "A single folder op materializes to one live root-level folder (parent_folder_id null).",
+  "ops": [
+    {
+      "table": "folder",
+      "pk": "0000000000000000000000FDR1",
+      "site_id": "0000000000000000000000000A",
+      "op_seq": 1,
+      "wall_ts": 1000,
+      "cols": {
+        "name": "Projects",
+        "sort_order": 0,
+        "created_at": 1000,
+        "deleted_at": null,
+        "parent_folder_id": null
+      }
+    }
+  ],
+  "expected_state": {
+    "folder": [
+      {
+        "pk": "0000000000000000000000FDR1",
+        "site_id": "0000000000000000000000000A",
+        "op_seq": 1,
+        "wall_ts": 1000,
+        "cols": {
+          "name": "Projects",
+          "sort_order": 0,
+          "created_at": 1000,
+          "deleted_at": null,
+          "parent_folder_id": null
+        }
+      }
+    ]
+  }
+}

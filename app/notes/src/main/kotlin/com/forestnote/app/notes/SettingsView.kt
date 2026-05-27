@@ -81,6 +81,9 @@ class SettingsView {
         val rgStartView = view.findViewById<RadioGroup>(R.id.rg_start_view)
 
         val syncInput = view.findViewById<EditText>(R.id.input_sync_url)
+        val syncUserInput = view.findViewById<EditText>(R.id.input_sync_username)
+        val syncPassInput = view.findViewById<EditText>(R.id.input_sync_password)
+        val syncIntervalInput = view.findViewById<EditText>(R.id.input_sync_interval)
         val selectionInput = view.findViewById<EditText>(R.id.input_selection_url)
         val fulltextInput = view.findViewById<EditText>(R.id.input_fulltext_url)
         val chatInput = view.findViewById<EditText>(R.id.input_chat_url)
@@ -102,6 +105,9 @@ class SettingsView {
             pitchButtons[SettingsFormLogic.selectedPitchIndex(s.defaultPitchMm)].isChecked = true
             rgStartView.check(if (s.startView == StartView.LIBRARY) R.id.rb_start_library else R.id.rb_start_last)
             syncInput.setText(s.syncServerUrl)
+            syncUserInput.setText(s.syncUsername)
+            syncPassInput.setText(s.syncPassword)
+            syncIntervalInput.setText(s.syncIntervalMinutes.toString())
             selectionInput.setText(s.selectionRecognitionUrl)
             fulltextInput.setText(s.fullTextTranscriptionUrl)
             chatInput.setText(s.chatUrl)
@@ -130,6 +136,11 @@ class SettingsView {
         }
 
         wireUrl(syncInput) { s, v -> s.copy(syncServerUrl = v) }.also { it.guard = { loading } }
+        wireUrl(syncUserInput) { s, v -> s.copy(syncUsername = v) }.also { it.guard = { loading } }
+        wireUrl(syncPassInput) { s, v -> s.copy(syncPassword = v) }.also { it.guard = { loading } }
+        // Interval is a non-negative integer; blank/invalid commits as 0 (= off).
+        wireUrl(syncIntervalInput) { s, v -> s.copy(syncIntervalMinutes = v.toIntOrNull()?.coerceAtLeast(0) ?: 0) }
+            .also { it.guard = { loading } }
         wireUrl(selectionInput) { s, v -> s.copy(selectionRecognitionUrl = v) }.also { it.guard = { loading } }
         wireUrl(fulltextInput) { s, v -> s.copy(fullTextTranscriptionUrl = v) }.also { it.guard = { loading } }
         wireUrl(chatInput) { s, v -> s.copy(chatUrl = v) }.also { it.guard = { loading } }

@@ -40,7 +40,9 @@ CREATE TABLE page (
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     template TEXT,             -- NULL = inherit Settings.defaultTemplate; else a PageTemplate name
-    template_pitch_mm INTEGER  -- NULL = inherit Settings.defaultPitchMm
+    template_pitch_mm INTEGER, -- NULL = inherit Settings.defaultPitchMm
+    -- Soft-delete tombstone for sync (Phase 1). NULL = live; a ms timestamp = deleted.
+    deleted_at INTEGER
 );
 CREATE INDEX page_notebook_id ON page(notebook_id);
 
@@ -55,7 +57,9 @@ CREATE TABLE stroke (
     pen_width_max INTEGER NOT NULL DEFAULT 35,
     points BLOB NOT NULL,
     z INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    -- Soft-delete tombstone for sync (Phase 1). NULL = live; a ms timestamp = erased.
+    deleted_at INTEGER
 );
 CREATE INDEX stroke_page_id ON stroke(page_id);
 
@@ -66,6 +70,44 @@ CREATE TABLE app_state (
     active_page_id TEXT,
     settings_json TEXT NOT NULL DEFAULT '{}',  -- the Settings JSON blob
     clipboard_json TEXT                        -- persisted cross-notebook clipboard (NULL = empty); wired in a later phase
+);
+
+-- ── Sync (UltraBridge) — Phase 0 ────────────────────────────────────────────
+-- All sync state lives in these sync-only tables; they stay empty when sync is off,
+-- so sync is a clean bolt-on that never touches the live app tables. Wire protocol:
+-- UltraBridge docs/sync/forestnote-sync-protocol.md. schema_hash gate:
+-- 9b807dc88cd0465d171892bb17e65ad94190eda058594e207caad3368eb1f2fe.
+
+-- Per-device sync state (singleton, id = 0, mirrors app_state's shape).
+CREATE TABLE sync_state (
+    id           INTEGER PRIMARY KEY NOT NULL CHECK (id = 0),
+    site_id      TEXT,                        -- this install's ULID; minted lazily on first sync (NULL until then)
+    next_op_seq  INTEGER NOT NULL DEFAULT 1,  -- next op_seq to assign (monotonic, starts at 1, never reused)
+    cursor       INTEGER NOT NULL DEFAULT 0,  -- last global seq applied from the server (0 = never synced)
+    acked_op_seq INTEGER NOT NULL DEFAULT 0   -- contiguous accepted_through (outbox pruned at/below this)
+);
+
+-- Outbound oplog: one full-row-UPSERT op per local mutation, appended in the SAME
+-- transaction as the mutation (Phase 2). op_seq is this device's identity (site_id implicit).
+CREATE TABLE outbox (
+    op_seq     INTEGER PRIMARY KEY NOT NULL,  -- per-device monotonic; with sync_state.site_id = the op identity
+    table_name TEXT NOT NULL,                 -- "folder" | "notebook" | "page" | "stroke"
+    pk         TEXT NOT NULL,                 -- the row's ULID
+    wall_ts    INTEGER NOT NULL,              -- authoring wall clock, ms UTC (LWW key component)
+    payload    TEXT NOT NULL,                 -- JSON of the full cols map (row state)
+    created_at INTEGER NOT NULL
+);
+
+-- LWW provenance of the value currently materialized in each synced row: the
+-- (wall_ts, op_seq, site_id) of the op that last won for (table_name, pk). The apply
+-- path (Phase 4) compares an incoming op's key against this to resolve conflicts.
+CREATE TABLE sync_row_meta (
+    table_name  TEXT NOT NULL,
+    pk          TEXT NOT NULL,
+    lww_wall_ts INTEGER NOT NULL,
+    lww_op_seq  INTEGER NOT NULL,
+    lww_site_id TEXT NOT NULL,
+    PRIMARY KEY (table_name, pk)
 );
 
 -- Live (non-tombstoned) rows. Every query that should ignore soft-deleted rows reads
@@ -129,7 +171,7 @@ SELECT
     n.name,
     n.created_at,
     n.modified_at,
-    (SELECT count(*) FROM page WHERE page.notebook_id = n.id) AS page_count
+    (SELECT count(*) FROM page WHERE page.notebook_id = n.id AND page.deleted_at IS NULL) AS page_count
 FROM notebook_live n
 WHERE n.folder_id IS ?
 ORDER BY n.sort_order ASC, n.created_at ASC;
@@ -189,7 +231,7 @@ SELECT coalesce(max(sort_order), -1) + 1 FROM folder_live WHERE parent_folder_id
 -- pages (scoped by notebook) --
 
 listPagesForNotebook:
-SELECT * FROM page WHERE notebook_id = ? ORDER BY sort_order ASC, created_at ASC;
+SELECT * FROM page WHERE notebook_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC;
 
 insertPage:
 INSERT INTO page(id, notebook_id, sort_order, created_at) VALUES (?, ?, ?, ?);
@@ -198,10 +240,15 @@ nextPageSortOrder:
 SELECT coalesce(max(sort_order), -1) + 1 FROM page WHERE notebook_id = ?;
 
 countPagesForNotebook:
-SELECT count(*) FROM page WHERE notebook_id = ?;
+SELECT count(*) FROM page WHERE notebook_id = ? AND deleted_at IS NULL;
 
 deletePage:
 DELETE FROM page WHERE id = ?;
+
+-- Soft-delete (sync, Phase 1): tombstone a page instead of removing it, so the deletion
+-- replicates as an upsert and never resurrects from a peer.
+softDeletePage:
+UPDATE page SET deleted_at = ? WHERE id = ?;
 
 deletePagesForNotebook:
 DELETE FROM page WHERE notebook_id = ?;
@@ -212,14 +259,14 @@ DELETE FROM stroke WHERE page_id IN (SELECT id FROM page WHERE notebook_id = ?);
 -- strokes --
 
 getStrokesForPage:
-SELECT * FROM stroke WHERE page_id = ? ORDER BY z ASC;
+SELECT * FROM stroke WHERE page_id = ? AND deleted_at IS NULL ORDER BY z ASC;
 
--- First page of a notebook (for its Library thumbnail).
+-- First LIVE page of a notebook (for its Library thumbnail).
 firstPageIdForNotebook:
-SELECT id FROM page WHERE notebook_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1;
+SELECT id FROM page WHERE notebook_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC LIMIT 1;
 
 countStrokesForPage:
-SELECT count(*) FROM stroke WHERE page_id = ?;
+SELECT count(*) FROM stroke WHERE page_id = ? AND deleted_at IS NULL;
 
 nextZForPage:
 SELECT coalesce(max(z), -1) + 1 FROM stroke WHERE page_id = ?;
@@ -228,8 +275,32 @@ insertStroke:
 INSERT INTO stroke(id, page_id, color, pen_width_min, pen_width_max, points, z, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
+-- Upsert a stroke (sync, Phase 1): used for move/replace-in-place where the new stroke REUSES
+-- an existing ULID. Inserts live (deleted_at NULL); on id conflict overwrites the columns and
+-- clears any tombstone, so a soft-deleted row can be revived in place rather than colliding.
+upsertStroke:
+INSERT INTO stroke(id, page_id, color, pen_width_min, pen_width_max, points, z, created_at, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+ON CONFLICT(id) DO UPDATE SET
+    page_id = excluded.page_id,
+    color = excluded.color,
+    pen_width_min = excluded.pen_width_min,
+    pen_width_max = excluded.pen_width_max,
+    points = excluded.points,
+    z = excluded.z,
+    created_at = excluded.created_at,
+    deleted_at = NULL;
+
 deleteStroke:
 DELETE FROM stroke WHERE id = ?;
+
+-- Soft-delete (sync, Phase 1): tombstone strokes instead of removing them. The eraser and
+-- per-stroke delete set deleted_at; clearPage tombstones every live stroke on a page.
+softDeleteStroke:
+UPDATE stroke SET deleted_at = ? WHERE id = ?;
+
+softDeleteStrokesForPage:
+UPDATE stroke SET deleted_at = ? WHERE page_id = ? AND deleted_at IS NULL;
 
 deleteStrokesForPage:
 DELETE FROM stroke WHERE page_id = ?;
@@ -262,3 +333,131 @@ UPDATE page SET template = ?, template_pitch_mm = ? WHERE id = ?;
 -- baked, no page is NULL, so re-running is a no-op.
 bakeNullPageTemplates:
 UPDATE page SET template = ?, template_pitch_mm = ? WHERE template IS NULL;
+
+-- ── Sync (UltraBridge) — Phase 2 capture ────────────────────────────────────
+
+getSyncState:
+SELECT * FROM sync_state WHERE id = 0;
+
+ensureSyncState:
+INSERT OR IGNORE INTO sync_state(id, site_id, next_op_seq, cursor, acked_op_seq) VALUES (0, NULL, 1, 0, 0);
+
+setSyncSiteId:
+UPDATE sync_state SET site_id = ? WHERE id = 0;
+
+bumpNextOpSeq:
+UPDATE sync_state SET next_op_seq = next_op_seq + 1 WHERE id = 0;
+
+insertOutbox:
+INSERT INTO outbox(op_seq, table_name, pk, wall_ts, payload, created_at) VALUES (?, ?, ?, ?, ?, ?);
+
+upsertRowMeta:
+INSERT INTO sync_row_meta(table_name, pk, lww_wall_ts, lww_op_seq, lww_site_id) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(table_name, pk) DO UPDATE SET
+    lww_wall_ts = excluded.lww_wall_ts,
+    lww_op_seq = excluded.lww_op_seq,
+    lww_site_id = excluded.lww_site_id;
+
+-- Full synced-column fetch per table (BASE table, includes tombstoned rows) — the source for
+-- building an op's `cols`. Column order is the wire order the codec (SyncWire) expects.
+syncRowNotebook:
+SELECT folder_id, name, sort_order, created_at, deleted_at FROM notebook WHERE id = ?;
+
+syncRowFolder:
+SELECT name, sort_order, created_at, deleted_at, parent_folder_id FROM folder WHERE id = ?;
+
+syncRowPage:
+SELECT notebook_id, sort_order, created_at, deleted_at, template, template_pitch_mm FROM page WHERE id = ?;
+
+syncRowStroke:
+SELECT page_id, color, pen_width_min, pen_width_max, points, z, created_at, deleted_at FROM stroke WHERE id = ?;
+
+-- All row ids per table (incl. tombstoned), for the first-enable backfill.
+allFolderIds:
+SELECT id FROM folder;
+
+allNotebookIds:
+SELECT id FROM notebook;
+
+allPageIds:
+SELECT id FROM page;
+
+allStrokeIds:
+SELECT id FROM stroke;
+
+-- ── Sync (UltraBridge) — Phase 4 apply ───────────────────────────────────────
+-- Applying a RELAYED op (authored by another device): write the decoded wire columns straight
+-- into the base table and re-stamp provenance, WITHOUT touching the outbox or next_op_seq (a
+-- relayed op is not re-authored). Each upsert overwrites only the synced columns; local-only
+-- columns (modified_at, the recycle-bin batch grouping) are left to their own paths. modified_at
+-- is bumped separately to max(current, wall_ts) so "recently edited" stays multi-device correct.
+
+getRowMeta:
+SELECT lww_wall_ts, lww_op_seq, lww_site_id FROM sync_row_meta WHERE table_name = ? AND pk = ?;
+
+-- Pending outbound ops: everything the server has not yet acked (op_seq > acked_op_seq),
+-- in authoring order. The engine sends these, then advances the ack water on success.
+pendingOutbox:
+SELECT op_seq, table_name, pk, wall_ts, payload FROM outbox WHERE op_seq > ? ORDER BY op_seq ASC;
+
+-- Prune acked ops (at/below the contiguous accepted_through high-water).
+pruneOutbox:
+DELETE FROM outbox WHERE op_seq <= ?;
+
+setAckedOpSeq:
+UPDATE sync_state SET acked_op_seq = ? WHERE id = 0;
+
+setCursor:
+UPDATE sync_state SET cursor = ? WHERE id = 0;
+
+-- Bump a notebook's local modified_at to at least [wall_ts] (never moves it backwards).
+bumpNotebookModifiedAtMax:
+UPDATE notebook SET modified_at = max(modified_at, ?) WHERE id = ?;
+
+-- The owning notebook of a page (to bump modified_at when a page/stroke op applies).
+notebookIdOfPage:
+SELECT notebook_id FROM page WHERE id = ?;
+
+applyUpsertNotebook:
+INSERT INTO notebook(id, name, sort_order, created_at, modified_at, folder_id, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name,
+    sort_order = excluded.sort_order,
+    created_at = excluded.created_at,
+    folder_id = excluded.folder_id,
+    deleted_at = excluded.deleted_at;
+
+applyUpsertFolder:
+INSERT INTO folder(id, name, sort_order, created_at, modified_at, parent_folder_id, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name,
+    sort_order = excluded.sort_order,
+    created_at = excluded.created_at,
+    parent_folder_id = excluded.parent_folder_id,
+    deleted_at = excluded.deleted_at;
+
+applyUpsertPage:
+INSERT INTO page(id, notebook_id, sort_order, created_at, template, template_pitch_mm, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    notebook_id = excluded.notebook_id,
+    sort_order = excluded.sort_order,
+    created_at = excluded.created_at,
+    template = excluded.template,
+    template_pitch_mm = excluded.template_pitch_mm,
+    deleted_at = excluded.deleted_at;
+
+applyUpsertStroke:
+INSERT INTO stroke(id, page_id, color, pen_width_min, pen_width_max, points, z, created_at, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    page_id = excluded.page_id,
+    color = excluded.color,
+    pen_width_min = excluded.pen_width_min,
+    pen_width_max = excluded.pen_width_max,
+    points = excluded.points,
+    z = excluded.z,
+    created_at = excluded.created_at,
+    deleted_at = excluded.deleted_at;

@@ -37,6 +37,11 @@ data class Settings(
     /** What a cold launch opens (resume last notebook, or the Library). */
     val startView: StartView = StartView.LAST_NOTEBOOK,
     val syncServerUrl: String = "",
+    /** UltraBridge sync credentials (Basic auth over TLS). Blank = sync not configured. */
+    val syncUsername: String = "",
+    val syncPassword: String = "",
+    /** Periodic background sync interval in minutes while the app is open. 0 = no timer. */
+    val syncIntervalMinutes: Int = 15,
     val selectionRecognitionUrl: String = "",
     val fullTextTranscriptionUrl: String = "",
     val chatUrl: String = "",

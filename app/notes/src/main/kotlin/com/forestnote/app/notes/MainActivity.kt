@@ -20,6 +20,13 @@ import com.forestnote.core.ink.BackendDetector
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
 import com.forestnote.core.ink.ViwoodsBackend
+import com.forestnote.core.sync.SyncStatus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import java.io.FileWriter
 import java.io.PrintWriter
 import java.util.Date
@@ -41,6 +48,10 @@ class MainActivity : Activity() {
     private lateinit var drawView: DrawView
     private lateinit var backend: InkBackend
     private lateinit var store: NotebookStore
+    // UltraBridge sync (Phase 5). Main-scoped so status collection can touch views directly; the
+    // engine's network/DB work hops to IO / the store's executor internally.
+    private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private lateinit var syncController: SyncController
     private lateinit var toolBar: ToolBar
     private lateinit var pageIndicator: TextView
     private lateinit var btnNotebooks: ImageButton
@@ -78,6 +89,11 @@ class MainActivity : Activity() {
         // Open storage. The store opens the repository on its own background thread,
         // so onCreate never makes a synchronous DB call (AC1.2).
         store = NotebookStore.create(this)
+        syncController = SyncController(store, syncScope)
+        // Reflect sync status in the Library header caption (no-op while the Library is hidden).
+        syncScope.launch {
+            syncController.status.collect { libraryView.setSyncCaption(syncCaption(it)) }
+        }
 
         // Load layout from XML
         setContentView(R.layout.activity_main)
@@ -340,6 +356,7 @@ class MainActivity : Activity() {
             onFolderProperties = { folder -> openFolderProperties(folder) },
             onOpenSettings = { openSettings() },
             onOpenRecycleBin = { openRecycleBin() },
+            onSyncNow = { syncController.syncNow() },
             onBulkMove = { ids -> showMoveTargetDialog(ids) },
             onBulkDelete = { ids -> confirmBulkDelete(ids) }
         ))
@@ -420,6 +437,8 @@ class MainActivity : Activity() {
         settingsView.hide()
         // Re-resolve + repaint the active page's template in case the default changed (B3).
         refreshPageIndicator()
+        // Credentials/URL may have just been entered — (re)enable sync and restart the timer.
+        syncController.resume()
     }
 
     /**
@@ -662,6 +681,8 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        // Stop the periodic timer and flush pending changes to UltraBridge.
+        syncController.pause()
         if (isEInk) {
             // Release WritingBufferQueue so other apps (WiNote etc.) can use it
             backend.release()
@@ -676,17 +697,28 @@ class MainActivity : Activity() {
             viwoodsBackend.reacquire()
             drawView.resetBitmap()
         }
+        // Enable+join on first run, or sync + restart the timer (no-op if sync is unconfigured).
+        syncController.resume()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         try {
+            syncScope.cancel()
             backend.release()
             // Drains pending saves, then closes the driver as its last task.
             store.shutdown()
         } catch (_: Throwable) {
             // Ignore cleanup errors
         }
+    }
+
+    /** Short Library-header caption for the current sync status. */
+    private fun syncCaption(status: SyncStatus): String = when (status) {
+        is SyncStatus.Idle -> "Sync"
+        is SyncStatus.Syncing -> "Syncing…"
+        is SyncStatus.Synced -> "Synced"
+        is SyncStatus.Error -> "Sync ✕"
     }
 
     /**

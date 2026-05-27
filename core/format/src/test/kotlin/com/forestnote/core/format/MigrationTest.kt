@@ -197,10 +197,10 @@ class MigrationTest {
     fun repositoryUsableAfterMigration() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV1Schema(driver)
-        // Schema.version is now 7; openExisting → bootstrap queries the current tables
+        // Schema.version is now 8; openExisting → bootstrap queries the current tables
         // (notebook incl. modified_at + folder_id + soft-delete cols, app_state incl.
         // settings_json) AND reads the notebook_live view, so migrate all the way up.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 7L)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 8L)
 
         // openExisting (no schema.create) must work against the migrated DB.
         val repo = NotebookRepository.openExisting(driver)
@@ -223,8 +223,8 @@ class MigrationTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV2Schema(driver)
 
-        // Migrate to the current version (7); runs v2->v3 plus v3->v4, v4->v5, v5->v6, v6->v7.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 7L)
+        // Migrate to the current version (8); runs v2->v3 plus v3->v4, v4->v5, v5->v6, v6->v7, v7->v8.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 8L)
 
         assertTrue(tableExists(driver, "notebook"), "notebook table exists after v2->v3")
         assertTrue(tableExists(driver, "app_state"), "app_state table exists after v2->v3")
@@ -566,8 +566,72 @@ class MigrationTest {
 
         // The views were created by the migration: the repository's live query returns the
         // pre-existing notebook (this would throw "no such table: notebook_live" if not).
+        // The repo's generated queries target the current schema (v8), so finish the upgrade
+        // (v7->v8 adds sync-only tables + page/stroke.deleted_at; no view change) before opening.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 8L)
         val repo = NotebookRepository.openExisting(driver)
         assertTrue(repo.listNotebooks().any { it.id == "n1" }, "live query (via notebook_live view) returns the kept notebook")
+
+        driver.close()
+    }
+
+    /** Build a minimal v7 page + stroke (the two tables the v7->v8 migration ALTERs). */
+    private fun createV7PageStroke(driver: JdbcSqliteDriver) {
+        driver.execute(
+            null,
+            """
+            CREATE TABLE page (
+                id TEXT PRIMARY KEY NOT NULL, notebook_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL, template TEXT, template_pitch_mm INTEGER
+            )
+            """.trimIndent(),
+            0
+        )
+        driver.execute(
+            null,
+            """
+            CREATE TABLE stroke (
+                id TEXT PRIMARY KEY NOT NULL, page_id TEXT NOT NULL, color INTEGER NOT NULL DEFAULT -16777216,
+                pen_width_min INTEGER NOT NULL DEFAULT 7, pen_width_max INTEGER NOT NULL DEFAULT 35,
+                points BLOB NOT NULL, z INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+            0
+        )
+        driver.execute(null, "INSERT INTO page(id, notebook_id, sort_order, created_at) VALUES ('p1', 'n1', 0, 5)", 0)
+        driver.execute(null, "INSERT INTO stroke(id, page_id, points, z, created_at) VALUES ('s1', 'p1', x'', 0, 5)", 0)
+        driver.execute(null, "PRAGMA user_version = 7", 0)
+    }
+
+    /**
+     * Sync Phase 0: migrating v7 -> v8 adds the sync-only tables (sync_state, outbox,
+     * sync_row_meta) and a deleted_at tombstone column on page + stroke. Existing rows stay
+     * live (NULL deleted_at); the migration is non-destructive.
+     */
+    @Test
+    fun v7ToV8AddsSyncTablesAndPageStrokeDeletedAt() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        createV7PageStroke(driver)
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 8L)
+
+        assertTrue(columnNames(driver, "page").contains("deleted_at"), "page gains deleted_at after v7->v8")
+        assertTrue(columnNames(driver, "stroke").contains("deleted_at"), "stroke gains deleted_at after v7->v8")
+        assertTrue(tableExists(driver, "sync_state"), "sync_state table exists after v7->v8")
+        assertTrue(tableExists(driver, "outbox"), "outbox table exists after v7->v8")
+        assertTrue(tableExists(driver, "sync_row_meta"), "sync_row_meta table exists after v7->v8")
+
+        // Non-destructive: the pre-existing page survives and is live (NULL deleted_at).
+        var pageDeletedAtIsNull = false
+        var pageRows = 0L
+        driver.executeQuery(
+            null,
+            "SELECT count(*), max(deleted_at IS NULL) FROM page WHERE id = 'p1'",
+            { cursor -> cursor.next(); pageRows = cursor.getLong(0) ?: 0L; pageDeletedAtIsNull = (cursor.getLong(1) ?: 0L) == 1L; QueryResult.Value(Unit) },
+            0
+        )
+        assertEquals(1L, pageRows, "pre-existing page survives the migration")
+        assertTrue(pageDeletedAtIsNull, "pre-existing page is live (NULL deleted_at) after migration")
 
         driver.close()
     }

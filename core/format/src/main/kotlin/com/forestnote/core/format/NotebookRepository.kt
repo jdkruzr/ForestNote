@@ -6,6 +6,8 @@ import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.Ulid
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 
 /** Public notebook metadata so the UI never touches generated row types. */
 data class NotebookMeta(
@@ -251,7 +253,10 @@ class NotebookRepository private constructor(
      * the override so the page inherits the global default again (AC8.4).
      */
     fun setPageTemplate(pageId: String, template: PageTemplate?, pitchMm: Int?) {
-        db.notebookQueries.setPageTemplate(template?.name, pitchMm?.toLong(), pageId)
+        db.transaction {
+            db.notebookQueries.setPageTemplate(template?.name, pitchMm?.toLong(), pageId)
+            enqueueOp("page", pageId, clock())
+        }
     }
 
     /** Switch the active page within the current notebook and persist it (AC4.1, AC4.3). */
@@ -292,13 +297,18 @@ class NotebookRepository private constructor(
             val pid = Ulid.generate()
             db.notebookQueries.insertPage(pid, nid, 0, now)
             db.notebookQueries.setPageTemplate(seedTemplate, seedPitch, pid)
+            enqueueOp("notebook", nid, now)
+            enqueueOp("page", pid, now)
         }
         return nid
     }
 
     /** Rename a notebook (AC2.2). */
     fun renameNotebook(notebookId: String, name: String) {
-        db.notebookQueries.renameNotebook(name, notebookId)
+        db.transaction {
+            db.notebookQueries.renameNotebook(name, notebookId)
+            enqueueOp("notebook", notebookId, clock())
+        }
     }
 
     // -- folders (C2) -------------------------------------------------------
@@ -317,13 +327,19 @@ class NotebookRepository private constructor(
         val fid = Ulid.generate()
         val now = clock()
         val so = db.notebookQueries.nextFolderSortOrder(parentFolderId).executeAsOne()
-        db.notebookQueries.insertFolder(fid, name, so, now, now, parentFolderId)
+        db.transaction {
+            db.notebookQueries.insertFolder(fid, name, so, now, now, parentFolderId)
+            enqueueOp("folder", fid, now)
+        }
         return fid
     }
 
     /** Rename a folder (AC5.4). Does not bump modified_at, parallel to renameNotebook. */
     fun renameFolder(folderId: String, name: String) {
-        db.notebookQueries.renameFolder(name, folderId)
+        db.transaction {
+            db.notebookQueries.renameFolder(name, folderId)
+            enqueueOp("folder", folderId, clock())
+        }
     }
 
     /** Folders directly under [parentFolderId] (null = root), ordered by sort_order (AC5.4). */
@@ -352,7 +368,11 @@ class NotebookRepository private constructor(
     fun bulkMoveNotebooks(ids: List<String>, destFolderId: String?) {
         if (ids.isEmpty()) return
         db.transaction {
-            ids.forEach { db.notebookQueries.setNotebookFolder(destFolderId, it) }
+            val now = clock()
+            ids.forEach {
+                db.notebookQueries.setNotebookFolder(destFolderId, it)
+                enqueueOp("notebook", it, now)
+            }
         }
     }
 
@@ -378,7 +398,10 @@ class NotebookRepository private constructor(
         if (ids.isEmpty()) return
         val now = clock()
         db.transaction {
-            ids.forEach { id -> db.notebookQueries.softDeleteNotebook(now, null, null, id) }
+            ids.forEach { id ->
+                db.notebookQueries.softDeleteNotebook(now, null, null, id)
+                enqueueOp("notebook", id, now)
+            }
         }
         if (currentNotebookId in ids) fallbackOffDeletedActive()
     }
@@ -389,7 +412,11 @@ class NotebookRepository private constructor(
      * be restored from the Recycle Bin (E3). If the active notebook is deleted, fall back off it.
      */
     fun deleteNotebook(notebookId: String) {
-        db.notebookQueries.softDeleteNotebook(clock(), null, null, notebookId)
+        db.transaction {
+            val now = clock()
+            db.notebookQueries.softDeleteNotebook(now, null, null, notebookId)
+            enqueueOp("notebook", notebookId, now)
+        }
         if (currentNotebookId == notebookId) fallbackOffDeletedActive()
     }
 
@@ -411,6 +438,8 @@ class NotebookRepository private constructor(
         db.transaction {
             db.notebookQueries.softDeleteFolders(now, batchId, folderId, subtree)
             db.notebookQueries.softDeleteNotebooksInFolders(now, batchId, folderId, subtree)
+            subtree.forEach { enqueueOp("folder", it, now) }
+            affectedNotebookIds.forEach { enqueueOp("notebook", it, now) }
         }
         if (currentNotebookId in affectedNotebookIds) fallbackOffDeletedActive()
     }
@@ -456,18 +485,26 @@ class NotebookRepository private constructor(
             BinKind.NOTEBOOK -> {
                 val nb = tombstonedNotebooks().firstOrNull { it.id == entry.id } ?: return
                 val dest = RecycleBinLogic.restoreFolderFor(nb.folderId, liveFolderIds())
-                db.notebookQueries.restoreNotebookWithFolder(dest, nb.id)
+                db.transaction {
+                    db.notebookQueries.restoreNotebookWithFolder(dest, nb.id)
+                    enqueueOp("notebook", nb.id, clock()) // un-tombstone = a live upsert op
+                }
             }
             BinKind.FOLDER -> {
                 val batchId = entry.deletedBatchId ?: return
                 val members = RecycleBinLogic.batchMemberIds(batchId, tombstonedFolders(), tombstonedNotebooks())
                 val batchNotebooks = tombstonedNotebooks().filter { it.id in members.notebookIds }
                 db.transaction {
-                    members.folderIds.forEach { db.notebookQueries.clearFolderTombstone(it) }
+                    val now = clock()
+                    members.folderIds.forEach {
+                        db.notebookQueries.clearFolderTombstone(it)
+                        enqueueOp("folder", it, now)
+                    }
                     val live = liveFolderIds() // includes the just-restored batch folders
                     batchNotebooks.forEach { nb ->
                         val dest = RecycleBinLogic.restoreFolderFor(nb.folderId, live)
                         db.notebookQueries.restoreNotebookWithFolder(dest, nb.id)
+                        enqueueOp("notebook", nb.id, now)
                     }
                 }
             }
@@ -541,8 +578,10 @@ class NotebookRepository private constructor(
         }
         val so = db.notebookQueries.nextPageSortOrder(currentNotebookId).executeAsOne()
         db.transaction {
-            db.notebookQueries.insertPage(pid, currentNotebookId, so, System.currentTimeMillis())
+            val now = clock()
+            db.notebookQueries.insertPage(pid, currentNotebookId, so, now)
             db.notebookQueries.setPageTemplate(seedTemplate, seedPitch, pid)
+            enqueueOp("page", pid, now)
         }
         return pid
     }
@@ -557,9 +596,17 @@ class NotebookRepository private constructor(
         val pages = db.notebookQueries.listPagesForNotebook(currentNotebookId).executeAsList()
         if (pages.none { it.id == pageId }) return false
         if (pages.size <= 1) return false
+        // Soft-delete (sync): tombstone the page AND its strokes (the faithful translation of
+        // the former hard delete-both), so a deleted page leaks no live strokes and the
+        // deletion replicates as upserts. `pages` is already live-only (listPagesForNotebook
+        // filters deleted_at), so the only-live-page guard above is correct.
         db.transaction {
-            db.notebookQueries.deleteStrokesForPage(pageId)
-            db.notebookQueries.deletePage(pageId)
+            val now = clock()
+            val strokeIds = db.notebookQueries.getStrokesForPage(pageId).executeAsList().map { it.id }
+            db.notebookQueries.softDeleteStrokesForPage(now, pageId)
+            db.notebookQueries.softDeletePage(now, pageId)
+            strokeIds.forEach { enqueueOp("stroke", it, now) }
+            enqueueOp("page", pageId, now)
         }
         if (currentPageId == pageId) {
             currentPageId = db.notebookQueries.listPagesForNotebook(currentNotebookId)
@@ -576,6 +623,7 @@ class NotebookRepository private constructor(
      */
     fun saveStroke(stroke: Stroke) {
         db.transaction {
+            val now = clock()
             val z = db.notebookQueries.nextZForPage(currentPageId).executeAsOne()
             db.notebookQueries.insertStroke(
                 id = stroke.id,
@@ -585,8 +633,9 @@ class NotebookRepository private constructor(
                 pen_width_max = stroke.penWidthMax.toLong(),
                 points = StrokeSerializer.encode(stroke.points),
                 z = z,
-                created_at = clock()
+                created_at = now
             )
+            enqueueOp("stroke", stroke.id, now)
             touchCurrentNotebook()
         }
     }
@@ -635,7 +684,11 @@ class NotebookRepository private constructor(
      */
     fun deleteStroke(strokeId: String) {
         db.transaction {
-            db.notebookQueries.deleteStroke(strokeId)
+            // Soft-delete (sync): tombstone instead of removing, so erase replicates as an
+            // upsert and the stroke never resurrects from a peer.
+            val now = clock()
+            db.notebookQueries.softDeleteStroke(now, strokeId)
+            enqueueOp("stroke", strokeId, now)
             touchCurrentNotebook()
         }
     }
@@ -649,10 +702,20 @@ class NotebookRepository private constructor(
      */
     fun applyErase(removedIds: List<String>, added: List<Stroke>) {
         db.transaction {
-            removedIds.forEach { id -> db.notebookQueries.deleteStroke(id) }
+            val now = clock()
+            // A re-added id is a move/replace IN PLACE (same ULID) — handled by the upsert below,
+            // never a delete. So tombstone only the strokes that are removed and NOT re-added;
+            // tombstoning a reused id then reviving it would churn two ops for one logical move.
+            val addedIds = added.mapTo(HashSet()) { it.id }
+            removedIds.forEach { id ->
+                if (id !in addedIds) {
+                    db.notebookQueries.softDeleteStroke(now, id)
+                    enqueueOp("stroke", id, now)
+                }
+            }
             added.forEach { stroke ->
                 val z = db.notebookQueries.nextZForPage(currentPageId).executeAsOne()
-                db.notebookQueries.insertStroke(
+                db.notebookQueries.upsertStroke(
                     id = stroke.id,
                     page_id = currentPageId,
                     color = stroke.color.toLong(),
@@ -660,8 +723,9 @@ class NotebookRepository private constructor(
                     pen_width_max = stroke.penWidthMax.toLong(),
                     points = StrokeSerializer.encode(stroke.points),
                     z = z,
-                    created_at = clock()
+                    created_at = now
                 )
+                enqueueOp("stroke", stroke.id, now)
             }
             touchCurrentNotebook()
         }
@@ -672,9 +736,230 @@ class NotebookRepository private constructor(
      */
     fun clearPage() {
         db.transaction {
-            db.notebookQueries.deleteStrokesForPage(currentPageId)
+            // Soft-delete (sync): tombstone every live stroke on the page; the page itself stays.
+            val now = clock()
+            val ids = db.notebookQueries.getStrokesForPage(currentPageId).executeAsList().map { it.id }
+            db.notebookQueries.softDeleteStrokesForPage(now, currentPageId)
+            ids.forEach { enqueueOp("stroke", it, now) }
             touchCurrentNotebook()
         }
+    }
+
+    // -- Sync capture (Phase 2) --------------------------------------------
+    //
+    // Every mutating method, while sync is ENABLED, appends a full-row-UPSERT op to the outbox
+    // and stamps sync_row_meta with this device's authoring provenance — inside the mutation's
+    // own transaction (the single-writer chokepoint). When sync is disabled (no site_id), every
+    // call here is a cheap no-op, so sync ships dormant. Permanent-delete paths deliberately do
+    // NOT capture: a purged row is local storage reclaim; its tombstone already replicated.
+
+    /**
+     * Enable device sync: mint + persist this install's `site_id` once, and backfill an op for
+     * every existing row (incl. tombstoned) so the pre-sync library uploads. Idempotent — if
+     * already enabled, returns the existing site_id and does not re-backfill. Returns the site_id.
+     */
+    fun enableSync(): String {
+        val site = mintSiteId()
+        backfillOutbox()
+        return site
+    }
+
+    /**
+     * Mint + persist this install's `site_id` (capture goes live from here), WITHOUT backfilling.
+     * Idempotent — returns the existing site_id if already minted. The join handshake mints first,
+     * pulls, then [backfillOutbox]s, so a fresh device doesn't upload before it sees the server.
+     */
+    fun mintSiteId(): String {
+        db.notebookQueries.ensureSyncState()
+        db.notebookQueries.getSyncState().executeAsOne().site_id?.let { return it }
+        val site = Ulid.generate(clock())
+        db.notebookQueries.setSyncSiteId(site)
+        return site
+    }
+
+    /**
+     * Enqueue an upload op for every local row that has no `sync_row_meta` yet — i.e. genuinely
+     * local content the server hasn't seen. Rows that arrived via a pull are already stamped, so
+     * they are skipped: backfill is idempotent and never re-uploads relayed rows. wall_ts = now is
+     * safe (pre-sync libraries have disjoint ULIDs across devices, so a backfill can't lose a
+     * cross-device conflict, and later real edits get a higher op_seq). No-op when sync is off.
+     */
+    fun backfillOutbox() {
+        if (syncSiteId() == null) return
+        db.transaction {
+            val now = clock()
+            db.notebookQueries.allFolderIds().executeAsList().forEach { if (lacksMeta("folder", it)) enqueueOp("folder", it, now) }
+            db.notebookQueries.allNotebookIds().executeAsList().forEach { if (lacksMeta("notebook", it)) enqueueOp("notebook", it, now) }
+            db.notebookQueries.allPageIds().executeAsList().forEach { if (lacksMeta("page", it)) enqueueOp("page", it, now) }
+            db.notebookQueries.allStrokeIds().executeAsList().forEach { if (lacksMeta("stroke", it)) enqueueOp("stroke", it, now) }
+        }
+    }
+
+    private fun lacksMeta(table: String, pk: String): Boolean =
+        db.notebookQueries.getRowMeta(table, pk).executeAsOneOrNull() == null
+
+    /**
+     * True iff the library is an untouched fresh install: exactly one live notebook with exactly
+     * one live page, no strokes on it, and no folders. The join handshake captures this BEFORE
+     * pulling so it can discard the auto-created bootstrap notebook once the server delivers real
+     * content (rather than uploading a stray empty notebook to every device).
+     */
+    fun isPristineBootstrap(): Boolean {
+        val nbs = db.notebookQueries.listNotebooks().executeAsList()
+        if (nbs.size != 1) return false
+        if (db.notebookQueries.listAllFolders().executeAsList().isNotEmpty()) return false
+        val pages = db.notebookQueries.listPagesForNotebook(nbs.first().id).executeAsList()
+        if (pages.size != 1) return false
+        return db.notebookQueries.countStrokesForPage(pages.first().id).executeAsOne() == 0L
+    }
+
+    /**
+     * Hard-delete the untouched bootstrap [notebookId] and its page(s) — local reclaim only, since
+     * a pristine bootstrap has no `sync_row_meta` and was never uploaded. Re-points the active
+     * notebook/page to a surviving (pulled) one so the repo's "always a valid active row"
+     * invariant holds. Call only after a pull has delivered at least one other notebook.
+     */
+    fun discardBootstrapNotebook(notebookId: String) {
+        db.transaction {
+            db.notebookQueries.deleteStrokesForNotebook(notebookId)
+            db.notebookQueries.deletePagesForNotebook(notebookId)
+            db.notebookQueries.deleteNotebook(notebookId) // raw hard-delete query
+        }
+        val live = db.notebookQueries.listNotebooks().executeAsList()
+        if (currentNotebookId == notebookId || live.none { it.id == currentNotebookId }) {
+            currentNotebookId = live.firstOrNull()?.id ?: return
+            currentPageId = db.notebookQueries.listPagesForNotebook(currentNotebookId).executeAsList().firstOrNull()?.id ?: currentPageId
+            persistActive()
+        }
+    }
+
+    /** True once [enableSync] has minted a site_id (capture is active). */
+    private fun syncEnabled(): Boolean =
+        db.notebookQueries.getSyncState().executeAsOneOrNull()?.site_id != null
+
+    /**
+     * Capture one full-row-UPSERT op for [table]/[pk] at [wallTs]. Reads the row's current
+     * synced columns (so the op reflects post-mutation state, including a stamped deleted_at),
+     * allocates the next per-device op_seq, appends to the outbox, and records the winning
+     * provenance in sync_row_meta. MUST be called inside the mutation's transaction. No-op when
+     * sync is disabled or the row no longer exists.
+     */
+    private fun enqueueOp(table: String, pk: String, wallTs: Long) {
+        val state = db.notebookQueries.getSyncState().executeAsOneOrNull() ?: return
+        val site = state.site_id ?: return
+        val cols = buildCols(table, pk) ?: return
+        val opSeq = state.next_op_seq
+        db.notebookQueries.insertOutbox(opSeq, table, pk, wallTs, cols, clock())
+        db.notebookQueries.upsertRowMeta(table, pk, wallTs, opSeq, site)
+        db.notebookQueries.bumpNextOpSeq()
+    }
+
+    /** Build the wire `cols` JSON for a row from its current base-table state (null if gone). */
+    private fun buildCols(table: String, pk: String): String? = when (table) {
+        "notebook" -> db.notebookQueries.syncRowNotebook(pk).executeAsOneOrNull()?.let {
+            SyncWire.notebookCols(it.folder_id, it.name, it.sort_order, it.created_at, it.deleted_at)
+        }
+        "folder" -> db.notebookQueries.syncRowFolder(pk).executeAsOneOrNull()?.let {
+            SyncWire.folderCols(it.name, it.sort_order, it.created_at, it.deleted_at, it.parent_folder_id)
+        }
+        "page" -> db.notebookQueries.syncRowPage(pk).executeAsOneOrNull()?.let {
+            SyncWire.pageCols(it.notebook_id, it.sort_order, it.created_at, it.deleted_at, it.template, it.template_pitch_mm)
+        }
+        "stroke" -> db.notebookQueries.syncRowStroke(pk).executeAsOneOrNull()?.let {
+            SyncWire.strokeCols(it.page_id, it.color, it.pen_width_min, it.pen_width_max, it.points, it.z, it.created_at, it.deleted_at)
+        }
+        else -> null
+    }
+
+    // -- Sync send side (Phase 4) ------------------------------------------------
+    //
+    // The engine drives the §4.2 loop over these: read pending ops, POST, then on success
+    // advance the ack water (pruning the outbox) and adopt the server cursor.
+
+    /** This install's sync site_id, or null until [enableSync] mints it. */
+    fun syncSiteId(): String? = db.notebookQueries.getSyncState().executeAsOneOrNull()?.site_id
+
+    /** Last global seq applied from the server (0 = never synced). */
+    fun syncCursor(): Long = db.notebookQueries.getSyncState().executeAsOneOrNull()?.cursor ?: 0L
+
+    /** Contiguous accepted_through high-water: the outbox is pruned at/below this. */
+    fun syncAckedOpSeq(): Long = db.notebookQueries.getSyncState().executeAsOneOrNull()?.acked_op_seq ?: 0L
+
+    /** Pending outbound ops (op_seq > acked), in authoring order. Empty when sync is disabled. */
+    fun pendingOps(): List<SyncOp> {
+        val site = syncSiteId() ?: return emptyList()
+        val acked = syncAckedOpSeq()
+        return db.notebookQueries.pendingOutbox(acked).executeAsList().map {
+            SyncOp(it.table_name, it.pk, site, it.op_seq, it.wall_ts, Json.parseToJsonElement(it.payload).jsonObject)
+        }
+    }
+
+    /** Advance the ack high-water to [through] and prune the now-settled outbox ops (one txn). */
+    fun markAckedThrough(through: Long) {
+        db.transaction {
+            db.notebookQueries.setAckedOpSeq(through)
+            db.notebookQueries.pruneOutbox(through)
+        }
+    }
+
+    /** Adopt the server's cursor as the new local high-water (authoritative, §7.4). */
+    fun setSyncCursor(cursor: Long) {
+        db.notebookQueries.setCursor(cursor)
+    }
+
+    // -- Sync apply (Phase 4) ----------------------------------------------------
+    //
+    // Merge relayed ops (authored by other devices) into the local mirror by the same row-level
+    // LWW rule the server uses (protocol §5). Applied as one transaction so a partial failure
+    // re-fetches and re-applies idempotently (§4.2/§7.3). Relayed ops are never re-authored, so
+    // this path deliberately bypasses enqueueOp/next_op_seq.
+
+    /**
+     * Apply a batch of relayed [ops]. For each op (in the given order): drop unknown columns,
+     * compare its key `(wall_ts, op_seq, site_id)` against the row's recorded provenance, and on
+     * a strict win write the decoded columns through to the base table, re-stamp `sync_row_meta`,
+     * and raise the owning notebook's `modified_at` to `max(current, wall_ts)`. Losses and ties
+     * (incl. a re-delivered op) leave the row untouched — the merge is idempotent and
+     * order-independent.
+     */
+    fun applySyncOps(ops: List<SyncOp>) {
+        if (ops.isEmpty()) return
+        db.transaction {
+            for (raw in ops) {
+                val op = SyncMerge.normalize(raw)
+                val meta = db.notebookQueries.getRowMeta(op.table, op.pk).executeAsOneOrNull()
+                if (meta != null) {
+                    val stored = SyncOp(op.table, op.pk, meta.lww_site_id, meta.lww_op_seq, meta.lww_wall_ts, op.cols)
+                    if (!SyncMerge.less(stored, op)) continue // incoming did not strictly win
+                }
+                if (!writeWinningOp(op)) continue
+                db.notebookQueries.upsertRowMeta(op.table, op.pk, op.wallTs, op.opSeq, op.siteId)
+            }
+        }
+    }
+
+    /** Materialize a winning op's columns into its base table; true if applied. */
+    private fun writeWinningOp(op: SyncOp): Boolean {
+        when (op.table) {
+            "notebook" -> SyncWire.decodeNotebook(op.cols).let {
+                db.notebookQueries.applyUpsertNotebook(op.pk, it.name, it.sortOrder, it.createdAt, op.wallTs, it.folderId, it.deletedAt)
+                db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, op.pk)
+            }
+            "folder" -> SyncWire.decodeFolder(op.cols).let {
+                db.notebookQueries.applyUpsertFolder(op.pk, it.name, it.sortOrder, it.createdAt, op.wallTs, it.parentFolderId, it.deletedAt)
+            }
+            "page" -> SyncWire.decodePage(op.cols).let {
+                db.notebookQueries.applyUpsertPage(op.pk, it.notebookId, it.sortOrder, it.createdAt, it.template, it.templatePitchMm, it.deletedAt)
+                db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, it.notebookId)
+            }
+            "stroke" -> SyncWire.decodeStroke(op.cols).let {
+                db.notebookQueries.applyUpsertStroke(op.pk, it.pageId, it.color, it.penWidthMin, it.penWidthMax, it.points, it.z, it.createdAt, it.deletedAt)
+                db.notebookQueries.notebookIdOfPage(it.pageId).executeAsOneOrNull()
+                    ?.let { nb -> db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, nb) }
+            }
+            else -> return false // unknown table: skip (a relayed op for a table we don't model)
+        }
+        return true
     }
 
     /**

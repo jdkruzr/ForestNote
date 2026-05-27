@@ -12,11 +12,16 @@ import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.format.PageMeta
 import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.format.Settings
+import com.forestnote.core.format.SyncOp
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeGeometry
+import com.forestnote.core.sync.SyncLocalStore
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 // pattern: Imperative Shell
 // Owns the executor, the repository handle, and all I/O orchestration + logging.
@@ -453,6 +458,50 @@ class NotebookStore(
             poster { onCleared() }
         }
     }
+
+    // -- Sync (UltraBridge, Phase 5) ---------------------------------------------
+    //
+    // The sync engine (core:sync) is coroutine-based, but all DB access must stay on this single
+    // writer thread. [onDb] bridges the two: it runs a repository call on the executor and
+    // suspends the caller until it returns, preserving the single-writer invariant.
+
+    /** Run [block] on the DB executor thread and suspend until it returns (or rethrows). */
+    private suspend fun <T> onDb(block: (NotebookRepository) -> T): T =
+        suspendCancellableCoroutine { cont ->
+            executor.execute {
+                val r = repo
+                if (r == null) {
+                    cont.resumeWithException(IllegalStateException("repository not open"))
+                } else {
+                    try {
+                        cont.resume(block(r))
+                    } catch (e: Throwable) {
+                        cont.resumeWithException(e)
+                    }
+                }
+            }
+        }
+
+    /** The engine's persistence view — every call lands on the single DB-writer thread. */
+    fun syncLocalStore(): SyncLocalStore = object : SyncLocalStore {
+        override suspend fun siteId(): String? = onDb { it.syncSiteId() }
+        override suspend fun cursor(): Long = onDb { it.syncCursor() }
+        override suspend fun pendingOps(): List<SyncOp> = onDb { it.pendingOps() }
+        override suspend fun applyRelayed(ops: List<SyncOp>) = onDb { it.applySyncOps(ops) }
+        override suspend fun markAckedThrough(through: Long) = onDb { it.markAckedThrough(through) }
+        override suspend fun setCursor(cursor: Long) = onDb { it.setSyncCursor(cursor) }
+    }
+
+    // Join-handshake bridges (used by SyncController.enableAndJoin).
+    suspend fun syncMintSiteId(): String = onDb { it.mintSiteId() }
+    suspend fun syncBackfillOutbox() = onDb { it.backfillOutbox() }
+    suspend fun syncIsPristineBootstrap(): Boolean = onDb { it.isPristineBootstrap() }
+    suspend fun syncCurrentNotebookId(): String = onDb { it.currentNotebookId() }
+    suspend fun syncNotebookIds(): List<String> = onDb { it.listNotebooks().map { nb -> nb.id } }
+    suspend fun syncDiscardBootstrapNotebook(id: String) = onDb { it.discardBootstrapNotebook(id) }
+
+    /** Read the persisted sync config (server URL + credentials), off-thread. */
+    suspend fun syncSettings(): Settings = onDb { it.settings() }
 
     /** Drain pending writes, then close the driver as the last task. */
     fun shutdown() {

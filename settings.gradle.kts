@@ -23,4 +23,5 @@ rootProject.name = "ForestNote"
 
 include(":core:ink")
 include(":core:format")
+include(":core:sync")
 include(":app:notes")
