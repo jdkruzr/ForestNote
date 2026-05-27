@@ -1108,9 +1108,16 @@ class DrawView @JvmOverloads constructor(
                     (maxY.toInt() + pad + loc[1]).coerceAtMost(Int.MAX_VALUE)
                 ))
 
-                // On GenericBackend, invalidate() to trigger onDraw which blits the bitmap.
-                // On ViwoodsBackend, renderSegment() handles display directly via WritingBufferQueue.
-                invalidate()
+                // Invalidate ONLY the segment's dirty rect (view-local coords), not the whole
+                // view. onDraw's bitmap blit is then clipped to this region by the framework, so
+                // e-ink refreshes a small area under the pen instead of the full screen every move
+                // — the dominant per-move cost. (minX..maxY are already view-local screen px.)
+                invalidate(
+                    (minX.toInt() - pad).coerceAtLeast(0),
+                    (minY.toInt() - pad).coerceAtLeast(0),
+                    (maxX.toInt() + pad).coerceAtMost(width),
+                    (maxY.toInt() + pad).coerceAtMost(height)
+                )
             }
 
             MotionEvent.ACTION_UP -> {
@@ -1199,7 +1206,14 @@ class DrawView @JvmOverloads constructor(
                     max(prevScreenY, event.y).toInt() + pad + loc[1]
                 )
                 backend?.renderSegment(dirtyRect)
-                invalidate()
+                // Invalidate only the erased segment's rect (view-local), not the whole view —
+                // see the pen path: keeps the e-ink refresh regional instead of full-screen.
+                invalidate(
+                    (min(prevScreenX, event.x).toInt() - pad).coerceAtLeast(0),
+                    (min(prevScreenY, event.y).toInt() - pad).coerceAtLeast(0),
+                    (max(prevScreenX, event.x).toInt() + pad).coerceAtMost(width),
+                    (max(prevScreenY, event.y).toInt() + pad).coerceAtMost(height)
+                )
 
                 // Record the eraser path in virtual coordinates for model reconciliation.
                 eraserPathVirtual.add(transform.toVirtualX(event.x) to transform.toVirtualY(event.y))
