@@ -5,6 +5,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
+import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.Ulid
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -83,6 +84,21 @@ class NotebookRepository private constructor(
 
     companion object {
         private const val DEFAULT_FILENAME = "default.forestnote"
+
+        /**
+         * Gate for text-box sync. ENABLED (Phase 6 cutover, 2026-05-27): the UltraBridge server
+         * accepts schema v2 (folder/notebook/page/stroke/text_box, hash bc1953e2…), so text-box
+         * mutations now enqueue full-row-upsert ops to the outbox and `backfillOutbox` uploads any
+         * boxes created before the cutover. Paired with `SyncProtocol.SCHEMA_HASH` = the v2 value.
+         */
+        internal const val TEXT_BOX_SYNC_ENABLED = true
+
+        /**
+         * The synced-schema generation. Bump whenever a new syncable table/column ships so an
+         * already-joined device re-backfills its existing rows of the new kind exactly once (see
+         * [rebackfillIfSchemaAdvanced]). 0 = pre-text_box; 1 = text_box added.
+         */
+        internal const val SYNC_BACKFILL_VERSION = 1
 
         /**
          * Open or create the library database, bootstrapping ≥1 notebook/≥1 page
@@ -745,6 +761,71 @@ class NotebookRepository private constructor(
         }
     }
 
+    // -- text boxes --------------------------------------------------------
+    //
+    // A text box is a z-ordered element on the current page. Create and update (move/resize/edit)
+    // both go through the same upsert: create mints a ULID, update reuses the box's id. Delete is
+    // a soft-delete (tombstone) so it replicates as an upsert. Sync ops are gated by
+    // TEXT_BOX_SYNC_ENABLED (local-first rollout — see the companion). All bump the notebook's
+    // modified_at like ink mutations do.
+
+    /** Persist a text box on the current page (create or in-place update). Carries its own ULID. */
+    fun saveTextBox(box: TextBox) {
+        db.transaction {
+            val now = clock()
+            db.notebookQueries.upsertTextBox(
+                id = box.id,
+                page_id = currentPageId,
+                x = box.x.toLong(),
+                y = box.y.toLong(),
+                width = box.width.toLong(),
+                height = box.height.toLong(),
+                text = box.text,
+                font_name = box.fontName,
+                font_size = box.fontSize.toLong(),
+                color = box.color.toLong(),
+                weight = box.weight.toLong(),
+                border_width = box.borderWidth.toLong(),
+                z = box.zBand.value.toLong(),
+                created_at = now
+            )
+            if (TEXT_BOX_SYNC_ENABLED) enqueueOp("text_box", box.id, now)
+            touchCurrentNotebook()
+        }
+    }
+
+    /** Load the current page's live text boxes, in paint order. */
+    fun loadTextBoxes(): List<TextBox> = loadTextBoxesForPage(currentPageId)
+
+    /** Load an arbitrary page's live text boxes without changing the active page context. */
+    fun loadTextBoxesForPage(pageId: String): List<TextBox> =
+        db.notebookQueries.getTextBoxesForPage(pageId).executeAsList().map { row ->
+            TextBox(
+                id = row.id,
+                x = row.x.toInt(),
+                y = row.y.toInt(),
+                width = row.width.toInt(),
+                height = row.height.toInt(),
+                text = row.text,
+                fontName = row.font_name,
+                fontSize = row.font_size.toInt(),
+                color = row.color.toInt(),
+                weight = row.weight.toInt(),
+                borderWidth = row.border_width.toInt(),
+                zBand = com.forestnote.core.ink.ZBand.fromValue(row.z.toInt())
+            )
+        }
+
+    /** Soft-delete a text box by its ULID (tombstone; replicates as an upsert). */
+    fun deleteTextBox(boxId: String) {
+        db.transaction {
+            val now = clock()
+            db.notebookQueries.softDeleteTextBox(now, boxId)
+            if (TEXT_BOX_SYNC_ENABLED) enqueueOp("text_box", boxId, now)
+            touchCurrentNotebook()
+        }
+    }
+
     // -- Sync capture (Phase 2) --------------------------------------------
     //
     // Every mutating method, while sync is ENABLED, appends a full-row-UPSERT op to the outbox
@@ -792,7 +873,26 @@ class NotebookRepository private constructor(
             db.notebookQueries.allNotebookIds().executeAsList().forEach { if (lacksMeta("notebook", it)) enqueueOp("notebook", it, now) }
             db.notebookQueries.allPageIds().executeAsList().forEach { if (lacksMeta("page", it)) enqueueOp("page", it, now) }
             db.notebookQueries.allStrokeIds().executeAsList().forEach { if (lacksMeta("stroke", it)) enqueueOp("stroke", it, now) }
+            if (TEXT_BOX_SYNC_ENABLED) {
+                db.notebookQueries.allTextBoxIds().executeAsList().forEach { if (lacksMeta("text_box", it)) enqueueOp("text_box", it, now) }
+            }
+            // A full backfill covers the current synced schema, so mark this device caught up.
+            db.notebookQueries.setBackfillVersion(SYNC_BACKFILL_VERSION.toLong())
         }
+    }
+
+    /**
+     * Re-run [backfillOutbox] once if this (already-enabled) device backfilled for an older synced
+     * schema than the current [SYNC_BACKFILL_VERSION] — e.g. it joined before `text_box` was a
+     * synced table, so those rows never got outbox ops. The backfill is idempotent (`lacksMeta`
+     * skips already-synced rows) and re-stamps the version, so this is a no-op on every later call.
+     * Sync-off / not-yet-enabled is left alone: the first [enableSync]/join does a full backfill.
+     */
+    fun rebackfillIfSchemaAdvanced() {
+        val state = db.notebookQueries.getSyncState().executeAsOneOrNull() ?: return
+        if (state.site_id == null) return
+        if (state.backfill_version >= SYNC_BACKFILL_VERSION) return
+        backfillOutbox()
     }
 
     private fun lacksMeta(table: String, pk: String): Boolean =
@@ -867,6 +967,12 @@ class NotebookRepository private constructor(
         }
         "stroke" -> db.notebookQueries.syncRowStroke(pk).executeAsOneOrNull()?.let {
             SyncWire.strokeCols(it.page_id, it.color, it.pen_width_min, it.pen_width_max, it.points, it.z, it.created_at, it.deleted_at)
+        }
+        "text_box" -> db.notebookQueries.syncRowTextBox(pk).executeAsOneOrNull()?.let {
+            SyncWire.textBoxCols(
+                it.page_id, it.x, it.y, it.width, it.height, it.text, it.font_name, it.font_size,
+                it.color, it.weight, it.border_width, it.z, it.created_at, it.deleted_at
+            )
         }
         else -> null
     }
@@ -963,6 +1069,14 @@ class NotebookRepository private constructor(
             }
             "stroke" -> SyncWire.decodeStroke(op.cols).let {
                 db.notebookQueries.applyUpsertStroke(op.pk, it.pageId, it.color, it.penWidthMin, it.penWidthMax, it.points, it.z, it.createdAt, it.deletedAt)
+                db.notebookQueries.notebookIdOfPage(it.pageId).executeAsOneOrNull()
+                    ?.let { nb -> db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, nb) }
+            }
+            "text_box" -> SyncWire.decodeTextBox(op.cols).let {
+                db.notebookQueries.applyUpsertTextBox(
+                    op.pk, it.pageId, it.x, it.y, it.width, it.height, it.text, it.fontName,
+                    it.fontSize, it.color, it.weight, it.borderWidth, it.z, it.createdAt, it.deletedAt
+                )
                 db.notebookQueries.notebookIdOfPage(it.pageId).executeAsOneOrNull()
                     ?.let { nb -> db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, nb) }
             }

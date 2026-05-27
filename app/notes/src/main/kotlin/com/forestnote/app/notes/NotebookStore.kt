@@ -15,6 +15,7 @@ import com.forestnote.core.format.Settings
 import com.forestnote.core.format.SyncOp
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeGeometry
+import com.forestnote.core.ink.TextBox
 import com.forestnote.core.sync.SyncLocalStore
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -117,6 +118,35 @@ class NotebookStore(
                     return@execute // post no diff on failure (in-memory ink stays visible)
                 }
             poster { onResult(result.removedStrokeIds, result.addedStrokes) }
+        }
+    }
+
+    // -- text boxes --------------------------------------------------------
+
+    /** Load the current page's text boxes (paint order) off-thread; posted to the main thread. */
+    fun loadTextBoxes(onLoaded: (List<TextBox>) -> Unit) {
+        executor.execute {
+            val boxes = runCatching { repo?.loadTextBoxes() ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to load text boxes", it) }
+                .getOrDefault(emptyList())
+            poster { onLoaded(boxes) }
+        }
+    }
+
+    /** Persist a text box (create or in-place move/resize/edit). Fire-and-forget. */
+    fun saveTextBox(box: TextBox) {
+        executor.execute {
+            runCatching { repo?.saveTextBox(box) }
+                .onFailure { android.util.Log.e(TAG, "failed to save text box", it) }
+        }
+    }
+
+    /** Soft-delete a text box by id off-thread; callback posted when done. */
+    fun deleteTextBox(boxId: String, onDone: () -> Unit = {}) {
+        executor.execute {
+            runCatching { repo?.deleteTextBox(boxId) }
+                .onFailure { android.util.Log.e(TAG, "failed to delete text box", it) }
+            poster { onDone() }
         }
     }
 
@@ -501,6 +531,8 @@ class NotebookStore(
     suspend fun syncDiscardBootstrapNotebook(id: String) = onDb { it.discardBootstrapNotebook(id) }
     suspend fun syncJoined(): Boolean = onDb { it.syncJoined() }
     suspend fun syncMarkJoined() = onDb { it.setSyncJoined(true) }
+    /** Re-backfill once if this joined device is behind the current synced-schema generation. */
+    suspend fun syncRebackfillIfNeeded() = onDb { it.rebackfillIfSchemaAdvanced() }
 
     /** Read the persisted sync config (server URL + credentials), off-thread. */
     suspend fun syncSettings(): Settings = onDb { it.settings() }

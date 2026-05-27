@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Text-box tool icon: a serif "T". -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/black">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M5,4h14v3h-2V6h-4v12h2v2h-6v-2h2V6H7v1H5V4z" />
+</vector>

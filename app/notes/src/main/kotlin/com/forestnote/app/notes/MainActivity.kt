@@ -6,9 +6,11 @@ import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.TextView
@@ -19,7 +21,9 @@ import com.forestnote.core.format.StartView
 import com.forestnote.core.ink.BackendDetector
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
+import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.ViwoodsBackend
+import com.forestnote.core.ink.ZBand
 import com.forestnote.core.sync.SyncStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +66,12 @@ class MainActivity : Activity() {
     // In-process clipboard for lasso Cut/Copy/Paste (held across A7 selection + A8 paste).
     private val clipboard = InProcessClipboard()
     private lateinit var selectionMenu: SelectionMenuView
+    private lateinit var textBoxEditor: TextBoxEditor
+    private lateinit var textBoxMenu: TextBoxMenuView
+
+    /** Whether the editor's ink/text has been painted this session. False until we either launch
+     *  into the editor or first reveal it from the Library — see the launch sequencing in onCreate. */
+    private var editorLoaded = false
     // Full-screen Settings overlay (B2). Reuses this Activity's single store; shown over
     // the editor and dismissed by its Back header or the system back button.
     private val settingsView = SettingsView()
@@ -150,33 +160,65 @@ class MainActivity : Activity() {
         btnNotebooks = findViewById(R.id.btn_notebooks)
         btnNotebooks.setOnClickListener { openLibrary() }
 
-        // Non-blocking restore: the canvas is interactive immediately; previously-saved
-        // ink appears when the async load returns, merged with anything drawn meanwhile.
-        // The active notebook+page are the ones restored from app_state (AC5.1).
-        store.load { strokes ->
-            drawView.mergeLoadedStrokes(strokes)
-            refreshPageIndicator()
-        }
-
-        // AC4.1: cold launch resumes the editor on the last-active notebook, unless the
-        // user's startView preference is the Library. The Library also opens defensively
-        // when there is no active notebook (bootstrap normally prevents that state).
+        // AC4.1: cold launch resumes the editor on the last-active notebook, unless the user's
+        // startView preference is the Library (or there's no notebook to resume into). We decide
+        // BEFORE painting the editor: painting it and then slamming the Library overlay on top
+        // leaves the half-drawn editor ghosting under the Library on e-ink. So when we're heading
+        // to the Library, we DON'T render the editor now — closeLibrary() / goToNotebook() render
+        // it when it actually becomes visible.
         store.loadSettings { settings ->
             // A10: seed per-variant pen widths from settings, then prime the canvas with the
             // active variant's width. (toolBar is assigned below in onCreate; this async
             // callback runs after onCreate returns, so it's set by the time we get here.)
             toolBar.loadPenWidths(PenWidthSettings.decode(settings.penWidthLevels))
             drawView.activePenWidthLevel = toolBar.activePenWidthLevel()
+            // Seed the active text-box style (font + size) from settings.
+            toolBar.loadTextStyle(settings.textFontName, settings.textFontSizeV)
+            drawView.activeTextFontName = settings.textFontName
+            drawView.activeTextFontSize = settings.textFontSizeV
             store.listNotebooks { notebooks, activeId ->
                 val startOnLibrary = settings.startView == StartView.LIBRARY
                 if (LaunchLogic.shouldOpenLibraryOnLaunch(activeId, notebooks.size, startOnLibrary)) {
-                    openLibrary()
+                    openLibrary() // editor paint deferred (see closeLibrary / goToNotebook)
+                } else {
+                    loadEditor()
                 }
             }
         }
 
+        // Text-box in-place editor: overlays an EditText on the canvas container. DrawView asks to
+        // open it (drag-to-draw / re-edit) and to commit it (a canvas touch while editing); the
+        // commit reports text + pixel height back to DrawView, which maps it to virtual geometry.
+        val canvasContainer: FrameLayout = findViewById(R.id.canvas_container)
+        textBoxEditor = TextBoxEditor(
+            container = canvasContainer,
+            fontResolver = { name, weight -> drawView.fontResolver(name, weight) },
+            onCommit = { id, text, heightPx -> drawView.commitTextBox(id, text, heightPx) },
+            // The IME pop/dismiss pans the (non-resizing) window; once it settles, GC-refresh the
+            // editor to clear the shift ghosting. 350ms ≈ keyboard slide + pan settle.
+            onImeShifted = { drawView.postDelayed({ drawView.gcRefresh() }, 350L) }
+        )
+        drawView.onTextEditRequested = { box, rect ->
+            textBoxEditor.begin(box, rect, drawView.screenTextSize(box.fontSize))
+        }
+        drawView.onCommitEditRequested = { textBoxEditor.commit() }
+
+        // Text-box selection menu (Edit / Options / Delete), shown when a box is tapped.
+        textBoxMenu = TextBoxMenuView(isEInk)
+        drawView.onBoxSelected = { _, rect ->
+            textBoxMenu.show(drawView, rect, TextBoxMenuView.Callbacks(
+                onEdit = { drawView.editSelectedBox() },
+                onOptions = { drawView.selectedBox()?.let { showTextBoxOptions(it) } },
+                onDelete = { drawView.deleteSelectedBox() }
+            ))
+        }
+        drawView.onBoxSelectionCleared = { textBoxMenu.dismiss() }
+
         // Create and wire ToolBar
         toolBar = ToolBar(toolBarRoot, isEInk) { tool ->
+            // Switching tools commits any in-progress text edit first (a toolbar tap won't reach
+            // the canvas, so the canvas-touch commit path doesn't fire).
+            textBoxEditor.commit()
             drawView.activeTool = tool
         }
         // Propagate pen-variant choice to the canvas (affects width/colour/compositing).
@@ -190,6 +232,28 @@ class MainActivity : Activity() {
             drawView.activePenWidthLevel = level
             store.updateSettings({ it.copy(penWidthLevels = PenWidthSettings.encode(toolBar.currentPenWidthLevels())) })
         }
+
+        // Text-box font/size choices: apply to the canvas (next-created box) and persist.
+        toolBar.setOnTextFontSelected { name ->
+            drawView.activeTextFontName = name
+            store.updateSettings({ it.copy(textFontName = name) })
+        }
+        toolBar.setOnTextSizeSelected { sizeV ->
+            drawView.activeTextFontSize = sizeV
+            store.updateSettings({ it.copy(textFontSizeV = sizeV) })
+        }
+
+        // Enumerate device fonts off the main thread, then wire the resolver + chooser list.
+        Thread {
+            val catalog = FontCatalog.load()
+            runOnUiThread {
+                drawView.fontResolver = catalog::resolve
+                toolBar.setFontNames(catalog.names)
+                toolBar.setFontPreview { name -> catalog.resolve(name, com.forestnote.core.ink.TextBox.WEIGHT_NORMAL) }
+                // Re-render any already-loaded boxes now that real typefaces are available.
+                drawView.fullRefresh()
+            }
+        }.start()
 
         // Lasso selection menu: show the action pill over a closed selection, dismiss
         // it when the selection clears (tool switch / new lasso / cut / delete).
@@ -220,9 +284,9 @@ class MainActivity : Activity() {
             showClearConfirmation()
         }
 
-        // Wire Refresh button — full GC panel refresh to clear ghosting
+        // Wire Refresh button — a true GC panel refresh (the button exists to clear ghosting).
         toolBar.setOnRefreshClicked {
-            drawView.fullRefresh()
+            drawView.gcRefresh()
         }
 
         // Paste cell: enabled live whenever the clipboard is non-empty (AC1.6).
@@ -256,6 +320,42 @@ class MainActivity : Activity() {
     }
 
     /**
+     * The selected text box's Options dialog: a visible-border toggle and the z-band (bottom =
+     * below ink, top = above everything). Saving applies the choices via DrawView.
+     */
+    private fun showTextBoxOptions(box: TextBox) {
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad, pad, pad)
+        }
+        val borderCheck = CheckBox(this).apply {
+            text = "Show border"
+            isChecked = box.borderWidth > 0
+        }
+        val rbBottom = RadioButton(this).apply { text = "Bottom (below ink)"; id = View.generateViewId() }
+        val rbTop = RadioButton(this).apply { text = "Top (above everything)"; id = View.generateViewId() }
+        val zGroup = RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            addView(rbBottom)
+            addView(rbTop)
+            check(if (box.zBand == ZBand.TOP) rbTop.id else rbBottom.id)
+        }
+        layout.addView(borderCheck)
+        layout.addView(zGroup)
+
+        AlertDialog.Builder(this)
+            .setTitle("Text box options")
+            .setView(layout)
+            .setPositiveButton("Save") { _, _ ->
+                val zBand = if (zGroup.checkedRadioButtonId == rbTop.id) ZBand.TOP else ZBand.BOTTOM
+                drawView.applySelectedBoxOptions(borderCheck.isChecked, zBand)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /**
      * Placeholder dialog for the lasso pill's Recognize (F1) / To-do (F2) actions.
      * Loads the current settings off-thread, then shows a message that varies by
      * whether the relevant endpoint URL is configured (see [SelectionActionLogic]).
@@ -280,7 +380,8 @@ class MainActivity : Activity() {
             .setTitle("Clear Page")
             .setMessage("Delete all strokes on this page?")
             .setPositiveButton("Clear") { _, _ ->
-                drawView.clearAll()
+                // Clear is ink-only — text boxes are separate elements and stay on the page.
+                drawView.clearAll(clearTextBoxes = false)
                 // The store clears off-thread and handles its own errors.
                 store.clear { }
             }
@@ -316,32 +417,54 @@ class MainActivity : Activity() {
 
     /** Swap to another page: clear canvas, load its ink, refresh overlay + indicator. */
     private fun goToPage(pageId: String) {
+        textBoxEditor.commit() // persist any in-progress text edit before leaving the page
         drawView.clearAll()
         store.switchPage(pageId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()       // clears e-ink ghosting on switch (AC6.4)
             refreshPageIndicator()
         }
+        store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
 
     /** Reload whatever page the repo currently considers active (after a delete). */
     private fun reloadCurrentPage() {
+        textBoxEditor.commit()
         drawView.clearAll()
         store.load { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()
             refreshPageIndicator()
         }
+        store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
 
-    /** Swap to another notebook: clear canvas, load its active/first page. */
+    /** Swap to another notebook: clear canvas, load its active/first page. Entered from the Library,
+     *  so GC-refresh to clear any overlay ghost (and it counts as the editor's first paint). */
     private fun goToNotebook(notebookId: String) {
+        textBoxEditor.commit()
+        editorLoaded = true
         drawView.clearAll()
         store.switchNotebook(notebookId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
-            drawView.fullRefresh()
+            drawView.gcRefresh()
             refreshPageIndicator()
         }
+        store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
+    }
+
+    /**
+     * Load + paint the active page's ink and text boxes into the editor. This is the deferred
+     * initial render: at launch we skip it when heading into the Library (so the editor doesn't
+     * ghost under the overlay), then call it the first time the editor actually becomes visible.
+     */
+    private fun loadEditor() {
+        editorLoaded = true
+        store.load { strokes ->
+            drawView.mergeLoadedStrokes(strokes)
+            refreshPageIndicator()
+        }
+        store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
 
     /**
@@ -351,6 +474,7 @@ class MainActivity : Activity() {
      */
     private fun openLibrary() {
         if (libraryView.isShowing) return
+        textBoxEditor.commit() // don't strand an open editor behind the Library overlay
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
         libraryView.show(content, store, LibraryView.Callbacks(
             onOpenNotebook = { card -> libraryView.hide(); goToNotebook(card.id) },
@@ -372,8 +496,20 @@ class MainActivity : Activity() {
         ))
     }
 
-    /** Dismiss the Library overlay and return to the editor. */
-    private fun closeLibrary() { libraryView.hide() }
+    /**
+     * Dismiss the Library overlay and return to the editor, GC-refreshing so the overlay leaves no
+     * ghost. If the editor was never painted this session (we launched straight into the Library),
+     * this is its first reveal — load + paint it now; [loadEditor]'s render GC-refreshes via merge.
+     */
+    private fun closeLibrary() {
+        libraryView.hide()
+        if (!editorLoaded) {
+            loadEditor()
+            drawView.post { drawView.gcRefresh() }
+        } else {
+            drawView.gcRefresh()
+        }
+    }
 
     /** Show the full-screen Recycle Bin overlay over the Library (E3). */
     private fun openRecycleBin() {
@@ -696,6 +832,8 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        // Persist any in-progress text edit before backgrounding.
+        textBoxEditor.commit()
         // Stop the periodic timer and flush pending changes to UltraBridge.
         syncController.pause()
         if (isEInk) {

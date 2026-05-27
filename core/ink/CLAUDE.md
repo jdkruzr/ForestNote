@@ -1,12 +1,12 @@
 # Ink Domain (core:ink)
 
-Last verified: 2026-05-26
+Last verified: 2026-05-27
 
 ## Purpose
 Abstracts device-specific e-ink rendering behind a common interface and provides the stroke data model, coordinate system, and geometry operations used by all other modules.
 
 ## Contracts
-- **Exposes**: `InkBackend` interface, `BackendDetector.detect()`, `Stroke`/`StrokeBuilder`/`StrokePoint` types, `Tool` sealed class (`Pen`/`StrokeEraser`/`PixelEraser`/`Lasso`), `PenVariant` enum, `PenWidthLevel` enum (`XS/S/M/L/XL`) + `PenWidthScale.pair(level)` (level→`(min,max)` virtual pair; `M`=`(7,35)` v1 default), `PenParams.of(variant, level)` (per-variant color/width/behind), `PageTransform` (virtual↔screen + `ppi`/`pitchPx(mm)` for physical mm→px), `PressureCurve`, `StrokeGeometry`, `Ulid`
+- **Exposes**: `InkBackend` interface, `BackendDetector.detect()`, `Stroke`/`StrokeBuilder`/`StrokePoint` types, `TextBox`/`ZBand` types (text-box element: virtual-coord geometry + font/size/colour/weight/border + z-band; ULID id), `Tool` sealed class (`Pen`/`StrokeEraser`/`PixelEraser`/`Lasso`/`Text`), `PenVariant` enum, `PenWidthLevel` enum (`XS/S/M/L/XL`) + `PenWidthScale.pair(level)` (level→`(min,max)` virtual pair; `M`=`(7,35)` v1 default), `PenParams.of(variant, level)` (per-variant color/width/behind), `PageTransform` (virtual↔screen + `ppi`/`pitchPx(mm)` for physical mm→px), `PressureCurve`, `StrokeGeometry`, `Ulid`
 - **Guarantees**: `BackendDetector.detect()` always returns a working backend (GenericBackend fallback). All stroke/point data uses virtual coordinates. PageTransform is the sole virtual-to-screen converter.
 - **Expects**: Android Context for backend init. View dimensions for PageTransform.update().
 
@@ -35,6 +35,7 @@ Abstracts device-specific e-ink rendering behind a common interface and provides
 - `GenericBackend.kt` - Fallback using standard View.invalidate()
 - `BackendDetector.kt` - Runtime backend selection (Viwoods > Generic)
 - `Stroke.kt` - Immutable Stroke (ULID id) + mutable StrokeBuilder
+- `TextBox.kt` - Immutable TextBox (ULID id; virtual-coord x/y/width/height + fontName/fontSize/color/weight/borderWidth) + `ZBand` enum (BOTTOM=below ink, TOP=above everything; stored as the `z` int)
 - `Ulid.kt` - Dependency-free, time-sortable ULID generator (stroke/page identity)
 - `PageTransform.kt` - Virtual/screen coordinate conversion; `ppi` + `pitchPx(mm)` for physical-mm template pitch (caller sets `ppi` — use true panel PPI, never `densityDpi`)
 - `StrokeGeometry.kt` - Intersection testing and stroke splitting for erasers

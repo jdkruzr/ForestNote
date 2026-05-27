@@ -63,6 +63,30 @@ CREATE TABLE stroke (
 );
 CREATE INDEX stroke_page_id ON stroke(page_id);
 
+-- Text box table: a placed, wrapping text element on a page (z-ordered element model, future-
+-- directions.md). id is a client-minted ULID; geometry + font_size are in virtual units; z is the
+-- paint band (0 = bottom/below ink, 1 = top/above everything). border_width is screen px
+-- (0 = none). text is a first-class synced column (server-searchable + server-mutable).
+CREATE TABLE text_box (
+    id TEXT PRIMARY KEY NOT NULL,
+    page_id TEXT NOT NULL REFERENCES page(id) ON DELETE CASCADE,
+    x INTEGER NOT NULL,
+    y INTEGER NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    font_name TEXT NOT NULL,
+    font_size INTEGER NOT NULL,
+    color INTEGER NOT NULL DEFAULT -16777216,
+    weight INTEGER NOT NULL DEFAULT 400,
+    border_width INTEGER NOT NULL DEFAULT 2,
+    z INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    -- Soft-delete tombstone for sync. NULL = live; a ms timestamp = deleted.
+    deleted_at INTEGER
+);
+CREATE INDEX text_box_page_id ON text_box(page_id);
+
 -- Singleton "where the user left off" (id is always 0).
 CREATE TABLE app_state (
     id INTEGER PRIMARY KEY NOT NULL CHECK (id = 0),
@@ -85,7 +109,12 @@ CREATE TABLE sync_state (
     next_op_seq  INTEGER NOT NULL DEFAULT 1,  -- next op_seq to assign (monotonic, starts at 1, never reused)
     cursor       INTEGER NOT NULL DEFAULT 0,  -- last global seq applied from the server (0 = never synced)
     acked_op_seq INTEGER NOT NULL DEFAULT 0,  -- contiguous accepted_through (outbox pruned at/below this)
-    joined       INTEGER NOT NULL DEFAULT 0   -- 1 once the initial pull-first join handshake has completed
+    joined       INTEGER NOT NULL DEFAULT 0,  -- 1 once the initial pull-first join handshake has completed
+    -- The synced-schema generation this device has backfilled for. When the client gains a new
+    -- syncable table/column, NotebookRepository.SYNC_BACKFILL_VERSION is bumped; a joined device
+    -- whose stored value is behind re-runs the (idempotent) backfill once so existing rows of the
+    -- newly-synced table get outbox ops, then advances this. 0 = pre-text_box.
+    backfill_version INTEGER NOT NULL DEFAULT 0
 );
 
 -- Outbound oplog: one full-row-UPSERT op per local mutation, appended in the SAME
@@ -306,6 +335,38 @@ UPDATE stroke SET deleted_at = ? WHERE page_id = ? AND deleted_at IS NULL;
 deleteStrokesForPage:
 DELETE FROM stroke WHERE page_id = ?;
 
+-- text boxes --
+
+-- Live boxes on a page, in paint order (z band, then creation). bottom-band rows come first.
+getTextBoxesForPage:
+SELECT * FROM text_box WHERE page_id = ? AND deleted_at IS NULL ORDER BY z ASC, created_at ASC;
+
+-- Upsert a text box. Create reuses this with a fresh ULID; move/resize/edit reuses it with the
+-- same ULID. Inserts live (deleted_at NULL); on id conflict overwrites columns and clears any
+-- tombstone, so a soft-deleted box can be revived in place.
+upsertTextBox:
+INSERT INTO text_box(id, page_id, x, y, width, height, text, font_name, font_size, color, weight, border_width, z, created_at, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+ON CONFLICT(id) DO UPDATE SET
+    page_id = excluded.page_id,
+    x = excluded.x,
+    y = excluded.y,
+    width = excluded.width,
+    height = excluded.height,
+    text = excluded.text,
+    font_name = excluded.font_name,
+    font_size = excluded.font_size,
+    color = excluded.color,
+    weight = excluded.weight,
+    border_width = excluded.border_width,
+    z = excluded.z,
+    created_at = excluded.created_at,
+    deleted_at = NULL;
+
+-- Soft-delete (sync): tombstone instead of removing, so delete replicates as an upsert.
+softDeleteTextBox:
+UPDATE text_box SET deleted_at = ? WHERE id = ?;
+
 -- app_state --
 
 getAppState:
@@ -373,6 +434,9 @@ SELECT notebook_id, sort_order, created_at, deleted_at, template, template_pitch
 syncRowStroke:
 SELECT page_id, color, pen_width_min, pen_width_max, points, z, created_at, deleted_at FROM stroke WHERE id = ?;
 
+syncRowTextBox:
+SELECT page_id, x, y, width, height, text, font_name, font_size, color, weight, border_width, z, created_at, deleted_at FROM text_box WHERE id = ?;
+
 -- All row ids per table (incl. tombstoned), for the first-enable backfill.
 allFolderIds:
 SELECT id FROM folder;
@@ -385,6 +449,9 @@ SELECT id FROM page;
 
 allStrokeIds:
 SELECT id FROM stroke;
+
+allTextBoxIds:
+SELECT id FROM text_box;
 
 -- ── Sync (UltraBridge) — Phase 4 apply ───────────────────────────────────────
 -- Applying a RELAYED op (authored by another device): write the decoded wire columns straight
@@ -413,6 +480,9 @@ UPDATE sync_state SET cursor = ? WHERE id = 0;
 
 setJoined:
 UPDATE sync_state SET joined = ? WHERE id = 0;
+
+setBackfillVersion:
+UPDATE sync_state SET backfill_version = ? WHERE id = 0;
 
 -- Bump a notebook's local modified_at to at least [wall_ts] (never moves it backwards).
 bumpNotebookModifiedAtMax:
@@ -462,6 +532,26 @@ ON CONFLICT(id) DO UPDATE SET
     pen_width_min = excluded.pen_width_min,
     pen_width_max = excluded.pen_width_max,
     points = excluded.points,
+    z = excluded.z,
+    created_at = excluded.created_at,
+    deleted_at = excluded.deleted_at;
+
+-- Apply a RELAYED text-box op: write decoded wire columns (deleted_at may be a tombstone).
+applyUpsertTextBox:
+INSERT INTO text_box(id, page_id, x, y, width, height, text, font_name, font_size, color, weight, border_width, z, created_at, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    page_id = excluded.page_id,
+    x = excluded.x,
+    y = excluded.y,
+    width = excluded.width,
+    height = excluded.height,
+    text = excluded.text,
+    font_name = excluded.font_name,
+    font_size = excluded.font_size,
+    color = excluded.color,
+    weight = excluded.weight,
+    border_width = excluded.border_width,
     z = excluded.z,
     created_at = excluded.created_at,
     deleted_at = excluded.deleted_at;

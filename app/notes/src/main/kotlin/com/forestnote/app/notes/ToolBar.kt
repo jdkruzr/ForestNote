@@ -1,12 +1,14 @@
 package com.forestnote.app.notes
 
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.PopupWindow
+import android.widget.ScrollView
 import android.widget.TextView
 import com.forestnote.core.ink.PenVariant
 import com.forestnote.core.ink.PenWidthLevel
@@ -32,10 +34,19 @@ class ToolBar(
     private var penVariantCallback: ((PenVariant) -> Unit)? = null
     private var penWidthCallback: ((PenWidthLevel) -> Unit)? = null
 
+    // Text-box style state (font name + size in virtual units), surfaced by the Text chooser.
+    private var fontNames: List<String> = emptyList()
+    private var fontPreview: (String) -> Typeface = { Typeface.DEFAULT }
+    private var activeTextFont: String = ""
+    private var activeTextSizeV: Int = DEFAULT_TEXT_SIZE_V
+    private var textFontCallback: ((String) -> Unit)? = null
+    private var textSizeCallback: ((Int) -> Unit)? = null
+
     // Each tool's clickable hitbox is the whole cell (icon + word), not just the icon.
     private val btnFountain: View = root.findViewById(R.id.cell_fountain)
     private val lblFountain: TextView = root.findViewById(R.id.label_fountain)
     private val btnLasso: View = root.findViewById(R.id.cell_lasso)
+    private val btnText: View = root.findViewById(R.id.cell_text)
     private val btnErase: View = root.findViewById(R.id.cell_erase)
     private val lblErase: TextView = root.findViewById(R.id.label_erase)
     private val btnPaste: View = root.findViewById(R.id.cell_paste)
@@ -48,13 +59,14 @@ class ToolBar(
     private var pasteEnabled = false
     private var activeTemplateCallback: (() -> Unit)? = null
 
-    // Group cells whose active state is highlighted (Fountain = Pen group; Lasso; Erase = erasers).
-    private val highlightCells = listOf(btnFountain, btnLasso, btnErase)
+    // Group cells whose active state is highlighted (Fountain = Pen group; Lasso; Text; Erase).
+    private val highlightCells = listOf(btnFountain, btnLasso, btnText, btnErase)
 
     /** Is the given group cell's tool group currently active? */
     private fun isCellActive(cell: View, activeTool: Tool): Boolean = when (cell) {
         btnFountain -> activeTool is Tool.Pen
         btnLasso -> activeTool is Tool.Lasso
+        btnText -> activeTool is Tool.Text
         btnErase -> activeTool is Tool.StrokeEraser || activeTool is Tool.PixelEraser
         else -> false
     }
@@ -82,6 +94,11 @@ class ToolBar(
         }
         // Lasso is a single top-level tool (no variant dropdown).
         btnLasso.setOnClickListener { logic.selectTool(Tool.Lasso) }
+        // Text selects the text-box tool and opens the font/size chooser.
+        btnText.setOnClickListener {
+            logic.selectTool(Tool.Text)
+            showTextSettingsPopup(btnText)
+        }
         btnErase.setOnClickListener {
             logic.selectEraseGroup()
             showEraseVariantDropdown(btnErase)
@@ -214,6 +231,161 @@ class ToolBar(
 
     /** A snapshot of every variant's width level (for persisting back to Settings). */
     fun currentPenWidthLevels(): Map<PenVariant, PenWidthLevel> = logic.allPenWidthLevels()
+
+    // -- Text-box font/size chooser (Phase 4) ------------------------------------
+
+    /** Supply the device's font list (from [FontCatalog]) for the chooser. */
+    fun setFontNames(names: List<String>) { fontNames = names }
+
+    /** Supply a resolver so each font row previews in its own typeface. */
+    fun setFontPreview(resolver: (String) -> Typeface) { fontPreview = resolver }
+
+    /** Callback when a font is chosen (the /system/fonts basename, or "" for system default). */
+    fun setOnTextFontSelected(callback: (String) -> Unit) { textFontCallback = callback }
+
+    /** Callback when a text size (virtual units) is chosen. */
+    fun setOnTextSizeSelected(callback: (Int) -> Unit) { textSizeCallback = callback }
+
+    /** Seed the active text font + size from persisted settings on launch. */
+    fun loadTextStyle(fontName: String, sizeV: Int) {
+        activeTextFont = fontName
+        activeTextSizeV = sizeV
+    }
+
+    /**
+     * Font + size chooser under the Text cell, mirroring the pen-settings popup: a scrollable list
+     * of device fonts (each previewed in its own face, active row marked ●) over a strip of size
+     * chips. Selecting either updates the popup in place; tap-outside dismisses.
+     */
+    private fun showTextSettingsPopup(anchor: View) {
+        openPopup?.dismiss()
+        val ctx = anchor.context
+        val density = ctx.resources.displayMetrics.density
+
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                setColor(Color.WHITE)
+                setStroke(1, Color.BLACK)
+            }
+        }
+        val popup = PopupWindow(
+            container,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true // focusable: tap-outside dismisses
+        )
+        popup.isOutsideTouchable = true
+        if (isEInk) popup.elevation = 0f
+
+        fun populate() {
+            container.removeAllViews()
+            val padH = (12 * density).toInt()
+            val padV = (8 * density).toInt()
+            val markerWidth = (18 * density).toInt()
+
+            // Font rows: "System default" (the "" name) followed by every installed font.
+            val list = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+            val entries = listOf("" to "System default") + fontNames.map { it to it }
+            entries.forEach { (name, label) ->
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(padH, padV, padH, padV)
+                    isClickable = true
+                    addView(TextView(ctx).apply {
+                        text = if (name == activeTextFont) "●" else ""
+                        textSize = 14f
+                        setTextColor(Color.BLACK)
+                        width = markerWidth
+                    })
+                    addView(TextView(ctx).apply {
+                        text = label
+                        textSize = 14f
+                        setTextColor(Color.BLACK)
+                        typeface = if (name.isEmpty()) Typeface.DEFAULT else fontPreview(name)
+                    })
+                    setOnClickListener {
+                        activeTextFont = name
+                        textFontCallback?.invoke(name)
+                        populate()
+                    }
+                }
+                list.addView(row)
+            }
+            // Cap the list height so a long /system/fonts list scrolls instead of overflowing.
+            val scroll = ScrollView(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, (200 * density).toInt()
+                )
+                addView(list)
+            }
+            container.addView(scroll)
+
+            container.addView(View(ctx).apply {
+                setBackgroundColor(Color.BLACK)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+            })
+            container.addView(buildTextSizeStrip(ctx, density, activeTextSizeV) { sizeV ->
+                activeTextSizeV = sizeV
+                textSizeCallback?.invoke(sizeV)
+                populate()
+            })
+        }
+        populate()
+
+        openPopup = popup
+        popup.showAsDropDown(anchor)
+    }
+
+    /**
+     * A horizontal strip of size chips (XS…XL). Each shows an "A" glyph at a representative size
+     * over its label; the chip matching [active] gets a 1dp border. Tapping a chip calls [onPick]
+     * with the size in virtual units.
+     */
+    private fun buildTextSizeStrip(
+        ctx: android.content.Context,
+        density: Float,
+        active: Int,
+        onPick: (Int) -> Unit
+    ): View {
+        val strip = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
+        }
+        val chipW = (40 * density).toInt()
+        TEXT_SIZES.forEach { (label, sizeV) ->
+            // Map the virtual size to a small on-chip preview point size (XL≈480 → ~20sp).
+            val previewSp = (sizeV / 480f * 20f + 8f)
+            val chip = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                isClickable = true
+                layoutParams = LinearLayout.LayoutParams(chipW, ViewGroup.LayoutParams.WRAP_CONTENT)
+                if (sizeV == active) {
+                    background = GradientDrawable().apply {
+                        setColor(Color.WHITE)
+                        setStroke(1, Color.BLACK)
+                    }
+                }
+                addView(TextView(ctx).apply {
+                    text = "A"
+                    textSize = previewSp
+                    setTextColor(Color.BLACK)
+                    gravity = Gravity.CENTER
+                })
+                addView(TextView(ctx).apply {
+                    text = label
+                    textSize = 10f
+                    setTextColor(Color.BLACK)
+                    gravity = Gravity.CENTER
+                })
+                setOnClickListener { onPick(sizeV) }
+            }
+            strip.addView(chip)
+        }
+        return strip
+    }
 
     /**
      * Show a variant dropdown anchored under [anchor]. Rows are labelled, the
@@ -440,4 +612,12 @@ class ToolBar(
      * Get the currently active tool.
      */
     fun getActiveTool(): Tool = logic.getActiveTool()
+
+    companion object {
+        private const val DEFAULT_TEXT_SIZE_V = 240
+        /** Text size presets: label → size in virtual units (short axis = 10,000). */
+        private val TEXT_SIZES = listOf(
+            "XS" to 160, "S" to 200, "M" to 240, "L" to 340, "XL" to 480
+        )
+    }
 }

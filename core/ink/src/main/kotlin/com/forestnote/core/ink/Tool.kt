@@ -15,4 +15,7 @@ sealed class Tool {
 
     /** Select strokes by drawing a freehand lasso polygon (no ink is written). */
     data object Lasso : Tool()
+
+    /** Place a text box by dragging out a rectangle, then type into it (no ink is written). */
+    data object Text : Tool()
 }
