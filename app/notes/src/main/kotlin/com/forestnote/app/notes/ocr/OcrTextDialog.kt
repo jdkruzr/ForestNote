@@ -31,11 +31,15 @@ class OcrTextDialog {
 
     /**
      * @param onRedrawNeeded routes to a panel-wide e-ink GC clear (drawView.gcRefresh in
-     *   MainActivity). Fires twice per session: once via `decorView.post` immediately after
-     *   the dialog's first frame is drawn (clears initial-pop-up ghost) and once on dismiss
-     *   (clears the residue the modal leaves over the editor). The per-spinner-change trigger
-     *   was removed — too flickery, and gcRefresh during a spinner reselect doesn't actually
-     *   clear the dialog window's own ghost anyway (different Android Window from drawView).
+     *   MainActivity). Fires ONLY on dismiss — DO NOT call it while the dialog is showing.
+     *
+     *   Why: gcRefresh's [com.forestnote.core.ink.InkBackend.pushBackgroundBitmap] pushes
+     *   the editor's static bitmap into the Viwoods WritingBufferQueue overlay, which the
+     *   e-ink panel composites ABOVE the regular View pipeline (that's how fast-ink draws
+     *   over the editor). Triggering it while the dialog is on screen results in the editor
+     *   bitmap landing on top of the dialog — the symptom user observed. Initial cleanliness
+     *   comes from the opaque dialog window (dim=0 + white background) covering the editor
+     *   in the View pipeline; no panel pulse needed for the show path.
      */
     fun show(
         context: Context,
@@ -54,17 +58,13 @@ class OcrTextDialog {
         ).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
-        // Pre-render the initial source's content BEFORE show() so the dialog's FIRST
+        // Pre-render the initial source's content BEFORE show() so the dialog's first
         // composited frame already has the recognized text — otherwise the spinner's
-        // auto-fire on attach posts onItemSelected to the next message loop, which lands
-        // AFTER show()'s first paint and triggers a second panel paint to fill in the
-        // text. That second paint runs in FAST mode without a GC pass and brings the
-        // editor pixels back as ghost (the exact symptom user observed: clean blank,
-        // then text-load with ghost behind).
+        // auto-fire on attach posts onItemSelected to the next message loop, lands AFTER
+        // show()'s first paint, and triggers a follow-up paint to fill in the text that
+        // re-introduces the editor pixels as ghost.
         renderServer(meta, content, recognizedFromServer)
-        // Skip the spinner's redundant initial auto-fire (same content we just rendered)
-        // so its post-attach paint doesn't introduce the ghost-load race again. User-
-        // driven selections trigger renderServer + a post-draw gcRefresh normally.
+        // Skip the spinner's redundant initial auto-fire (same content we just rendered).
         var skipInitial = true
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -76,9 +76,8 @@ class OcrTextDialog {
                     SOURCE_SERVER -> renderServer(meta, content, recognizedFromServer)
                     SOURCE_DEVICE -> renderDevicePlaceholder(meta, content)
                 }
-                // The setText above invalidates async; post the GC pulse so it fires
-                // after the new content has actually been painted, not before.
-                view?.post { onRedrawNeeded() }
+                // No onRedrawNeeded here — see the show-path note: pushing the editor
+                // bitmap to the writing overlay while the dialog is up lands ON TOP of it.
             }
             override fun onNothingSelected(parent: AdapterView<*>?) { /* no-op */ }
         }
@@ -102,12 +101,8 @@ class OcrTextDialog {
         built.window?.setBackgroundDrawableResource(android.R.color.white)
         dialog = built
         built.show()
-        // The spinner attach fires onItemSelected synchronously DURING show() — before the
-        // dialog has been laid out and composited — so any gcRefresh chained there happens
-        // before the dialog's pixels reach the panel. Post the redraw to the decorView's
-        // handler so it fires AFTER the first frame is drawn, when the panel actually has
-        // dialog content to GC-clear against.
-        built.window?.decorView?.post { onRedrawNeeded() }
+        // Deliberately no post-show gcRefresh — see the doc note. The opaque dialog window
+        // covers the editor cleanly in the View pipeline; the writing overlay is untouched.
     }
 
     /** Dismiss if showing. Safe to call multiple times. */
