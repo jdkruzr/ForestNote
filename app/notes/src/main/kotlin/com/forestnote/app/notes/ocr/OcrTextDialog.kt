@@ -54,12 +54,31 @@ class OcrTextDialog {
         ).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
+        // Pre-render the initial source's content BEFORE show() so the dialog's FIRST
+        // composited frame already has the recognized text — otherwise the spinner's
+        // auto-fire on attach posts onItemSelected to the next message loop, which lands
+        // AFTER show()'s first paint and triggers a second panel paint to fill in the
+        // text. That second paint runs in FAST mode without a GC pass and brings the
+        // editor pixels back as ghost (the exact symptom user observed: clean blank,
+        // then text-load with ghost behind).
+        renderServer(meta, content, recognizedFromServer)
+        // Skip the spinner's redundant initial auto-fire (same content we just rendered)
+        // so its post-attach paint doesn't introduce the ghost-load race again. User-
+        // driven selections trigger renderServer + a post-draw gcRefresh normally.
+        var skipInitial = true
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (skipInitial) {
+                    skipInitial = false
+                    return
+                }
                 when (position) {
                     SOURCE_SERVER -> renderServer(meta, content, recognizedFromServer)
                     SOURCE_DEVICE -> renderDevicePlaceholder(meta, content)
                 }
+                // The setText above invalidates async; post the GC pulse so it fires
+                // after the new content has actually been painted, not before.
+                view?.post { onRedrawNeeded() }
             }
             override fun onNothingSelected(parent: AdapterView<*>?) { /* no-op */ }
         }
