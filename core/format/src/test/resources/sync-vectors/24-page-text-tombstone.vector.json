@@ -1,0 +1,57 @@
+{
+  "name": "page-text-tombstone",
+  "description": "deleted_at is an ordinary LWW column on page_text_from_server: author text, then a newer op tombstones it (deleted_at set). The newest op wins, so the row converges to TOMBSTONED — the page-deleted / cleared-page path that stops the text matching on-device.",
+  "ops": [
+    {
+      "table": "page_text_from_server",
+      "pk": "00000000000000000000000PG1",
+      "site_id": "0000000000000000000000000A",
+      "op_seq": 1,
+      "wall_ts": 1000,
+      "cols": {
+        "created_at": 1000,
+        "deleted_at": null,
+        "model": "claude-3-5-sonnet",
+        "ocr_at": 1000,
+        "text": "hello world"
+      }
+    },
+    {
+      "table": "page_text_from_server",
+      "pk": "00000000000000000000000PG1",
+      "site_id": "0000000000000000000000000A",
+      "op_seq": 2,
+      "wall_ts": 2000,
+      "cols": {
+        "created_at": 2000,
+        "deleted_at": 2000,
+        "model": null,
+        "ocr_at": 0,
+        "text": ""
+      }
+    }
+  ],
+  "expected_state": {
+    "folder": [],
+    "notebook": [],
+    "page": [],
+    "page_text_from_client": [],
+    "page_text_from_server": [
+      {
+        "pk": "00000000000000000000000PG1",
+        "site_id": "0000000000000000000000000A",
+        "op_seq": 2,
+        "wall_ts": 2000,
+        "cols": {
+          "created_at": 2000,
+          "deleted_at": 2000,
+          "model": null,
+          "ocr_at": 0,
+          "text": ""
+        }
+      }
+    ],
+    "stroke": [],
+    "text_box": []
+  }
+}

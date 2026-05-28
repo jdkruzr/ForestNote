@@ -1,0 +1,57 @@
+{
+  "name": "page-text-reocr",
+  "description": "Re-OCR of the same page: a second non-delete op on the same pk with a greater (wall_ts, op_seq) overwrites the text. created_at carries the original first-recognition time forward; ocr_at advances. The newest op wins by LWW, so the row converges to the re-OCR'd text.",
+  "ops": [
+    {
+      "table": "page_text_from_server",
+      "pk": "00000000000000000000000PG1",
+      "site_id": "0000000000000000000000000A",
+      "op_seq": 1,
+      "wall_ts": 1000,
+      "cols": {
+        "created_at": 1000,
+        "deleted_at": null,
+        "model": "claude-3-5-sonnet",
+        "ocr_at": 1000,
+        "text": "helo wrld"
+      }
+    },
+    {
+      "table": "page_text_from_server",
+      "pk": "00000000000000000000000PG1",
+      "site_id": "0000000000000000000000000A",
+      "op_seq": 2,
+      "wall_ts": 5000,
+      "cols": {
+        "created_at": 1000,
+        "deleted_at": null,
+        "model": "claude-opus-4-7",
+        "ocr_at": 5000,
+        "text": "hello world"
+      }
+    }
+  ],
+  "expected_state": {
+    "folder": [],
+    "notebook": [],
+    "page": [],
+    "page_text_from_client": [],
+    "page_text_from_server": [
+      {
+        "pk": "00000000000000000000000PG1",
+        "site_id": "0000000000000000000000000A",
+        "op_seq": 2,
+        "wall_ts": 5000,
+        "cols": {
+          "created_at": 1000,
+          "deleted_at": null,
+          "model": "claude-opus-4-7",
+          "ocr_at": 5000,
+          "text": "hello world"
+        }
+      }
+    ],
+    "stroke": [],
+    "text_box": []
+  }
+}

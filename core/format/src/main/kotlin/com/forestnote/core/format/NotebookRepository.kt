@@ -94,9 +94,14 @@ class NotebookRepository private constructor(
         internal const val TEXT_BOX_SYNC_ENABLED = true
 
         /**
-         * The synced-schema generation. Bump whenever a new syncable table/column ships so an
-         * already-joined device re-backfills its existing rows of the new kind exactly once (see
-         * [rebackfillIfSchemaAdvanced]). 0 = pre-text_box; 1 = text_box added.
+         * The synced-schema generation. Bump whenever a new CLIENT-AUTHORED syncable table/column
+         * ships so an already-joined device re-backfills its existing rows of the new kind exactly
+         * once (see [rebackfillIfSchemaAdvanced]). 0 = pre-text_box; 1 = text_box added.
+         *
+         * NOT bumped for page_text_from_server / page_text_from_client (schema v3): the backfill
+         * re-emits CLIENT-authored outbox ops, and neither table is client-authored (server pushes
+         * page_text_from_server; page_text_from_client is reserved). There is no buildCols/all*Ids
+         * case for them, so a bump would re-emit nothing — leave at 1. Don't "complete the pattern."
          */
         internal const val SYNC_BACKFILL_VERSION = 1
 
@@ -974,6 +979,11 @@ class NotebookRepository private constructor(
                 it.color, it.weight, it.border_width, it.z, it.created_at, it.deleted_at
             )
         }
+        // NOTE: page_text_from_server / page_text_from_client are deliberately ABSENT. They are
+        // server-/future-authored; the client is a read-only consumer (apply path only). Returning
+        // null here makes enqueueOp a no-op, and there is no allPageText*Ids loop in
+        // backfillOutbox — so the device can never author one of these and clobber the server's
+        // text under LWW. The exclusion is structural: there is no enqueueOp("page_text_*") site.
         else -> null
     }
 
@@ -1079,6 +1089,15 @@ class NotebookRepository private constructor(
                 )
                 db.notebookQueries.notebookIdOfPage(it.pageId).executeAsOneOrNull()
                     ?.let { nb -> db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, nb) }
+            }
+            // Server-/future-authored recognized text. pk = the page's ULID. Deliberately does NOT
+            // bump the owning notebook's modified_at — OCR text is not a user edit, so it must not
+            // resurface the notebook in "recently edited".
+            "page_text_from_server" -> SyncWire.decodePageText(op.cols).let {
+                db.notebookQueries.applyUpsertPageTextFromServer(op.pk, it.text, it.ocrAt, it.model, it.createdAt, it.deletedAt)
+            }
+            "page_text_from_client" -> SyncWire.decodePageText(op.cols).let {
+                db.notebookQueries.applyUpsertPageTextFromClient(op.pk, it.text, it.ocrAt, it.model, it.createdAt, it.deletedAt)
             }
             else -> return false // unknown table: skip (a relayed op for a table we don't model)
         }

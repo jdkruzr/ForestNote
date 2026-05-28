@@ -159,4 +159,24 @@ class SyncWireDecodeTest {
         assertEquals(row, decoded)
         assertEquals(row.color, decoded.color, "unsigned-int64 wire color decodes back to the signed DB Long")
     }
+
+    @Test
+    fun `page text cols round-trip with model`() {
+        val row = SyncWire.PageTextRow(
+            text = "Recognized handwriting: meeting notes 2026\nline two ✓",
+            ocrAt = 1_700_000_000_000,
+            model = "ub-ocr-v2",
+            createdAt = 1_699_000_000_000,
+            deletedAt = null
+        )
+        val encoded = obj(SyncWire.pageTextCols(row.text, row.ocrAt, row.model, row.createdAt, row.deletedAt))
+        assertEquals(row, SyncWire.decodePageText(encoded))
+    }
+
+    @Test
+    fun `page text cols round-trip with null model, empty text, and tombstone`() {
+        val row = SyncWire.PageTextRow(text = "", ocrAt = 0, model = null, createdAt = 0, deletedAt = 5)
+        val encoded = obj(SyncWire.pageTextCols(row.text, row.ocrAt, row.model, row.createdAt, row.deletedAt))
+        assertEquals(row, SyncWire.decodePageText(encoded))
+    }
 }

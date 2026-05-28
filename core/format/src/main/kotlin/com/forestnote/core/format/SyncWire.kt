@@ -104,6 +104,19 @@ internal object SyncWire {
             put("z", z)
         }.toString()
 
+    // Per-page recognized text. Shared shape for `page_text_from_server` (server-authored, the
+    // OCR round-trip) and the reserved `page_text_from_client`; the client only ever DECODES these
+    // (it never authors them), so this encoder exists only for `decode(encode(row))` round-trip
+    // test symmetry. No `color`/`points` re-encoding here — all columns are plain int64/string.
+    fun pageTextCols(text: String, ocrAt: Long, model: String?, createdAt: Long, deletedAt: Long?): String =
+        buildJsonObject {
+            put("created_at", createdAt)
+            put("deleted_at", deletedAt)
+            put("model", model)
+            put("ocr_at", ocrAt)
+            put("text", text)
+        }.toString()
+
     // -- decode (inverse of the encoders above) ----------------------------------
     //
     // The apply path (Phase 4) turns a relayed op's wire `cols` back into the column values to
@@ -131,6 +144,8 @@ internal object SyncWire {
         val createdAt: Long,
         val deletedAt: Long?
     )
+    /** Per-page recognized text, in DB-storable form. Used for both page_text_from_* tables. */
+    data class PageTextRow(val text: String, val ocrAt: Long, val model: String?, val createdAt: Long, val deletedAt: Long?)
 
     fun decodeNotebook(cols: JsonObject) = NotebookRow(
         folderId = str(cols, "folder_id"),
@@ -184,6 +199,14 @@ internal object SyncWire {
         weight = num(cols, "weight")!!,
         borderWidth = num(cols, "border_width")!!,
         z = num(cols, "z")!!,
+        createdAt = num(cols, "created_at")!!,
+        deletedAt = num(cols, "deleted_at")
+    )
+
+    fun decodePageText(cols: JsonObject) = PageTextRow(
+        text = str(cols, "text")!!,
+        ocrAt = num(cols, "ocr_at")!!,
+        model = str(cols, "model"),
         createdAt = num(cols, "created_at")!!,
         deletedAt = num(cols, "deleted_at")
     )

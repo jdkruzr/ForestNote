@@ -87,6 +87,29 @@ CREATE TABLE text_box (
 );
 CREATE INDEX text_box_page_id ON text_box(page_id);
 
+-- Per-page recognized text (OCR round-trip). pk = the page's ULID (1:1 with a page).
+-- page_text_from_server is written ONLY by the UltraBridge server (it OCRs a synced page and
+-- pushes the text back); the client is a read-only consumer and NEVER authors it. text is a flat
+-- per-page string ("" is valid). NULL deleted_at = live. page_text_from_client is the RESERVED
+-- sibling for a future on-device-recognition feature (client-authored) — present now only so its
+-- columns are in the v3 schema hash; nothing authors it yet. (added v12)
+CREATE TABLE page_text_from_server (
+    id TEXT PRIMARY KEY NOT NULL,
+    text TEXT NOT NULL,
+    ocr_at INTEGER NOT NULL,
+    model TEXT,
+    created_at INTEGER NOT NULL,
+    deleted_at INTEGER
+);
+CREATE TABLE page_text_from_client (
+    id TEXT PRIMARY KEY NOT NULL,
+    text TEXT NOT NULL,
+    ocr_at INTEGER NOT NULL,
+    model TEXT,
+    created_at INTEGER NOT NULL,
+    deleted_at INTEGER
+);
+
 -- Singleton "where the user left off" (id is always 0).
 CREATE TABLE app_state (
     id INTEGER PRIMARY KEY NOT NULL CHECK (id = 0),
@@ -553,5 +576,28 @@ ON CONFLICT(id) DO UPDATE SET
     weight = excluded.weight,
     border_width = excluded.border_width,
     z = excluded.z,
+    created_at = excluded.created_at,
+    deleted_at = excluded.deleted_at;
+
+-- Apply a RELAYED page-text op. Both tables are server-/future-authored, so there is NO syncRow*
+-- / all*Ids capture query for them (the client never builds outbox ops for these — see
+-- NotebookRepository.buildCols). deleted_at may be a tombstone.
+applyUpsertPageTextFromServer:
+INSERT INTO page_text_from_server(id, text, ocr_at, model, created_at, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    text = excluded.text,
+    ocr_at = excluded.ocr_at,
+    model = excluded.model,
+    created_at = excluded.created_at,
+    deleted_at = excluded.deleted_at;
+
+applyUpsertPageTextFromClient:
+INSERT INTO page_text_from_client(id, text, ocr_at, model, created_at, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    text = excluded.text,
+    ocr_at = excluded.ocr_at,
+    model = excluded.model,
     created_at = excluded.created_at,
     deleted_at = excluded.deleted_at;

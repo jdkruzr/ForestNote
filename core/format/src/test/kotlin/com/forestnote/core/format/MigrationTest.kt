@@ -201,7 +201,7 @@ class MigrationTest {
         // openExisting → bootstrap queries the current tables (notebook incl. modified_at +
         // folder_id + soft-delete cols, app_state incl. settings_json) AND reads the notebook_live
         // view, so migrate all the way up to the current schema.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 11L)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 12L)
 
         // openExisting (no schema.create) must work against the migrated DB.
         val repo = NotebookRepository.openExisting(driver)
@@ -224,8 +224,8 @@ class MigrationTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV2Schema(driver)
 
-        // Migrate to the current version; runs v2->v3 plus every later step up to v9->v10.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 11L)
+        // Migrate to the current version; runs v2->v3 plus every later step up to v11->v12.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 12L)
 
         assertTrue(tableExists(driver, "notebook"), "notebook table exists after v2->v3")
         assertTrue(tableExists(driver, "app_state"), "app_state table exists after v2->v3")
@@ -568,8 +568,9 @@ class MigrationTest {
         // The views were created by the migration: the repository's live query returns the
         // pre-existing notebook (this would throw "no such table: notebook_live" if not).
         // The repo's generated queries target the current schema, so finish the upgrade before
-        // opening (v7->v8 sync tables + deleted_at; v8->v9 joined; v9->v10 text_box; no view change).
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 11L)
+        // opening (v7->v8 sync tables + deleted_at; v8->v9 joined; v9->v10 text_box; v10->v11
+        // backfill_version; v11->v12 page_text_* tables; no view change).
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 12L)
         val repo = NotebookRepository.openExisting(driver)
         assertTrue(repo.listNotebooks().any { it.id == "n1" }, "live query (via notebook_live view) returns the kept notebook")
 
@@ -717,6 +718,54 @@ class MigrationTest {
         )
         assertTrue(siteOk, "pre-existing sync_state row survives the migration")
         assertEquals(0L, backfill, "backfill_version defaults to 0 (behind the current generation)")
+
+        driver.close()
+    }
+
+    /**
+     * OCR round-trip: migrating v11 -> v12 adds the page_text_from_server and page_text_from_client
+     * tables non-destructively. Both are empty on upgrade (the server backfills its OCR text into
+     * the changelog, which relays down as ordinary ops). Pre-existing page/stroke rows are
+     * untouched, and the apply path can upsert a row.
+     */
+    @Test
+    fun v11ToV12AddsPageTextTables() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        createV7PageStroke(driver)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 11L)
+        assertFalse(tableExists(driver, "page_text_from_server"), "v11 has no page_text_from_server table")
+        assertFalse(tableExists(driver, "page_text_from_client"), "v11 has no page_text_from_client table")
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 11L, newVersion = 12L)
+
+        for (table in setOf("page_text_from_server", "page_text_from_client")) {
+            assertTrue(tableExists(driver, table), "$table exists after v11->v12")
+            assertTrue(
+                columnNames(driver, table).containsAll(setOf("id", "text", "ocr_at", "model", "created_at", "deleted_at")),
+                "$table has the full column set after v11->v12"
+            )
+        }
+
+        // Pre-existing page survives (non-destructive), and a page-text row upserts + reads back.
+        var pageRows = 0L
+        driver.executeQuery(
+            null, "SELECT count(*) FROM page WHERE id = 'p1'",
+            { c -> c.next(); pageRows = c.getLong(0) ?: 0L; QueryResult.Value(Unit) }, 0
+        )
+        assertEquals(1L, pageRows, "pre-existing page survives the v11->v12 migration")
+
+        driver.execute(
+            null,
+            "INSERT INTO page_text_from_server(id, text, ocr_at, model, created_at, deleted_at) " +
+                "VALUES ('p1', 'hello world', 100, 'ub-ocr', 90, NULL)",
+            0
+        )
+        var text: String? = null
+        driver.executeQuery(
+            null, "SELECT text FROM page_text_from_server WHERE id = 'p1'",
+            { c -> c.next(); text = c.getString(0); QueryResult.Value(Unit) }, 0
+        )
+        assertEquals("hello world", text, "page_text_from_server row round-trips after migration")
 
         driver.close()
     }

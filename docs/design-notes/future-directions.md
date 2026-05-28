@@ -55,6 +55,27 @@ Option landscape (detail + current research in [`research/sync-options.md`](../r
 
 Lean: **cr-sqlite or small delta-sync**, with **CouchDB as the proven fallback**.
 
+#### Sync hardening — re-pull cursor on a client schema bump (follow-up, 2026-05-28)
+**Problem (observed on the page_text OCR round-trip rollout):** the wire protocol is forward-compat
+by design — a client receiving a relayed op for a table it doesn't model drops it and **still
+advances its cursor** (`SyncMerge.normalize` + `writeWinningOp`'s `else -> return false`). That's
+correct in isolation, but it opens an **upgrade-window hole**: if the server starts authoring a new
+synced entity (e.g. server backfills `page_text_from_server`) and a device does *any* sync while
+still running the **pre-schema-bump build**, it consumes those ops, discards them, and moves the
+cursor past them. After the device updates to the new schema it starts at the advanced cursor and
+**never re-pulls the stranded ops**. (Seen live: 9 backfilled OCR-text ops at seq 3385–3393 were
+eaten by the old v2 APK's first sync; the v3 build couldn't see them. Fix that time was a server-side
+re-author with fresh seqs.)
+
+**Mitigation:** when a client first advertises a *new* `SCHEMA_HASH`, have it **reset its sync cursor
+to a safe low-water (e.g. 0) once**, forcing a full re-pull of the relay backlog. Re-pull is **safe
+and idempotent** — the merge is row-level LWW keyed on `(wall_ts, op_seq, site_id)`, so re-applying
+already-seen ops is a no-op and newly-modeled tables get materialized. Gate it like the existing
+`SYNC_BACKFILL_VERSION` re-backfill (a `sync_state` generation column, run-once), so it triggers
+exactly on the schema transition, not every launch. Cost: one larger pull after an upgrade. This
+removes the dependency on perfect server-first-then-client deploy ordering and on no v(N-1) sync
+landing in the upgrade window.
+
 ### 3. LLM API (OpenAI / Anthropic / self-host)
 Mostly easy: rasterize page → vision model → text/summary. Design:
 - Mirror the `InkBackend` pattern: an `AiProvider` interface, pluggable providers, configurable
