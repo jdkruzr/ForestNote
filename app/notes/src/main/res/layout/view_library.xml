@@ -65,13 +65,62 @@
 
         <LinearLayout
             android:id="@+id/breadcrumb_container"
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:layout_weight="1"
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:paddingStart="8dp"
-            android:paddingEnd="8dp" />
+            android:paddingEnd="4dp" />
+
+        <!-- Compact library-wide counts displayed inline beside the title segment of the
+             breadcrumb ("Library" at root, current folder name when descended). Two small
+             icon+number pairs (notebook · folder); set from NotebookStore.libraryTotals. -->
+        <LinearLayout
+            android:id="@+id/library_counts"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp">
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:src="@drawable/ic_notebook"
+                android:tint="@color/gray_dark"
+                android:importantForAccessibility="no" />
+            <TextView
+                android:id="@+id/text_notebook_count"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="4dp"
+                android:paddingEnd="10dp"
+                android:textColor="@color/gray_dark"
+                android:textSize="12sp"
+                android:maxLines="1" />
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:src="@drawable/ic_folder"
+                android:tint="@color/gray_dark"
+                android:importantForAccessibility="no" />
+            <TextView
+                android:id="@+id/text_folder_count"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="4dp"
+                android:textColor="@color/gray_dark"
+                android:textSize="12sp"
+                android:maxLines="1" />
+        </LinearLayout>
+
+        <!-- Spacer: absorbs the remaining horizontal space so the trailing icon clusters
+             (Settings/Sync/Search · Select/Recycle · Folder/Notebook) stay pinned to the
+             right edge while the title + counts stay flush left. -->
+        <View
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1" />
 
         <!-- Settings -->
         <LinearLayout
@@ -177,17 +226,6 @@
                 android:maxLines="1"
                 android:paddingBottom="2dp" />
         </LinearLayout>
-
-        <TextView
-            android:id="@+id/text_item_count"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:paddingEnd="8dp"
-            android:text=""
-            android:textColor="@color/gray_dark"
-            android:textSize="11sp"
-            android:maxLines="1"
-            android:ellipsize="end" />
 
         <!-- Select (multi-select; greyed until a later phase) -->
         <LinearLayout

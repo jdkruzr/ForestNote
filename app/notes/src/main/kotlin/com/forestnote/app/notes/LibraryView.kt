@@ -179,11 +179,11 @@ class LibraryView {
             }
         }
 
-        // Header summary is a library-wide total (not the current folder's count).
+        // Header summary is a library-wide total (not the current folder's count), shown
+        // inline beside the title as compact [book icon] N · [folder icon] N counters.
         store.libraryTotals { notebookCount, folderCount ->
-            val nb = if (notebookCount == 1) "1 notebook" else "$notebookCount notebooks"
-            val fl = if (folderCount == 1) "1 folder" else "$folderCount folders"
-            view.findViewById<TextView>(R.id.text_item_count).text = "$nb across $fl total"
+            view.findViewById<TextView>(R.id.text_notebook_count).text = notebookCount.toString()
+            view.findViewById<TextView>(R.id.text_folder_count).text = folderCount.toString()
         }
 
         // Recycle Bin count badge: caption shows "Recycle (N)" when non-empty (AC4.6).
