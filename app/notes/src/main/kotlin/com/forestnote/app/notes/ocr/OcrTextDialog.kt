@@ -30,10 +30,12 @@ class OcrTextDialog {
     private var dialog: AlertDialog? = null
 
     /**
-     * @param onRedrawNeeded fires whenever the dialog's own contents change in a way that
-     *   would otherwise leave e-ink ghost trails: spinner source switch, and dialog dismiss.
-     *   MainActivity routes this to `drawView.gcRefresh()` (a panel-wide GC clear) so the
-     *   modal stays legible and dismissal doesn't leave a residue over the editor canvas.
+     * @param onRedrawNeeded routes to a panel-wide e-ink GC clear (drawView.gcRefresh in
+     *   MainActivity). Fires twice per session: once via `decorView.post` immediately after
+     *   the dialog's first frame is drawn (clears initial-pop-up ghost) and once on dismiss
+     *   (clears the residue the modal leaves over the editor). The per-spinner-change trigger
+     *   was removed — too flickery, and gcRefresh during a spinner reselect doesn't actually
+     *   clear the dialog window's own ghost anyway (different Android Window from drawView).
      */
     fun show(
         context: Context,
@@ -52,31 +54,41 @@ class OcrTextDialog {
         ).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
-        // The spinner attach fires onItemSelected once with the initial position, which gives
-        // us a "first render" hook too — no need for a separate dialog-shown gcRefresh.
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 when (position) {
                     SOURCE_SERVER -> renderServer(meta, content, recognizedFromServer)
                     SOURCE_DEVICE -> renderDevicePlaceholder(meta, content)
                 }
-                onRedrawNeeded()
             }
             override fun onNothingSelected(parent: AdapterView<*>?) { /* no-op */ }
         }
 
-        dialog = AlertDialog.Builder(context)
+        val built = AlertDialog.Builder(context)
             .setTitle("Recognized text")
             .setView(view)
             .setPositiveButton("Close") { d, _ -> d.dismiss() }
             .setOnDismissListener {
                 dialog = null
-                // Dismiss leaves the modal's ghost on the e-ink panel until something forces
-                // a redraw underneath — fire a panel GC clear so the editor canvas is clean.
+                // Dismiss leaves the modal's ghost over the editor — fire a GC clear so the
+                // editor canvas is clean.
                 onRedrawNeeded()
             }
             .create()
-        dialog?.show()
+        // On e-ink, the dialog's translucent dim layer + rounded-card window background are
+        // both ghosting sources (they leave partial-alpha pixels the panel can't render
+        // cleanly in FAST mode). Force the window to a flat opaque white card with no dim
+        // behind it — gives the panel one solid rectangle to GC-clear, no translucent edges.
+        built.window?.setDimAmount(0f)
+        built.window?.setBackgroundDrawableResource(android.R.color.white)
+        dialog = built
+        built.show()
+        // The spinner attach fires onItemSelected synchronously DURING show() — before the
+        // dialog has been laid out and composited — so any gcRefresh chained there happens
+        // before the dialog's pixels reach the panel. Post the redraw to the decorView's
+        // handler so it fires AFTER the first frame is drawn, when the panel actually has
+        // dialog content to GC-clear against.
+        built.window?.decorView?.post { onRedrawNeeded() }
     }
 
     /** Dismiss if showing. Safe to call multiple times. */
