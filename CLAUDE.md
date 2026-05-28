@@ -1,6 +1,6 @@
 # ForestNote
 
-Last verified: 2026-05-26
+Last verified: 2026-05-27
 
 E-ink note-taking app for the Viwoods AiPaper Mini tablet. Uses reverse-engineered fast ink APIs for low-latency stylus rendering with a fallback path for generic Android devices.
 
@@ -25,6 +25,7 @@ E-ink note-taking app for the Viwoods AiPaper Mini tablet. Uses reverse-engineer
 - `core/format/` - Storage domain (SQLDelight database, serialization)
 - `build-logic/` - Gradle convention plugins (shared Android config)
 - `docs/` - Design plans and implementation phases
+- `android-icon/` - Tracked archive of launcher icon sources (`*.svg`) and generated raster output (`res/`, `res-inverted/`, `play-store-512*.png`). The live app icon at `app/notes/src/main/res/` is the adaptive XML icon + vector drawables only; no raster `mipmap-*dpi/` directories are checked in (dead at minSdk 30). When regenerating icons, write into `android-icon/` and copy only what the adaptive icon references into the live `res/`.
 
 ## Conventions
 - Virtual coordinate space everywhere above PageTransform; screen pixels below it
@@ -34,6 +35,7 @@ E-ink note-taking app for the Viwoods AiPaper Mini tablet. Uses reverse-engineer
 - Notebook/page/stroke identity is a client-minted ULID (String), assigned at construction — no "unsaved" id state
 - All DB access is off the main thread, serialized through `NotebookStore` (single background thread); UI never touches `NotebookRepository` directly
 - Scope: multiple notebooks (optionally nested in folders), each with multiple pages. One SQLite library file holds `folder → notebook → page → stroke`; the active notebook+page are restored on launch from an `app_state` row (when there is none to resume, the app opens into the Library)
+- Test mocking: `:core:ink` pins Mockito to the **subclass** mock maker via `core/ink/src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker` (the default inline maker breaks on JDK 25-ea against `android.jar` stubs). Consequence: tests in this module **cannot mock final classes, private methods, or static methods** — mark target Kotlin classes `open`, or refactor to inject an interface instead of reaching for PowerMock-style escapes.
 
 ## Boundaries
 - Safe to edit: `app/`, `core/`
