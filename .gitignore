@@ -20,8 +20,8 @@ viwoods_re/
 # Crash/debug output from device
 einkpoc_*.txt
 
-# Screenshots and pulled APKs
-*.png
+# Screenshots and pulled APKs (dropped in repo root)
+/*.png
 einkpoc.apk
 
 # Build and test logs
