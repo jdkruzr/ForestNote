@@ -521,7 +521,9 @@ class MainActivity : Activity() {
     private fun showOcrDialog() {
         if (ocrTextDialog.isShowing) return
         val pageId = activePageId.takeIf { it.isNotEmpty() } ?: return
-        store.loadPageTextFromServer(pageId) { r -> ocrTextDialog.show(this, r) }
+        store.loadPageTextFromServer(pageId) { r ->
+            ocrTextDialog.show(this, r, onRedrawNeeded = { drawView.gcRefresh() })
+        }
     }
 
     /**

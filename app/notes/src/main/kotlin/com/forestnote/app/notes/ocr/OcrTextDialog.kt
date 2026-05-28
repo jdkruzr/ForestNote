@@ -29,7 +29,17 @@ class OcrTextDialog {
 
     private var dialog: AlertDialog? = null
 
-    fun show(context: Context, recognizedFromServer: RecognizedText?) {
+    /**
+     * @param onRedrawNeeded fires whenever the dialog's own contents change in a way that
+     *   would otherwise leave e-ink ghost trails: spinner source switch, and dialog dismiss.
+     *   MainActivity routes this to `drawView.gcRefresh()` (a panel-wide GC clear) so the
+     *   modal stays legible and dismissal doesn't leave a residue over the editor canvas.
+     */
+    fun show(
+        context: Context,
+        recognizedFromServer: RecognizedText?,
+        onRedrawNeeded: () -> Unit = {}
+    ) {
         if (dialog != null) return
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_ocr_text, null)
         val spinner = view.findViewById<Spinner>(R.id.ocr_source_picker)
@@ -42,12 +52,15 @@ class OcrTextDialog {
         ).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
+        // The spinner attach fires onItemSelected once with the initial position, which gives
+        // us a "first render" hook too — no need for a separate dialog-shown gcRefresh.
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 when (position) {
                     SOURCE_SERVER -> renderServer(meta, content, recognizedFromServer)
                     SOURCE_DEVICE -> renderDevicePlaceholder(meta, content)
                 }
+                onRedrawNeeded()
             }
             override fun onNothingSelected(parent: AdapterView<*>?) { /* no-op */ }
         }
@@ -56,7 +69,12 @@ class OcrTextDialog {
             .setTitle("Recognized text")
             .setView(view)
             .setPositiveButton("Close") { d, _ -> d.dismiss() }
-            .setOnDismissListener { dialog = null }
+            .setOnDismissListener {
+                dialog = null
+                // Dismiss leaves the modal's ghost on the e-ink panel until something forces
+                // a redraw underneath — fire a panel GC clear so the editor canvas is clean.
+                onRedrawNeeded()
+            }
             .create()
         dialog?.show()
     }
@@ -76,7 +94,11 @@ class OcrTextDialog {
             content.text = ""
             return
         }
-        val date = SimpleDateFormat("MMM d, yyyy h:mm a", Locale.getDefault()).format(Date(r.ocrAt))
+        // UltraBridge emits ocr_at as Unix seconds-since-epoch, NOT milliseconds (its other
+        // timestamps follow Unix convention; the client's row timestamps use ms, but ocr_at
+        // is server-authored). Multiply for Date(ms) — otherwise we get dates in early 1970.
+        val date = SimpleDateFormat("MMM d, yyyy h:mm a", Locale.getDefault())
+            .format(Date(r.ocrAt * 1000L))
         meta.text = if (!r.model.isNullOrBlank()) "${r.model}  ·  $date" else "Recognized $date"
         content.text = r.text
     }
