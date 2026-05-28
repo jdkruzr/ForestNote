@@ -35,6 +35,10 @@ dependencies {
     // build relay-op cols, so it must be on the app's compile classpath too.
     implementation(libs.findLibrary("kotlinx-serialization-json").get())
 
+    // On-device handwriting recognition (Google ML Kit Digital Ink).
+    // Stroke-native; downloads a per-language model on first use via GMS.
+    implementation(libs.findLibrary("mlkit-digital-ink").get())
+
     // Real SQLite driver for NotebookStore tests (JVM, in-memory + file-backed)
     testImplementation(libs.findLibrary("sqldelight-sqlite-driver").get())
     testImplementation(libs.findLibrary("kotlinx-coroutines-test").get())

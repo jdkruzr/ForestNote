@@ -1,6 +1,6 @@
 # ForestNote
 
-Last verified: 2026-05-27
+Last verified: 2026-05-28
 
 E-ink note-taking app for the Viwoods AiPaper Mini tablet. Uses reverse-engineered fast ink APIs for low-latency stylus rendering with a fallback path for generic Android devices.
 
@@ -11,6 +11,7 @@ E-ink note-taking app for the Viwoods AiPaper Mini tablet. Uses reverse-engineer
 - Storage: SQLDelight 2.0.2 (SQLite)
 - Geometry: Jetpack Ink API 1.0.0 (brush/geometry/strokes)
 - UI: Android Views (no Compose), Material 3
+- Handwriting recognition: Google ML Kit Digital Ink 18.1.0 (stroke-native; bundled-only artifact requires GMS + one-time per-language ~20 MB model download via `RemoteModelManager` — host tablet has GMS + Google account)
 
 ## Commands
 - `./gradlew :app:notes:assembleDebug` - Build debug APK

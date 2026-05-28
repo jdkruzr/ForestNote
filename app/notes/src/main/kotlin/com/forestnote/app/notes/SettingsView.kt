@@ -1,16 +1,26 @@
 package com.forestnote.app.notes
 
+import android.app.AlertDialog
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
+import android.widget.TextView
+import com.forestnote.app.notes.recognize.RecognitionModelManager
 import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.format.Settings
 import com.forestnote.core.format.StartView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * Full-screen Settings overlay (library-and-tools B2). A peer view to the editor:
@@ -26,6 +36,10 @@ class SettingsView {
 
     private var root: View? = null
     private var host: ViewGroup? = null
+    // Scoped to the overlay's lifetime so model downloads/deletes can outlive a single
+    // bind() call but get cancelled when the overlay is dismissed.
+    private var scope: CoroutineScope? = null
+    private var modelManager: RecognitionModelManager? = null
 
     /** Whether the overlay is currently attached. */
     val isShowing: Boolean get() = root != null
@@ -33,10 +47,14 @@ class SettingsView {
     /**
      * Attach the overlay to [host], wire all fields to [store], and load values.
      * [onClose] is invoked by the Back button (the caller hides + restores chrome).
+     * [modelManager] is the host Activity's [RecognitionModelManager] (passed in so
+     * Settings shares one instance with the editor's MLKit recognizer).
      */
-    fun show(host: ViewGroup, store: NotebookStore, onClose: () -> Unit) {
+    fun show(host: ViewGroup, store: NotebookStore, modelManager: RecognitionModelManager, onClose: () -> Unit) {
         if (isShowing) return
         this.host = host
+        this.modelManager = modelManager
+        this.scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val view = LayoutInflater.from(host.context).inflate(R.layout.view_settings, host, false)
         host.addView(view)
         root = view
@@ -48,6 +66,9 @@ class SettingsView {
 
     /** Detach the overlay. */
     fun hide() {
+        scope?.cancel()
+        scope = null
+        modelManager = null
         root?.let { host?.removeView(it) }
         root = null
         host = null
@@ -156,6 +177,132 @@ class SettingsView {
         // Retention is a non-negative integer; blank/invalid commits as 0 (= never).
         wireUrl(binRetentionInput) { s, v -> s.copy(recycleBinRetentionDays = v.toIntOrNull()?.coerceAtLeast(0) ?: 0) }
             .also { it.guard = { loading } }
+
+        wireRecognitionModels(view)
+    }
+
+    /**
+     * Populate the "Installed languages" container with a row per downloaded MLKit
+     * Digital Ink model, plus wire the Download button to a language picker. Both
+     * paths are defensive — failures become a defensive AlertDialog.
+     */
+    private fun wireRecognitionModels(view: View) {
+        val container = view.findViewById<LinearLayout>(R.id.container_recognition_models)
+        val btnDownload = view.findViewById<Button>(R.id.btn_download_recognition_model)
+        val ctx = view.context
+
+        fun refresh() {
+            val mm = modelManager ?: return
+            val s = scope ?: return
+            // Same rationale as the Download spinner: synchronously place a "Loading…"
+            // line so the section isn't blank during the per-language check pass.
+            container.removeAllViews()
+            container.addView(TextView(ctx).apply { text = "Loading…" })
+            s.launch {
+                val installed = mm.installedLanguages()
+                container.removeAllViews()
+                if (installed.isEmpty()) {
+                    val empty = TextView(ctx).apply {
+                        text = "No recognition models installed."
+                        setPadding(0, 0, 0, 0)
+                    }
+                    container.addView(empty)
+                    return@launch
+                }
+                for (lang in installed) {
+                    val row = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.CENTER_VERTICAL
+                    }
+                    val label = TextView(ctx).apply {
+                        text = RecognitionModelManager.displayName(lang)
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    }
+                    val del = Button(ctx).apply {
+                        text = "Delete"
+                        setOnClickListener {
+                            AlertDialog.Builder(ctx)
+                                .setTitle("Delete model")
+                                .setMessage("Remove the ${RecognitionModelManager.displayName(lang)} recognition model from this device?")
+                                .setPositiveButton("Delete") { _, _ ->
+                                    s.launch {
+                                        val r = mm.delete(lang)
+                                        if (r.isFailure) {
+                                            showError(ctx, "Could not delete model.", r.exceptionOrNull())
+                                        }
+                                        refresh()
+                                    }
+                                }
+                                .setNegativeButton("Cancel", null)
+                                .show()
+                        }
+                    }
+                    row.addView(label)
+                    row.addView(del)
+                    container.addView(row)
+                }
+            }
+        }
+
+        btnDownload.setOnClickListener {
+            val mm = modelManager ?: return@setOnClickListener
+            val s = scope ?: return@setOnClickListener
+            // Show an immediate "checking" spinner — the per-language isDownloaded
+            // pass can take a beat on a cold MLKit init, and without feedback the
+            // tap feels lost. Dismissed as soon as the picker is ready to render.
+            val checking = AlertDialog.Builder(ctx)
+                .setTitle("Checking installed models…")
+                .setCancelable(false)
+                .create()
+            checking.show()
+            // Filter to languages not already installed; if all are installed, the picker
+            // is empty — surface a small confirmation instead of an empty list.
+            s.launch {
+                val installed = mm.installedLanguages().toSet()
+                try { checking.dismiss() } catch (_: Throwable) {}
+                val available = RecognitionModelManager.SUPPORTED_LANGS.filterNot { it in installed }
+                if (available.isEmpty()) {
+                    AlertDialog.Builder(ctx)
+                        .setTitle("All models installed")
+                        .setMessage("Every supported language is already downloaded.")
+                        .setPositiveButton("OK", null)
+                        .show()
+                    return@launch
+                }
+                val labels = available.map { RecognitionModelManager.displayName(it) }.toTypedArray()
+                AlertDialog.Builder(ctx)
+                    .setTitle("Download model")
+                    .setItems(labels) { _, which ->
+                        val lang = available[which]
+                        val progress = AlertDialog.Builder(ctx)
+                            .setTitle("Downloading…")
+                            .setMessage(RecognitionModelManager.displayName(lang) + " recognition model")
+                            .setCancelable(false)
+                            .create()
+                        progress.show()
+                        s.launch {
+                            val r = mm.download(lang)
+                            try { progress.dismiss() } catch (_: Throwable) {}
+                            if (r.isFailure) {
+                                showError(ctx, "Download failed.", r.exceptionOrNull())
+                            }
+                            refresh()
+                        }
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+        }
+
+        refresh()
+    }
+
+    private fun showError(ctx: android.content.Context, title: String, e: Throwable?) {
+        AlertDialog.Builder(ctx)
+            .setTitle(title)
+            .setMessage(e?.message ?: "Unknown error.")
+            .setPositiveButton("OK", null)
+            .show()
     }
 
     private var store: NotebookStore? = null

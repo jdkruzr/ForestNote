@@ -14,6 +14,7 @@ kotlin-test = "2.0.21"
 androidx-test-ext-junit = "1.2.1"
 androidx-test-espresso = "3.6.1"
 mockito = "5.2.1"
+mlkit-digital-ink = "18.1.0"
 
 [libraries]
 # Gradle plugins (for build-logic dependencies)
@@ -41,6 +42,10 @@ sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", versi
 
 # Kotlinx Serialization (Settings JSON blob in :core:format)
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+
+# Google ML Kit Digital Ink Recognition (on-device handwriting recognition).
+# Stroke-native, downloads a per-language model on first use (~20 MB) via GMS.
+mlkit-digital-ink = { module = "com.google.mlkit:digital-ink-recognition", version.ref = "mlkit-digital-ink" }
 
 # Kotlinx Coroutines (sync engine network/orchestration in :core:sync)
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }

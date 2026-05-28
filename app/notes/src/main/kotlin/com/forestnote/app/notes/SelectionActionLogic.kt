@@ -1,28 +1,32 @@
 package com.forestnote.app.notes
 
 /**
- * Pure text rules for the lasso selection's Recognize / To-do action dialogs
- * (F1/F2). Both are placeholder UIs — no network call yet. The message varies by
- * whether the relevant endpoint URL is configured, and when it is, it names the
- * URL and the selected-stroke count so the user can see what *would* be sent.
+ * Pure text rules for the lasso selection's Recognize / To-do action dialogs (F1/F2).
+ *
+ * Recognize is now the *remote-override placeholder* — callers route here only when
+ * the user has set `Settings.selectionRecognitionUrl` (handled by [RecognizeFlowLogic]).
+ * When the field is empty, on-device MLKit recognition runs instead and this function
+ * is not invoked. The copy tells the user how to switch back to on-device.
+ *
+ * To-do (F2) keeps the old endpoint-URL placeholder pattern; CalDAV task creation is
+ * a separate future phase.
  */
 object SelectionActionLogic {
 
     /** Title + body for the [SelectionMenuView] action's confirmation dialog. */
     data class Dialog(val title: String, val message: String)
 
-    /** Recognize (F1): handwriting OCR against `settings.selectionRecognitionUrl`. */
+    /**
+     * Recognize (F1): placeholder copy shown when the user has a remote-override URL
+     * configured. Precondition: [url] is non-empty after trimming — the on-device
+     * path is owned by [RecognizeFlowLogic.decide].
+     */
     fun recognize(count: Int, url: String): Dialog {
         val trimmed = url.trim()
         return Dialog(
             "Recognize",
-            if (trimmed.isEmpty()) {
-                "No selection-recognition endpoint is configured. " +
-                    "Add one in Settings → AI endpoints."
-            } else {
-                "Sending ${strokes(count)} to $trimmed for OCR. Recognized text " +
-                    "would replace the selection or appear in a side panel."
-            }
+            "Remote endpoint configured — sending ${strokes(count)} to $trimmed. " +
+                "Clear this field in Settings to use on-device recognition instead."
         )
     }
 

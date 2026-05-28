@@ -153,7 +153,7 @@
             <!-- ===== AI endpoints ===== -->
             <TextView style="@style/SettingsSection" android:text="AI endpoints" />
 
-            <TextView style="@style/SettingsLabel" android:text="Selection recognition URL" />
+            <TextView style="@style/SettingsLabel" android:text="Selection recognition URL (leave blank for on-device)" />
             <EditText
                 android:id="@+id/input_selection_url"
                 style="@style/SettingsInput"
@@ -176,6 +176,28 @@
                 android:hint="https://…"
                 android:inputType="textUri"
                 android:imeOptions="actionDone" />
+
+            <!-- ===== Recognition models ===== -->
+            <!-- On-device handwriting recognition (MLKit Digital Ink). The container is
+                 populated programmatically by SettingsView with a row per installed
+                 language plus a Delete affordance. The Download button opens an
+                 AlertDialog with a language picker. -->
+            <TextView style="@style/SettingsSection" android:text="Recognition models" />
+
+            <TextView style="@style/SettingsLabel" android:text="Installed languages" />
+            <LinearLayout
+                android:id="@+id/container_recognition_models"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <Button
+                android:id="@+id/btn_download_recognition_model"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Download model…"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="16dp" />
 
             <!-- ===== Calendar ===== -->
             <TextView style="@style/SettingsSection" android:text="Calendar" />

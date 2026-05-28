@@ -135,6 +135,9 @@ class DrawView @JvmOverloads constructor(
     // Selection + live-transform state for move/resize. The transforming box is drawn as an onDraw
     // overlay at its live rect (and skipped in the static bitmap) until committed on pen-up.
     private var selectedBoxId: String? = null
+
+    /** Read-only snapshot of the active text-box selection id (for diagnostic logging). */
+    val selectedBoxIdSnapshot: String? get() = selectedBoxId
     private var transformingBoxId: String? = null
     private var transformBox: TextBox? = null
     private enum class BoxGesture { NONE, CREATE, MOVE, RESIZE }
@@ -918,14 +921,27 @@ class DrawView @JvmOverloads constructor(
         onTextEditRequested?.invoke(box, boxScreenRect(box))
     }
 
-    /** Apply the Options dialog choices (visible border + z-band) to the selected box. */
-    fun applySelectedBoxOptions(hasBorder: Boolean, zBand: ZBand) {
+    /**
+     * Apply the Options dialog choices to the selected box: visible border, z-band,
+     * font, and text size. Defaults for [fontName] / [fontSizeV] are the current values
+     * so existing callers that only change border + z-band continue to work unchanged.
+     * Height is left alone — the user can resize via handles if a larger size overflows
+     * the box (and the text-retention rule keeps the data intact regardless).
+     */
+    fun applySelectedBoxOptions(
+        hasBorder: Boolean,
+        zBand: ZBand,
+        fontName: String? = null,
+        fontSizeV: Int? = null
+    ) {
         val box = selectedBox() ?: return
         val idx = textBoxes.indexOfFirst { it.id == box.id }
         if (idx < 0) return
         val updated = box.copy(
             borderWidth = if (hasBorder) TextBox.DEFAULT_BORDER_WIDTH else 0,
-            zBand = zBand
+            zBand = zBand,
+            fontName = fontName ?: box.fontName,
+            fontSize = fontSizeV ?: box.fontSize
         )
         textBoxes[idx] = updated
         store?.saveTextBox(updated)
@@ -940,6 +956,52 @@ class DrawView @JvmOverloads constructor(
         selectedBoxId = null
         onBoxSelectionCleared?.invoke()
         redrawBitmap()
+    }
+
+    /**
+     * Drop a text box with [text] already populated at the [screenBounds] region (the lasso
+     * selection's bounding rect, in DrawView-local screen coords). Used by the lasso-recognize
+     * flow. The original strokes stay on the page; the new box becomes the active selection so
+     * the Edit/Options/Delete pill appears immediately — the user can resize, move, or open
+     * Options (font/size/border/z-band) without an extra discovery step. The lasso selection
+     * is cleared in the same call so its menu pill doesn't linger behind the text-box pill.
+     *
+     * Returns the new [TextBox], or null if [text] is blank (nothing useful to place).
+     */
+    fun insertRecognizedTextBox(screenBounds: RectF, text: String): TextBox? {
+        if (text.isBlank()) return null
+        val vx0 = transform.toVirtualX(screenBounds.left).coerceAtLeast(0)
+        val vy0 = transform.toVirtualY(screenBounds.top).coerceAtLeast(0)
+        val vx1 = transform.toVirtualX(screenBounds.right)
+        val vy1 = transform.toVirtualY(screenBounds.bottom)
+        // Width: at least the configured default so the recognized text has room to wrap.
+        val w = max(vx1 - vx0, DEFAULT_TEXT_WIDTH_V)
+        // Height: at least two lines tall, like createAndEditTextBox does; auto-grows downward
+        // visually as the text wraps (the rendered text is fully retained even if clipped).
+        val minH = activeTextFontSize * 2
+        val h = max(vy1 - vy0, minH)
+        val x = clampOffset(vx0, 0, PageTransform.VIRTUAL_SHORT_AXIS - w)
+        val y = clampOffset(vy0, 0, transform.virtualLongAxis - h)
+
+        val box = TextBox(
+            x = x, y = y, width = w, height = h,
+            text = text,
+            fontName = activeTextFontName,
+            fontSize = activeTextFontSize,
+            color = activeTextColor
+        )
+        textBoxes.add(box)
+        store?.saveTextBox(box)
+
+        // Hand the active selection over to the new box: clear the lasso (which also
+        // dismisses the lasso action pill via onSelectionChanged), mark the box selected,
+        // redraw so the corner handles paint, then fire onBoxSelected to surface the
+        // Edit/Options/Delete pill where Font/Size live.
+        clearLassoState()
+        selectedBoxId = box.id
+        redrawBitmap()
+        onBoxSelected?.invoke(box, boxScreenRect(box))
+        return box
     }
 
     /**

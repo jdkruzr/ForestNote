@@ -25,6 +25,9 @@ import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.ViwoodsBackend
 import com.forestnote.core.ink.ZBand
 import com.forestnote.core.sync.SyncStatus
+import com.forestnote.app.notes.recognize.MlKitRecognizer
+import com.forestnote.app.notes.recognize.RecognitionModelManager
+import com.forestnote.app.notes.recognize.RecognizedText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -87,6 +90,16 @@ class MainActivity : Activity() {
     // Shared with DrawView (same instance); DrawView updates its extents on layout, so
     // virtualLongAxis is current by the time paste() reads it for the in-bounds offset.
     private val pageTransform = PageTransform()
+
+    // On-device handwriting recognition (MLKit Digital Ink). Held for the activity's life;
+    // released in onDestroy. Both wrappers are defensive — never throw, never crash.
+    val recognizer = MlKitRecognizer()
+    val modelManager = RecognitionModelManager()
+
+    // Captured when the async FontCatalog loader finishes (see onCreate's loader Thread).
+    // The per-text-box Options dialog reads the name list from here so its font picker
+    // matches the ToolBar's Text chooser.
+    private var fontCatalog: FontCatalog? = null
 
     // Cache of the current notebook's pages + active id, refreshed off the store.
     private var pageIds: List<String> = emptyList()
@@ -214,14 +227,18 @@ class MainActivity : Activity() {
 
         // Text-box selection menu (Edit / Options / Delete), shown when a box is tapped.
         textBoxMenu = TextBoxMenuView(isEInk)
-        drawView.onBoxSelected = { _, rect ->
+        drawView.onBoxSelected = { box, rect ->
+            fileLogger.log("Box", "onBoxSelected id=${box.id} rect=($rect)")
             textBoxMenu.show(drawView, rect, TextBoxMenuView.Callbacks(
                 onEdit = { drawView.editSelectedBox() },
                 onOptions = { drawView.selectedBox()?.let { showTextBoxOptions(it) } },
                 onDelete = { drawView.deleteSelectedBox() }
             ))
         }
-        drawView.onBoxSelectionCleared = { textBoxMenu.dismiss() }
+        drawView.onBoxSelectionCleared = {
+            fileLogger.log("Box", "onBoxSelectionCleared")
+            textBoxMenu.dismiss()
+        }
 
         // Create and wire ToolBar
         toolBar = ToolBar(toolBarRoot, isEInk) { tool ->
@@ -256,6 +273,7 @@ class MainActivity : Activity() {
         Thread {
             val catalog = FontCatalog.load()
             runOnUiThread {
+                fontCatalog = catalog
                 drawView.fontResolver = catalog::resolve
                 toolBar.setFontNames(catalog.names)
                 toolBar.setFontPreview { name -> catalog.resolve(name, com.forestnote.core.ink.TextBox.WEIGHT_NORMAL) }
@@ -268,6 +286,7 @@ class MainActivity : Activity() {
         // it when the selection clears (tool switch / new lasso / cut / delete).
         selectionMenu = SelectionMenuView(isEInk)
         drawView.onSelectionChanged = { strokes, bounds ->
+            fileLogger.log("Sel", "onSelectionChanged strokes=${strokes.size} bounds=${bounds != null}")
             if (strokes.isEmpty() || bounds == null) {
                 selectionMenu.dismiss()
             } else {
@@ -277,7 +296,7 @@ class MainActivity : Activity() {
                         onCut = { drawView.cutSelection(clipboard) },
                         onCopy = { drawView.copySelection(clipboard) },
                         onRecognize = {
-                            showSelectionAction { SelectionActionLogic.recognize(strokes.size, it.selectionRecognitionUrl) }
+                            showRecognizeFlow(strokes.toList(), bounds)
                         },
                         onTodo = {
                             showSelectionAction { SelectionActionLogic.todo(strokes.size, it.caldavServerUrl) }
@@ -328,19 +347,74 @@ class MainActivity : Activity() {
     }
 
     /**
-     * The selected text box's Options dialog: a visible-border toggle and the z-band (bottom =
-     * below ink, top = above everything). Saving applies the choices via DrawView.
+     * The selected text box's Options dialog: font, text size, visible-border toggle, and
+     * z-band (bottom = below ink, top = above everything). Pre-filled with the box's
+     * current values (not the active toolbar defaults — per-box semantic). Saving
+     * applies all four choices via DrawView in one redraw.
+     *
+     * Font picker = a Spinner of device fonts from the captured [FontCatalog] (same list
+     * the ToolBar's Text-cell chooser uses). Size picker = a horizontal radio strip of
+     * the shared [TextStylePresets.SIZES]. If the catalog hasn't finished loading yet,
+     * the font Spinner stays disabled and the box keeps its current font on Save —
+     * border/zBand/size are still independently editable.
      */
     private fun showTextBoxOptions(box: TextBox) {
         val pad = (16 * resources.displayMetrics.density).toInt()
+        val pad8 = (8 * resources.displayMetrics.density).toInt()
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
         }
+
+        // --- Font picker ---------------------------------------------------------
+        layout.addView(TextView(this).apply {
+            text = "Font"
+            setPadding(0, 0, 0, pad8)
+        })
+        val fontNames = fontCatalog?.names ?: emptyList()
+        val fontSpinner = android.widget.Spinner(this).apply {
+            adapter = android.widget.ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                if (fontNames.isEmpty()) listOf("(loading…)") else fontNames
+            )
+            isEnabled = fontNames.isNotEmpty()
+            if (fontNames.isNotEmpty()) {
+                val idx = fontNames.indexOf(box.fontName).coerceAtLeast(0)
+                setSelection(idx)
+            }
+        }
+        layout.addView(fontSpinner)
+
+        // --- Size picker ---------------------------------------------------------
+        layout.addView(TextView(this).apply {
+            text = "Size"
+            setPadding(0, pad, 0, pad8)
+        })
+        val sizeGroup = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL }
+        val sizeRadioIds = mutableMapOf<Int, Int>() // virtual-size → radio id
+        TextStylePresets.SIZES.forEach { (label, sizeV) ->
+            val rid = View.generateViewId()
+            sizeRadioIds[sizeV] = rid
+            sizeGroup.addView(RadioButton(this).apply {
+                id = rid
+                text = label
+                setPadding(0, 0, pad, 0)
+            })
+        }
+        // Pre-check the box's current size, or fall through to no selection if it's
+        // off-preset (a synced or hand-tuned size — Save keeps the original in that case).
+        sizeRadioIds[box.fontSize]?.let { sizeGroup.check(it) }
+        layout.addView(sizeGroup)
+
+        // --- Visible border ------------------------------------------------------
         val borderCheck = CheckBox(this).apply {
             text = "Show border"
             isChecked = box.borderWidth > 0
         }
+        layout.addView(borderCheck)
+
+        // --- Z-band --------------------------------------------------------------
         val rbBottom = RadioButton(this).apply { text = "Bottom (below ink)"; id = View.generateViewId() }
         val rbTop = RadioButton(this).apply { text = "Top (above everything)"; id = View.generateViewId() }
         val zGroup = RadioGroup(this).apply {
@@ -349,7 +423,6 @@ class MainActivity : Activity() {
             addView(rbTop)
             check(if (box.zBand == ZBand.TOP) rbTop.id else rbBottom.id)
         }
-        layout.addView(borderCheck)
         layout.addView(zGroup)
 
         AlertDialog.Builder(this)
@@ -357,17 +430,21 @@ class MainActivity : Activity() {
             .setView(layout)
             .setPositiveButton("Save") { _, _ ->
                 val zBand = if (zGroup.checkedRadioButtonId == rbTop.id) ZBand.TOP else ZBand.BOTTOM
-                drawView.applySelectedBoxOptions(borderCheck.isChecked, zBand)
+                val newFont = if (fontNames.isNotEmpty()) fontNames[fontSpinner.selectedItemPosition] else null
+                val checkedSizeId = sizeGroup.checkedRadioButtonId
+                val newSize = sizeRadioIds.entries.firstOrNull { it.value == checkedSizeId }?.key
+                drawView.applySelectedBoxOptions(borderCheck.isChecked, zBand, newFont, newSize)
             }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
     /**
-     * Placeholder dialog for the lasso pill's Recognize (F1) / To-do (F2) actions.
-     * Loads the current settings off-thread, then shows a message that varies by
-     * whether the relevant endpoint URL is configured (see [SelectionActionLogic]).
-     * No network call yet — these phases only wire up the UI.
+     * Placeholder dialog for the lasso pill's To-do (F2) action (and the legacy URL-set
+     * branch of Recognize that [showRecognizeFlow] routes here for). Loads the current
+     * settings off-thread, then shows a message that varies by whether the relevant
+     * endpoint URL is configured (see [SelectionActionLogic]). No network call yet —
+     * CalDAV is a separate later phase.
      */
     private fun showSelectionAction(build: (com.forestnote.core.format.Settings) -> SelectionActionLogic.Dialog) {
         store.loadSettings { settings ->
@@ -378,6 +455,167 @@ class MainActivity : Activity() {
                 .setPositiveButton("OK", null)
                 .show()
         }
+    }
+
+    /**
+     * Lasso-pill Recognize entry point. Off-loads model check + recognition to a coroutine,
+     * branches via [RecognizeFlowLogic.decide]: configured remote URL → legacy placeholder
+     * dialog; missing on-device model → download prompt; model present → run recognition,
+     * then surface the result through [showRecognitionResult].
+     *
+     * Defensive throughout: every async step's failure path becomes an AlertDialog so the
+     * user never sees an empty UI or an unhandled crash. The original strokes are never
+     * touched; on Insert, the recognized text becomes a new TextBox at the selection bounds.
+     */
+    private fun showRecognizeFlow(strokes: List<com.forestnote.core.ink.Stroke>, screenBounds: android.graphics.RectF?) {
+        if (strokes.isEmpty() || screenBounds == null) return
+        store.loadSettings { settings ->
+            val url = settings.selectionRecognitionUrl
+            syncScope.launch {
+                // Snapshot what's actually on disk — any English variant counts.
+                val installed = modelManager.installedLanguages().toSet()
+                when (val decision = RecognizeFlowLogic.decide(strokes.size, url, installed)) {
+                    is RecognizeFlowLogic.Decision.FallbackToPlaceholder -> {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle(decision.dialog.title)
+                            .setMessage(decision.dialog.message)
+                            .setPositiveButton("OK", null)
+                            .show()
+                    }
+                    is RecognizeFlowLogic.Decision.PromptDownload -> {
+                        promptModelDownload(decision.langTag) { runRecognize(strokes, screenBounds, decision.langTag) }
+                    }
+                    is RecognizeFlowLogic.Decision.ProceedToRecognize -> {
+                        runRecognize(strokes, screenBounds, decision.langTag)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Confirm + run the one-time MLKit model download for [langTag]. On success, calls
+     * [onReady]; on failure, surfaces a defensive error dialog.
+     */
+    private fun promptModelDownload(langTag: String, onReady: () -> Unit) {
+        val display = RecognitionModelManager.displayName(langTag)
+        AlertDialog.Builder(this)
+            .setTitle("Download recognition model")
+            .setMessage("On-device handwriting recognition for $display needs a one-time ~20 MB download. Continue?")
+            .setPositiveButton("Download") { _, _ ->
+                val progress = AlertDialog.Builder(this)
+                    .setTitle("Downloading…")
+                    .setMessage("$display recognition model")
+                    .setCancelable(false)
+                    .create()
+                progress.show()
+                syncScope.launch {
+                    val result = modelManager.download(langTag)
+                    try { progress.dismiss() } catch (_: Throwable) {}
+                    result.fold(
+                        onSuccess = { onReady() },
+                        onFailure = { e ->
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Download failed")
+                                .setMessage(e.message ?: "Could not download the recognition model.")
+                                .setPositiveButton("OK", null)
+                                .show()
+                        }
+                    )
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /**
+     * Run MLKit recognition on [strokes] and route the result through [RecognizeFlowLogic.describeResult].
+     * Show → result dialog; Retry → loop back to the download prompt (handles model-state drift);
+     * Error → defensive error dialog.
+     */
+    private fun runRecognize(
+        strokes: List<com.forestnote.core.ink.Stroke>,
+        screenBounds: android.graphics.RectF,
+        langTag: String
+    ) {
+        syncScope.launch {
+            val result = recognizer.recognize(strokes, langTag)
+            when (val ui = RecognizeFlowLogic.describeResult(result)) {
+                is RecognizeFlowLogic.ResultUi.Show -> showRecognitionResult(ui.text, screenBounds)
+                is RecognizeFlowLogic.ResultUi.Retry -> promptModelDownload(ui.langTag) { runRecognize(strokes, screenBounds, ui.langTag) }
+                is RecognizeFlowLogic.ResultUi.Error -> {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Recognition failed")
+                        .setMessage(ui.message)
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+            }
+        }
+    }
+
+    /**
+     * Result dialog: an editable EditText pre-filled with the recognized text, plus
+     * Insert-as-text-box / Copy / Discard. Editable because the recognizer occasionally
+     * gets a word wrong — the user can fix it in place before inserting. Alternatives
+     * from the recognizer aren't shown (they aren't selectable in an AlertDialog and
+     * just clutter the prompt). Insert delegates to [DrawView.insertRecognizedTextBox]
+     * at the selection's bounds; the original ink is never touched.
+     */
+    private fun showRecognitionResult(text: String, screenBounds: android.graphics.RectF) {
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad, pad, pad)
+        }
+        val editor = EditText(this).apply {
+            setText(text)
+            // Multi-line + visible/wrappable. setSelection at the end so the user can
+            // immediately type a correction at the tail without retapping.
+            setSingleLine(false)
+            isVerticalScrollBarEnabled = true
+            minLines = 2
+            maxLines = 8
+            setSelection(text.length)
+        }
+        container.addView(editor, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Recognized text")
+            .setView(container)
+            .setPositiveButton("Insert as text box", null) // wired below so it doesn't auto-dismiss
+            .setNeutralButton("Copy") { _, _ ->
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("Recognized text", editor.text.toString()))
+            }
+            .setNegativeButton("Discard", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val finalText = editor.text.toString()
+                fileLogger.log("Recognize", "Insert tapped textLen=${finalText.length} bounds=$screenBounds")
+                // Dismiss FIRST so the dialog's window is gone, then defer to the
+                // view's message queue so the box's PopupWindow (the Edit/Options/Delete
+                // pill) anchors against a clean foreground rather than the dialog window.
+                dialog.dismiss()
+                drawView.post {
+                    fileLogger.log("Recognize", "deferred insert running selectedBefore=${drawView.selectedBoxIdSnapshot} tool=${drawView.activeTool}")
+                    // Switch to the Text tool FIRST: the activeTool setter clears any
+                    // lasso/box selection as a side-effect, so doing this before insert
+                    // gives us a clean slate. Switching AFTER would wipe the selection
+                    // we just set on the new box.
+                    toolBar.selectTool(com.forestnote.core.ink.Tool.Text)
+                    fileLogger.log("Recognize", "after tool switch tool=${drawView.activeTool}")
+                    val box = drawView.insertRecognizedTextBox(screenBounds, finalText)
+                    fileLogger.log(
+                        "Recognize",
+                        "insert returned id=${box?.id} selectedAfter=${drawView.selectedBoxIdSnapshot} tool=${drawView.activeTool}"
+                    )
+                }
+            }
+        }
+        dialog.show()
     }
 
     /**
@@ -648,7 +886,7 @@ class MainActivity : Activity() {
     private fun openSettings() {
         if (settingsView.isShowing) return
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
-        settingsView.show(content, store) { closeSettings() }
+        settingsView.show(content, store, modelManager) { closeSettings() }
     }
 
     /** Dismiss the Settings overlay and return to the editor. */
@@ -934,6 +1172,7 @@ class MainActivity : Activity() {
         super.onDestroy()
         try {
             syncScope.cancel()
+            recognizer.close()
             backend.release()
             // Drains pending saves, then closes the driver as its last task.
             store.shutdown()

@@ -75,6 +75,16 @@ class ToolBar(
     /** Currently-open variant dropdown, if any. */
     private var openPopup: PopupWindow? = null
 
+    /**
+     * Programmatic tool selection (e.g. lasso-recognize Insert hands the user into
+     * the Text tool so the new text box's selection/handles/pill work). Goes through
+     * the same `ToolSelectionLogic` path as a tap, so the `onToolSelected` callback
+     * fires + the button highlight updates — keeping the toolbar visual in sync.
+     */
+    fun selectTool(tool: Tool) {
+        logic.selectTool(tool)
+    }
+
     // Delegate tool selection logic to ToolSelectionLogic
     private val logic = ToolSelectionLogic(
         onToolSelected = { tool ->
@@ -626,9 +636,8 @@ class ToolBar(
 
     companion object {
         private const val DEFAULT_TEXT_SIZE_V = 240
-        /** Text size presets: label → size in virtual units (short axis = 10,000). */
-        private val TEXT_SIZES = listOf(
-            "XS" to 160, "S" to 200, "M" to 240, "L" to 340, "XL" to 480
-        )
+        // Text size presets live in [TextStylePresets.SIZES] — shared with the per-text-box
+        // Options dialog so the two choosers can't drift.
+        private val TEXT_SIZES = TextStylePresets.SIZES
     }
 }

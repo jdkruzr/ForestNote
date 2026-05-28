@@ -4,40 +4,26 @@ import org.junit.Test
 import kotlin.test.assertEquals
 
 /**
- * F1/F2: the lasso selection's Recognize / To-do action dialogs are placeholder
- * UIs whose message varies by whether the relevant endpoint URL is configured.
- * No network calls — these tests pin the text the user sees in both states.
+ * F1/F2: the lasso selection's Recognize / To-do action dialogs.
+ *
+ * Recognize is now the *remote-override placeholder* path only: when the user has set
+ * `Settings.selectionRecognitionUrl`, [RecognizeFlowLogic.decide] routes here to keep
+ * the legacy "would send to remote URL" copy, with a hint telling the user how to
+ * switch back to on-device recognition. The empty-URL branch is handled entirely by
+ * [RecognizeFlowLogic] now (MLKit Digital Ink) and never enters this function.
+ *
+ * To-do (F2) is still wired through the old endpoint-URL placeholder pattern — its
+ * tests are unchanged.
  */
 class SelectionActionLogicTest {
 
     @Test
-    fun `recognize names the URL and stroke count when configured`() {
+    fun `recognize names the URL and stroke count and tells the user how to switch to on-device`() {
         val d = SelectionActionLogic.recognize(count = 3, url = "https://ocr.example")
         assertEquals("Recognize", d.title)
         assertEquals(
-            "Sending 3 strokes to https://ocr.example for OCR. Recognized text " +
-                "would replace the selection or appear in a side panel.",
-            d.message
-        )
-    }
-
-    @Test
-    fun `recognize points to AI endpoints settings when unconfigured`() {
-        val d = SelectionActionLogic.recognize(count = 5, url = "")
-        assertEquals("Recognize", d.title)
-        assertEquals(
-            "No selection-recognition endpoint is configured. " +
-                "Add one in Settings → AI endpoints.",
-            d.message
-        )
-    }
-
-    @Test
-    fun `recognize treats a blank or whitespace URL as unconfigured`() {
-        val d = SelectionActionLogic.recognize(count = 2, url = "   ")
-        assertEquals(
-            "No selection-recognition endpoint is configured. " +
-                "Add one in Settings → AI endpoints.",
+            "Remote endpoint configured — sending 3 strokes to https://ocr.example. " +
+                "Clear this field in Settings to use on-device recognition instead.",
             d.message
         )
     }
@@ -46,8 +32,8 @@ class SelectionActionLogicTest {
     fun `recognize uses singular stroke wording for one`() {
         val d = SelectionActionLogic.recognize(count = 1, url = "https://ocr.example")
         assertEquals(
-            "Sending 1 stroke to https://ocr.example for OCR. Recognized text " +
-                "would replace the selection or appear in a side panel.",
+            "Remote endpoint configured — sending 1 stroke to https://ocr.example. " +
+                "Clear this field in Settings to use on-device recognition instead.",
             d.message
         )
     }
@@ -56,8 +42,8 @@ class SelectionActionLogicTest {
     fun `recognize trims surrounding whitespace from the URL`() {
         val d = SelectionActionLogic.recognize(count = 4, url = "  https://ocr.example  ")
         assertEquals(
-            "Sending 4 strokes to https://ocr.example for OCR. Recognized text " +
-                "would replace the selection or appear in a side panel.",
+            "Remote endpoint configured — sending 4 strokes to https://ocr.example. " +
+                "Clear this field in Settings to use on-device recognition instead.",
             d.message
         )
     }
