@@ -29,7 +29,7 @@ class TextBoxEditor(
     private val fontResolver: (name: String, weight: Int) -> Typeface,
     private val onCommit: (id: String, text: String, screenHeightPx: Float) -> Unit,
     /** Fired after the IME comes up (begin) and after it goes down (teardown) — the keyboard
-     *  shifts the (panned) layout, so the host GC-refreshes the editor once the shift settles. */
+     *  pans/resizes the layout, so the host GC-refreshes the editor once the shift settles. */
     private val onImeShifted: () -> Unit = {}
 ) {
     private var editText: EditText? = null

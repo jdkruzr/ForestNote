@@ -216,8 +216,10 @@ class MainActivity : Activity() {
             container = canvasContainer,
             fontResolver = { name, weight -> drawView.fontResolver(name, weight) },
             onCommit = { id, text, heightPx -> drawView.commitTextBox(id, text, heightPx) },
-            // The IME pop/dismiss pans the (non-resizing) window; once it settles, GC-refresh the
-            // editor to clear the shift ghosting. 350ms ≈ keyboard slide + pan settle.
+            // The IME pop/dismiss pans/resizes the window (default softInputMode); once it settles,
+            // GC-refresh the editor to clear the shift ghosting. 350ms ≈ keyboard slide + settle.
+            // (Tried windowSoftInputMode=adjustNothing on the Viwoods build: ANR'd hard on IME show
+            // — see [[viwoods-adjustnothing-anr]]. The reflow-ghost fix needs a different approach.)
             onImeShifted = { drawView.postDelayed({ drawView.gcRefresh() }, 350L) }
         )
         drawView.onTextEditRequested = { box, rect ->
@@ -1154,6 +1156,29 @@ class MainActivity : Activity() {
             // Release WritingBufferQueue so other apps (WiNote etc.) can use it
             backend.release()
         }
+    }
+
+    /**
+     * Tracks whether our window was focused at the previous callback. Used to detect "regained focus"
+     * transitions (e.g. returning from the task switcher / recents overlay) so we can GC-refresh the
+     * e-ink panel to clear residue from system-drawn overlays — long-press home leaves a bad ghost
+     * otherwise. Single-tap home → backgrounded → onResume path also flows through this, which is
+     * fine: one clean repaint on return is exactly what we want.
+     */
+    private var wasFocused = true
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        val regained = hasFocus && !wasFocused
+        wasFocused = hasFocus
+        if (!regained || !isEInk) return
+        // [[viwoods-writing-overlay]]: gcRefresh composites ABOVE the View pipeline, so only run it
+        // when the editor is the topmost View — bail if any of our overlays / dialogs / inline edit
+        // are up. Stray AlertDialogs are covered implicitly: an open AlertDialog holds window focus
+        // away from this Activity, so `regained` only flips when the dialog has already closed.
+        if (libraryView.isShowing || settingsView.isShowing || recycleBinView.isShowing ||
+            ocrTextDialog.isShowing || textBoxEditor.isActive) return
+        drawView.post { drawView.gcRefresh() }
     }
 
     override fun onResume() {
