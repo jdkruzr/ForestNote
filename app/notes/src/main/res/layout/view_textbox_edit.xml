@@ -71,26 +71,10 @@
         android:layout_height="1dp"
         android:background="@color/black" />
 
-    <!-- Body: the EditText fills the middle. -->
-    <EditText
-        android:id="@+id/edit_textbox_body"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="@android:color/transparent"
-        android:gravity="top|start"
-        android:inputType="textMultiLine|textCapSentences"
-        android:padding="24dp"
-        android:textColor="@color/black"
-        android:textSize="20sp" />
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="@color/black" />
-
-    <!-- Style strip: font, size, weight, border, z-band. Horizontal scroll for narrow
-         screens; the AiPaper Mini is wide enough today but the strip stays robust. -->
+    <!-- Style strip sits HERE (right under the header) so the soft keyboard popping up only
+         covers the EditText body, never the style controls. The body is weight=1 below and
+         absorbs the resize when the IME appears (default windowSoftInputMode is adjustResize-
+         ish on this device; opacity hides the ghost regardless). -->
     <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -192,4 +176,23 @@
             </RadioGroup>
         </LinearLayout>
     </HorizontalScrollView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/black" />
+
+    <!-- Body: the EditText fills the remaining space below the style strip. The soft keyboard
+         resizes this region only; the header + style strip stay visible. -->
+    <EditText
+        android:id="@+id/edit_textbox_body"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@android:color/transparent"
+        android:gravity="top|start"
+        android:inputType="textMultiLine|textCapSentences"
+        android:padding="24dp"
+        android:textColor="@color/black"
+        android:textSize="20sp" />
 </LinearLayout>
