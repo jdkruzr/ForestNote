@@ -82,6 +82,8 @@ class MainActivity : Activity() {
     private val recycleBinView = RecycleBinView()
     // Library search dialog (modal AlertDialog over the Library overlay).
     private val searchDialog = com.forestnote.app.notes.search.SearchDialog()
+    // Editor OCR-text viewer (modal AlertDialog over the editor).
+    private val ocrTextDialog = com.forestnote.app.notes.ocr.OcrTextDialog()
     // Shared with DrawView (same instance); DrawView updates its extents on layout, so
     // virtualLongAxis is current by the time paste() reads it for the in-bounds offset.
     private val pageTransform = PageTransform()
@@ -113,8 +115,13 @@ class MainActivity : Activity() {
             fileLogger.log("App", "ForestNote launched (debugLogging=${s.debugLogging})")
         }
         // Reflect sync status in the Library header caption (no-op while the Library is hidden).
+        // Also re-check the OCR button state when a sync run completes, since the server may
+        // have just delivered new page_text_from_server rows for the active page.
         syncScope.launch {
-            syncController.status.collect { libraryView.setSyncCaption(syncCaption(it)) }
+            syncController.status.collect { status ->
+                libraryView.setSyncCaption(syncCaption(status))
+                if (status is com.forestnote.core.sync.SyncStatus.Synced) refreshOcrButtonState()
+            }
         }
 
         // Load layout from XML
@@ -286,10 +293,9 @@ class MainActivity : Activity() {
             showClearConfirmation()
         }
 
-        // Wire Refresh button — a true GC panel refresh (the button exists to clear ghosting).
-        toolBar.setOnRefreshClicked {
-            drawView.gcRefresh()
-        }
+        // OCR cell: opens the recognized-text viewer for the active page; greyed when the
+        // server hasn't OCR'd the page yet (refreshed on page/notebook switch + sync Synced).
+        toolBar.setOnOcrClicked { showOcrDialog() }
 
         // Paste cell: enabled live whenever the clipboard is non-empty (AC1.6).
         toolBar.setOnPasteClicked { paste() }
@@ -425,6 +431,7 @@ class MainActivity : Activity() {
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()       // clears e-ink ghosting on switch (AC6.4)
             refreshPageIndicator()
+            refreshOcrButtonState()
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
@@ -437,6 +444,7 @@ class MainActivity : Activity() {
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()
             refreshPageIndicator()
+            refreshOcrButtonState()
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
@@ -451,6 +459,7 @@ class MainActivity : Activity() {
             drawView.mergeLoadedStrokes(strokes)
             drawView.gcRefresh()
             refreshPageIndicator()
+            refreshOcrButtonState()
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
@@ -469,6 +478,7 @@ class MainActivity : Activity() {
             drawView.mergeLoadedStrokes(strokes)
             drawView.gcRefresh()
             refreshPageIndicator()
+            refreshOcrButtonState()
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
@@ -483,8 +493,35 @@ class MainActivity : Activity() {
         store.load { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             refreshPageIndicator()
+            refreshOcrButtonState()
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
+    }
+
+    /**
+     * Refresh the editor's OCR toolbar button enabled state from the active page's server
+     * OCR row: enabled when a live row exists, greyed when it doesn't. Called on every
+     * page/notebook switch, on the first editor load, and after a sync run completes
+     * (which is the only path that creates page_text_from_server rows).
+     */
+    private fun refreshOcrButtonState() {
+        val pageId = activePageId
+        if (pageId.isEmpty()) {
+            toolBar.setOcrEnabled(false)
+            return
+        }
+        store.loadPageTextFromServer(pageId) { r -> toolBar.setOcrEnabled(r != null) }
+    }
+
+    /**
+     * Open the OCR-text viewer dialog for the active page. Re-reads the OCR row each open
+     * (cheap, off-thread) rather than caching, so a sync that delivered new text since the
+     * button was enabled is reflected without a separate refresh round-trip.
+     */
+    private fun showOcrDialog() {
+        if (ocrTextDialog.isShowing) return
+        val pageId = activePageId.takeIf { it.isNotEmpty() } ?: return
+        store.loadPageTextFromServer(pageId) { r -> ocrTextDialog.show(this, r) }
     }
 
     /**
@@ -869,8 +906,9 @@ class MainActivity : Activity() {
         super.onPause()
         // Persist any in-progress text edit before backgrounding.
         textBoxEditor.commit()
-        // Don't leak the search dialog window if we pause with it open.
+        // Don't leak any modal dialog window if we pause with one open.
         searchDialog.dismiss()
+        ocrTextDialog.dismiss()
         // Stop the periodic timer and flush pending changes to UltraBridge.
         syncController.pause()
         if (isEInk) {

@@ -30,7 +30,6 @@ class ToolBar(
     private val onToolSelected: (Tool) -> Unit
 ) {
     private var activeClearCallback: (() -> Unit)? = null
-    private var activeRefreshCallback: (() -> Unit)? = null
     private var penVariantCallback: ((PenVariant) -> Unit)? = null
     private var penWidthCallback: ((PenWidthLevel) -> Unit)? = null
 
@@ -52,12 +51,14 @@ class ToolBar(
     private val btnPaste: View = root.findViewById(R.id.cell_paste)
     private val lblPaste: TextView = root.findViewById(R.id.label_paste)
     private val btnClear: View = root.findViewById(R.id.cell_clear)
-    private val btnRefresh: View = root.findViewById(R.id.cell_refresh)
+    private val btnOcr: View = root.findViewById(R.id.cell_ocr)
     private val btnTemplate: View = root.findViewById(R.id.cell_template)
 
     private var activePasteCallback: (() -> Unit)? = null
     private var pasteEnabled = false
     private var activeTemplateCallback: (() -> Unit)? = null
+    private var activeOcrCallback: (() -> Unit)? = null
+    private var ocrEnabled = false
 
     // Group cells whose active state is highlighted (Fountain = Pen group; Lasso; Text; Erase).
     private val highlightCells = listOf(btnFountain, btnLasso, btnText, btnErase)
@@ -104,11 +105,12 @@ class ToolBar(
             showEraseVariantDropdown(btnErase)
         }
         btnClear.setOnClickListener { logic.triggerClear() }
-        btnRefresh.setOnClickListener { activeRefreshCallback?.invoke() }
         // Paste is an action cell, gated on a non-empty clipboard (greyed when empty).
         btnPaste.setOnClickListener { if (pasteEnabled) activePasteCallback?.invoke() }
         // Template is an action cell: opens the per-page template picker (B4).
         btnTemplate.setOnClickListener { activeTemplateCallback?.invoke() }
+        // OCR is an action cell, gated on the server having OCR'd the current page.
+        btnOcr.setOnClickListener { if (ocrEnabled) activeOcrCallback?.invoke() }
 
         // On e-ink, remove ripple background to prevent ghosting
         if (isEInk) {
@@ -117,8 +119,8 @@ class ToolBar(
             }
             btnPaste.background = null
             btnClear.background = null
-            btnRefresh.background = null
             btnTemplate.background = null
+            btnOcr.background = null
         }
         setPasteEnabled(false)
 
@@ -175,17 +177,26 @@ class ToolBar(
         activeClearCallback = callback
     }
 
-    /**
-     * Set the callback to invoke when Refresh button is tapped.
-     * Triggers a full e-ink panel refresh to clear ghosting.
-     */
-    fun setOnRefreshClicked(callback: () -> Unit) {
-        activeRefreshCallback = callback
-    }
-
     /** Set the callback to invoke when the Paste cell is tapped (only fires when enabled). */
     fun setOnPasteClicked(callback: () -> Unit) {
         activePasteCallback = callback
+    }
+
+    /** Set the callback to invoke when the OCR cell is tapped (only fires when enabled). */
+    fun setOnOcrClicked(callback: () -> Unit) {
+        activeOcrCallback = callback
+    }
+
+    /**
+     * Enable / disable the OCR cell. Disabled = greyed at 0.3 alpha (matches the existing
+     * disabled-cell convention in the Library header). Greyed cells still consume taps so
+     * the click listener no-ops via the `ocrEnabled` gate.
+     */
+    fun setOcrEnabled(enabled: Boolean) {
+        if (ocrEnabled == enabled) return
+        ocrEnabled = enabled
+        btnOcr.isEnabled = enabled
+        btnOcr.alpha = if (enabled) 1f else 0.3f
     }
 
     /** Set the callback to invoke when the Template cell is tapped (opens the per-page picker). */

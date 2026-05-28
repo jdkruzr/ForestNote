@@ -602,6 +602,15 @@ ON CONFLICT(id) DO UPDATE SET
     created_at = excluded.created_at,
     deleted_at = excluded.deleted_at;
 
+-- ── Page recognized-text read (editor OCR viewer) ───────────────────────────
+-- Used by the editor's OCR-text modal. Returns the live (non-tombstoned) server-
+-- authored OCR row for a page, or no rows if the server has not OCR'd it yet
+-- (controls the toolbar button's greyed state — null = disabled). pk on
+-- page_text_from_server is the page's ULID (1:1 with a page).
+getLivePageTextFromServer:
+SELECT text, ocr_at, model FROM page_text_from_server
+WHERE id = ? AND deleted_at IS NULL;
+
 -- ── Library search ──────────────────────────────────────────────────────────
 -- Four parallel queries powering the Library search dialog. All scope library-wide
 -- (no current-folder / current-notebook filter). LIKE patterns are caller-built with

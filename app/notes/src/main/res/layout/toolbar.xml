@@ -232,7 +232,7 @@
     </LinearLayout>
 
     <LinearLayout
-        android:id="@+id/cell_refresh"
+        android:id="@+id/cell_ocr"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
@@ -240,15 +240,15 @@
         android:gravity="center"
         android:clickable="true"
         android:focusable="true"
-        android:contentDescription="Refresh"
+        android:contentDescription="View recognized text"
         android:background="?attr/selectableItemBackground">
 
         <ImageButton
-            android:id="@+id/btn_refresh"
+            android:id="@+id/btn_ocr"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:src="@drawable/ic_refresh"
+            android:src="@drawable/ic_ocr"
             android:clickable="false"
             android:focusable="false"
             android:importantForAccessibility="no"
@@ -256,9 +256,10 @@
             android:scaleType="fitCenter" />
 
         <TextView
+            android:id="@+id/label_ocr"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Refresh"
+            android:text="OCR"
             android:gravity="center"
             android:textSize="9sp"
             android:textColor="@color/black"

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Editor OCR-text viewer dialog. A modal AlertDialog (title set in code) hosts this:
+     a Spinner picks the source ("Server recognized" / "Device recognized"), a small meta
+     line shows the model + recognition timestamp, and a ScrollView shows the recognized
+     text body. Device recognition is a stub for now — the spinner entry is present so
+     the UI is forward-compatible; selecting it shows a "not available yet" message. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/ocr_root"
+    android:layout_width="match_parent"
+    android:layout_height="500dp"
+    android:orientation="vertical"
+    android:background="@color/white"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp">
+
+    <Spinner
+        android:id="@+id/ocr_source_picker"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:contentDescription="Recognition source" />
+
+    <TextView
+        android:id="@+id/ocr_source_meta"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:textColor="@color/gray_dark"
+        android:textSize="11sp"
+        android:maxLines="2"
+        android:ellipsize="end" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/black" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:paddingTop="12dp"
+        android:clipToPadding="false"
+        android:fillViewport="true">
+
+        <TextView
+            android:id="@+id/ocr_recognized_content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/black"
+            android:textSize="14sp"
+            android:textIsSelectable="true"
+            android:lineSpacingExtra="2dp" />
+    </ScrollView>
+</LinearLayout>

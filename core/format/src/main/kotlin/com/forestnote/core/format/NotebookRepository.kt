@@ -55,6 +55,17 @@ data class FolderMeta(
 )
 
 /**
+ * Server-authored recognized text for a single page (`page_text_from_server`). pk is the
+ * page's ULID — 1:1 with a page. [model] is the OCR engine identifier set by UltraBridge
+ * (may be NULL for older rows). Null when the server has not OCR'd the page yet.
+ */
+data class RecognizedText(
+    val text: String,
+    val ocrAt: Long,
+    val model: String?
+)
+
+/**
  * Public page metadata so the UI never touches generated row types.
  * [template] / [templatePitchMm] are the per-page override: NULL means
  * "inherit the global default" from [Settings].
@@ -836,6 +847,17 @@ class NotebookRepository private constructor(
             touchCurrentNotebook()
         }
     }
+
+    /**
+     * The live (non-tombstoned) server-authored OCR text for [pageId], or null if the
+     * server has not OCR'd this page yet. The editor's OCR-text viewer uses null to
+     * decide the toolbar button's greyed state — page_text_from_server is single-writer
+     * (server-only), so there is no client author path to invalidate.
+     */
+    fun loadPageTextFromServer(pageId: String): RecognizedText? =
+        db.notebookQueries.getLivePageTextFromServer(pageId).executeAsOneOrNull()?.let {
+            RecognizedText(text = it.text, ocrAt = it.ocr_at, model = it.model)
+        }
 
     // -- Library search ----------------------------------------------------
     //

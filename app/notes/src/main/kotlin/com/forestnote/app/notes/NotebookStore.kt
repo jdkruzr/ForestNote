@@ -11,6 +11,7 @@ import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.format.PageMeta
 import com.forestnote.core.format.PageTemplate
+import com.forestnote.core.format.RecognizedText
 import com.forestnote.core.format.SearchResults
 import com.forestnote.core.format.Settings
 import com.forestnote.core.format.SyncOp
@@ -277,6 +278,21 @@ class NotebookStore(
                 .onFailure { android.util.Log.e(TAG, "failed to switch notebook to page", it) }
                 .getOrDefault(emptyList())
             poster { onLoaded(strokes) }
+        }
+    }
+
+    /**
+     * Load the server-authored OCR text for [pageId] off-thread; posts null when no live row
+     * exists (page hasn't been OCR'd yet, or the row is tombstoned). The editor's OCR-text
+     * viewer uses this both to decide the toolbar button's greyed state and to populate the
+     * modal's content.
+     */
+    fun loadPageTextFromServer(pageId: String, onResult: (RecognizedText?) -> Unit) {
+        executor.execute {
+            val r = runCatching { repo?.loadPageTextFromServer(pageId) }
+                .onFailure { android.util.Log.e(TAG, "failed to load page OCR text", it) }
+                .getOrNull()
+            poster { onResult(r) }
         }
     }
 
