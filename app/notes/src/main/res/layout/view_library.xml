@@ -23,6 +23,56 @@
         android:gravity="center_vertical"
         android:background="@color/white">
 
+        <!-- Title-on-left, actions-on-right layout: Up + breadcrumb lead the header so the
+             Library label (the breadcrumb's root segment) sits flush left; the icon
+             clusters (Settings/Sync/Search · count/Select/Recycle · Folder/Notebook) all
+             trail behind. Up is hidden at root; the breadcrumb's layout_weight=1 absorbs
+             the remaining space so the trailing icons stay pinned to the right edge. -->
+
+        <!-- Up (back one level; shown only inside a folder, paired with the breadcrumb) -->
+        <LinearLayout
+            android:id="@+id/btn_library_back"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="Up one level"
+            android:background="?attr/selectableItemBackground"
+            android:visibility="gone">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_arrow_left"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Up"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/breadcrumb_container"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp" />
+
         <!-- Settings -->
         <LinearLayout
             android:id="@+id/btn_library_settings"
@@ -125,50 +175,6 @@
                 android:maxLines="1"
                 android:paddingBottom="2dp" />
         </LinearLayout>
-
-        <!-- Up (back one level; shown only inside a folder) -->
-        <LinearLayout
-            android:id="@+id/btn_library_back"
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:clickable="true"
-            android:focusable="true"
-            android:contentDescription="Up one level"
-            android:background="?attr/selectableItemBackground"
-            android:visibility="gone">
-            <ImageButton
-                android:layout_width="wrap_content"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:src="@drawable/ic_arrow_left"
-                android:clickable="false"
-                android:focusable="false"
-                android:importantForAccessibility="no"
-                android:background="@null"
-                android:scaleType="fitCenter" />
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Up"
-                android:textSize="9sp"
-                android:textColor="@color/black"
-                android:maxLines="1"
-                android:paddingBottom="2dp" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/breadcrumb_container"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp" />
 
         <TextView
             android:id="@+id/text_item_count"
