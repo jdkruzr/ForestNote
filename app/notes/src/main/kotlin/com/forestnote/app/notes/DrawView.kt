@@ -1566,4 +1566,36 @@ class DrawView @JvmOverloads constructor(
             canvas.drawRect(left, top, right, bottom, boxBorderPaint)
         }
     }
+
+    /**
+     * Pixels-of-rendered-height for [text] inside a box of [widthV] virtual units, using
+     * [fontName]/[weight] at [fontSizeV] virtual units. Mirrors the [StaticLayout] construction
+     * inside [drawTextBox] exactly — same width math, same alignment, same `includePad=false` —
+     * so the value can be mapped back to virtual via `transform.toVirtualX(...)` and stored as
+     * `TextBox.height` with confidence that the on-page render matches.
+     *
+     * Owns its own TextPaint to avoid mutating the shared [textBoxPaint] mid-frame (no
+     * cross-talk if a measurement is requested while drawing is in flight, though both run on
+     * the UI thread today). Called by the text-box edit overlay's commit path; not used during
+     * normal static composition (which uses the box's already-stored height).
+     */
+    fun measureTextBoxHeightPx(
+        widthV: Int,
+        fontName: String,
+        weight: Int,
+        fontSizeV: Int,
+        text: String,
+    ): Int {
+        val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = fontResolver(fontName, weight)
+            textSize = transform.toScreenSize(fontSizeV.toFloat())
+        }
+        val widthPx = transform.toScreenSize(widthV.toFloat()).toInt().coerceAtLeast(1)
+        return StaticLayout.Builder
+            .obtain(text, 0, text.length, paint, widthPx)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setIncludePad(false)
+            .build()
+            .height
+    }
 }
