@@ -97,22 +97,26 @@ class ToolBar(
     )
 
     init {
-        // Wire up click listeners for tool buttons. The Fountain cell selects the
-        // pen group (with its last-used variant) and opens the variant dropdown.
+        // Wire up click listeners for tool buttons. Tool cells with a settings popup follow the
+        // "one tap selects, second tap on the active cell opens the popup" convention — the user
+        // can switch tools without being dragged into a chooser they didn't ask for.
         btnFountain.setOnClickListener {
+            val wasActive = isCellActive(btnFountain, logic.getActiveTool())
             logic.selectPenGroup()
-            showPenSettingsPopup(btnFountain)
+            if (wasActive) showPenSettingsPopup(btnFountain)
         }
         // Lasso is a single top-level tool (no variant dropdown).
         btnLasso.setOnClickListener { logic.selectTool(Tool.Lasso) }
-        // Text selects the text-box tool and opens the font/size chooser.
+        // Text: same "tap-to-select / tap-active-to-customize" rule as Fountain/Erase.
         btnText.setOnClickListener {
+            val wasActive = isCellActive(btnText, logic.getActiveTool())
             logic.selectTool(Tool.Text)
-            showTextSettingsPopup(btnText)
+            if (wasActive) showTextSettingsPopup(btnText)
         }
         btnErase.setOnClickListener {
+            val wasActive = isCellActive(btnErase, logic.getActiveTool())
             logic.selectEraseGroup()
-            showEraseVariantDropdown(btnErase)
+            if (wasActive) showEraseVariantDropdown(btnErase)
         }
         btnClear.setOnClickListener { logic.triggerClear() }
         // Paste is an action cell, gated on a non-empty clipboard (greyed when empty).
