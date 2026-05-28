@@ -2,7 +2,6 @@ package com.forestnote.app.notes
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
@@ -502,67 +501,23 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Result dialog: an editable EditText pre-filled with the recognized text, plus
-     * Insert-as-text-box / Copy / Discard. Editable because the recognizer occasionally
-     * gets a word wrong — the user can fix it in place before inserting. Alternatives
-     * from the recognizer aren't shown (they aren't selectable in an AlertDialog and
-     * just clutter the prompt). Insert delegates to [DrawView.insertRecognizedTextBox]
-     * at the selection's bounds; the original ink is never touched.
+     * Hand the recognized [text] straight into the full-screen [TextBoxEditOverlay] over the lasso
+     * [screenBounds]. Replaces the old AlertDialog "Insert / Copy / Discard" modal — the modal
+     * landed the user in Text tool with an active pill, and ambiguous follow-up taps could trigger
+     * drag-to-draw / re-select / Edit unpredictably. Going through the overlay collapses that into
+     * one screen with Done/Cancel/Copy and removes the post-modal canvas-tap state entirely.
+     *
+     * The pending-new path means Cancel discards cleanly (no DB write ever occurred), and Done
+     * persists with the box's height recomputed via `measureTextBoxHeightPx` against the trimmed
+     * text. Copy is a header action inside the overlay (`Cancel | title | Copy | Done`).
      */
     private fun showRecognitionResult(text: String, screenBounds: android.graphics.RectF) {
-        val pad = (16 * resources.displayMetrics.density).toInt()
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, pad)
+        fileLogger.log("Recognize", "result → overlay textLen=${text.length} bounds=$screenBounds")
+        val box = drawView.prepareRecognizedTextBox(screenBounds, text) ?: run {
+            fileLogger.log("Recognize", "prepareRecognizedTextBox returned null (blank text) — nothing to insert")
+            return
         }
-        val editor = EditText(this).apply {
-            setText(text)
-            // Multi-line + visible/wrappable. setSelection at the end so the user can
-            // immediately type a correction at the tail without retapping.
-            setSingleLine(false)
-            isVerticalScrollBarEnabled = true
-            minLines = 2
-            maxLines = 8
-            setSelection(text.length)
-        }
-        container.addView(editor, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Recognized text")
-            .setView(container)
-            .setPositiveButton("Insert as text box", null) // wired below so it doesn't auto-dismiss
-            .setNeutralButton("Copy") { _, _ ->
-                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                cm.setPrimaryClip(android.content.ClipData.newPlainText("Recognized text", editor.text.toString()))
-            }
-            .setNegativeButton("Discard", null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val finalText = editor.text.toString()
-                fileLogger.log("Recognize", "Insert tapped textLen=${finalText.length} bounds=$screenBounds")
-                // Dismiss FIRST so the dialog's window is gone, then defer to the
-                // view's message queue so the box's PopupWindow (the Edit/Options/Delete
-                // pill) anchors against a clean foreground rather than the dialog window.
-                dialog.dismiss()
-                drawView.post {
-                    fileLogger.log("Recognize", "deferred insert running selectedBefore=${drawView.selectedBoxIdSnapshot} tool=${drawView.activeTool}")
-                    // Switch to the Text tool FIRST: the activeTool setter clears any
-                    // lasso/box selection as a side-effect, so doing this before insert
-                    // gives us a clean slate. Switching AFTER would wipe the selection
-                    // we just set on the new box.
-                    toolBar.selectTool(com.forestnote.core.ink.Tool.Text)
-                    fileLogger.log("Recognize", "after tool switch tool=${drawView.activeTool}")
-                    val box = drawView.insertRecognizedTextBox(screenBounds, finalText)
-                    fileLogger.log(
-                        "Recognize",
-                        "insert returned id=${box?.id} selectedAfter=${drawView.selectedBoxIdSnapshot} tool=${drawView.activeTool}"
-                    )
-                }
-            }
-        }
-        dialog.show()
+        openEditOverlay(box, isNewBox = true, focusForEditing = true)
     }
 
     /**

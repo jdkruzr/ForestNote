@@ -930,16 +930,15 @@ class DrawView @JvmOverloads constructor(
     }
 
     /**
-     * Drop a text box with [text] already populated at the [screenBounds] region (the lasso
-     * selection's bounding rect, in DrawView-local screen coords). Used by the lasso-recognize
-     * flow. The original strokes stay on the page; the new box becomes the active selection so
-     * the Edit/Options/Delete pill appears immediately — the user can resize, move, or open
-     * Options (font/size/border/z-band) without an extra discovery step. The lasso selection
-     * is cleared in the same call so its menu pill doesn't linger behind the text-box pill.
+     * Prepare a recognize-sourced text box for the [TextBoxEditOverlay]: build it at [screenBounds]
+     * with [text] pre-populated, stash as [pendingNewBox] (not yet in [textBoxes], not persisted),
+     * and clear the lasso so its action pill dismisses. The caller (MainActivity) opens the overlay
+     * with isNewBox=true; Done promotes via [commitOverlayBox] (first DB write), Cancel discards
+     * via [discardPendingNewBox] (no DB write — clean, leaves no orphan).
      *
-     * Returns the new [TextBox], or null if [text] is blank (nothing useful to place).
+     * Returns the prepared [TextBox], or null if [text] is blank (nothing useful to place).
      */
-    fun insertRecognizedTextBox(screenBounds: RectF, text: String): TextBox? {
+    fun prepareRecognizedTextBox(screenBounds: RectF, text: String): TextBox? {
         if (text.isBlank()) return null
         val vx0 = transform.toVirtualX(screenBounds.left).coerceAtLeast(0)
         val vy0 = transform.toVirtualY(screenBounds.top).coerceAtLeast(0)
@@ -947,8 +946,8 @@ class DrawView @JvmOverloads constructor(
         val vy1 = transform.toVirtualY(screenBounds.bottom)
         // Width: at least the configured default so the recognized text has room to wrap.
         val w = max(vx1 - vx0, DEFAULT_TEXT_WIDTH_V)
-        // Height: at least two lines tall, like createAndEditTextBox does; auto-grows downward
-        // visually as the text wraps (the rendered text is fully retained even if clipped).
+        // Height: at least two lines tall, like createAndEditTextBox does. commitOverlayBox
+        // recomputes the actual rendered height via measureTextBoxHeightPx on Done.
         val minH = activeTextFontSize * 2
         val h = max(vy1 - vy0, minH)
         val x = clampOffset(vx0, 0, PageTransform.VIRTUAL_SHORT_AXIS - w)
@@ -959,19 +958,10 @@ class DrawView @JvmOverloads constructor(
             text = text,
             fontName = activeTextFontName,
             fontSize = activeTextFontSize,
-            color = activeTextColor
+            color = activeTextColor,
         )
-        textBoxes.add(box)
-        store?.saveTextBox(box)
-
-        // Hand the active selection over to the new box: clear the lasso (which also
-        // dismisses the lasso action pill via onSelectionChanged), mark the box selected,
-        // redraw so the corner handles paint, then fire onBoxSelected to surface the
-        // Edit/Options/Delete pill where Font/Size live.
-        clearLassoState()
-        selectedBoxId = box.id
-        redrawBitmap()
-        onBoxSelected?.invoke(box, boxScreenRect(box))
+        pendingNewBox = box
+        clearLassoState() // dismiss the lasso action pill — the overlay owns the screen now
         return box
     }
 

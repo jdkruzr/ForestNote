@@ -172,6 +172,17 @@ class TextBoxEditOverlay {
     private fun wireHeader(v: View) {
         v.findViewById<TextView>(R.id.btn_textbox_cancel).setOnClickListener { onCancelTapped() }
         v.findViewById<TextView>(R.id.btn_textbox_done).setOnClickListener { onDoneTapped() }
+        v.findViewById<TextView>(R.id.btn_textbox_copy).setOnClickListener { onCopyTapped(v) }
+    }
+
+    /** Copy the current EditText contents to the system clipboard. Does NOT dismiss the overlay —
+     *  matches the legacy Recognize-result modal where Copy was a side action (you could Copy and
+     *  then still Insert or Discard). */
+    private fun onCopyTapped(v: View) {
+        val rawText = v.findViewById<EditText>(R.id.edit_textbox_body)?.text?.toString() ?: return
+        val cm = v.context.getSystemService(android.content.ClipboardManager::class.java) ?: return
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("ForestNote text", rawText))
+        android.widget.Toast.makeText(v.context, "Copied", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     private fun wireStyleControls(v: View, fontCatalog: FontCatalog) {
