@@ -601,3 +601,57 @@ ON CONFLICT(id) DO UPDATE SET
     model = excluded.model,
     created_at = excluded.created_at,
     deleted_at = excluded.deleted_at;
+
+-- ── Library search ──────────────────────────────────────────────────────────
+-- Four parallel queries powering the Library search dialog. All scope library-wide
+-- (no current-folder / current-notebook filter). LIKE patterns are caller-built with
+-- the user's query escaped via the helper in NotebookRepository (% and _ → \% / \_),
+-- matched ESCAPE '\'. Soft-delete is filtered by *_live views for notebook/folder and
+-- by explicit `AND ... deleted_at IS NULL` for page / text_box / page_text_from_server.
+-- ORDER BY at the SQL level keeps the per-branch ordering stable; the caller merges
+-- branches and computes per-notebook page indices in one extra pass.
+
+searchNotebooksByName:
+SELECT id, name, folder_id FROM notebook_live
+WHERE name LIKE ? ESCAPE '\'
+ORDER BY name COLLATE NOCASE ASC, id ASC
+LIMIT ?;
+
+searchFoldersByName:
+SELECT id, name, parent_folder_id FROM folder_live
+WHERE name LIKE ? ESCAPE '\'
+ORDER BY name COLLATE NOCASE ASC, id ASC
+LIMIT ?;
+
+-- text-box hits: one row per matching live box, with the notebook + page routing
+-- context so the result can open the right page on tap.
+searchTextBoxes:
+SELECT t.id AS text_box_id, t.text AS hit_text,
+       p.id AS page_id, p.notebook_id AS notebook_id, p.sort_order AS page_sort_order,
+       n.name AS notebook_name
+FROM text_box t
+JOIN page p ON t.page_id = p.id
+JOIN notebook n ON p.notebook_id = n.id
+WHERE t.text LIKE ? ESCAPE '\'
+  AND t.deleted_at IS NULL
+  AND p.deleted_at IS NULL
+  AND n.deleted_at IS NULL
+ORDER BY n.name COLLATE NOCASE ASC, p.sort_order ASC, t.z ASC, t.created_at ASC
+LIMIT ?;
+
+-- page OCR hits: one row per page whose server-OCR'd text matches.
+-- pk on page_text_from_server is the page's ULID (1:1 with a page).
+searchPageOcrText:
+SELECT pfs.text AS hit_text,
+       p.id AS page_id, p.notebook_id AS notebook_id, p.sort_order AS page_sort_order,
+       n.name AS notebook_name
+FROM page_text_from_server pfs
+JOIN page p ON p.id = pfs.id
+JOIN notebook n ON p.notebook_id = n.id
+WHERE pfs.text LIKE ? ESCAPE '\'
+  AND pfs.deleted_at IS NULL
+  AND p.deleted_at IS NULL
+  AND n.deleted_at IS NULL
+ORDER BY n.name COLLATE NOCASE ASC, p.sort_order ASC
+LIMIT ?;
+

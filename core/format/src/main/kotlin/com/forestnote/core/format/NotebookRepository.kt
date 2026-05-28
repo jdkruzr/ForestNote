@@ -105,6 +105,12 @@ class NotebookRepository private constructor(
          */
         internal const val SYNC_BACKFILL_VERSION = 1
 
+        /** Library search row cap per branch — UI surfaces a "truncated" footer when any branch hits this. */
+        const val SEARCH_DEFAULT_LIMIT = 200
+
+        /** Shortest allowed search query — single-char queries match too much to be useful on e-ink. */
+        const val SEARCH_MIN_QUERY_LEN = 2
+
         /**
          * Open or create the library database, bootstrapping ≥1 notebook/≥1 page
          * and restoring the active context from `app_state`.
@@ -829,6 +835,79 @@ class NotebookRepository private constructor(
             if (TEXT_BOX_SYNC_ENABLED) enqueueOp("text_box", boxId, now)
             touchCurrentNotebook()
         }
+    }
+
+    // -- Library search ----------------------------------------------------
+    //
+    // Library-wide search across four content surfaces: notebook names, folder names, text-box
+    // content, and per-page server OCR text. All four .sq queries are LIKE-with-escape over the
+    // user's query (so '%'/'_' literals work); soft-deleted rows are filtered (live views for
+    // notebook/folder, explicit `deleted_at IS NULL` for page/text_box/page_text_from_server).
+    // Page-level hits carry the 1-based displayed page index, computed once per notebook with
+    // hits so the UI can show "Page N" without re-querying.
+
+    /**
+     * Library-wide search. Returns ordered [SearchHit]s (folders → notebooks → text-box → OCR)
+     * with a [SearchResults.truncated] flag set when any branch's row count reached [limit].
+     * Queries shorter than [SEARCH_MIN_QUERY_LEN] characters return no hits (single-char
+     * queries match too much to be useful on e-ink). All four branches are wrapped together
+     * here in the SAME read, on whichever thread the caller is on — typically the
+     * NotebookStore executor.
+     */
+    fun search(query: String, limit: Int = SEARCH_DEFAULT_LIMIT): SearchResults {
+        if (query.length < SEARCH_MIN_QUERY_LEN) return SearchResults(emptyList(), false)
+        val pattern = LikeEscape.containsPattern(query)
+        val lim = limit.toLong()
+
+        val folderRows = db.notebookQueries.searchFoldersByName(pattern, lim).executeAsList()
+        val notebookRows = db.notebookQueries.searchNotebooksByName(pattern, lim).executeAsList()
+        val textBoxRows = db.notebookQueries.searchTextBoxes(pattern, lim).executeAsList()
+        val ocrRows = db.notebookQueries.searchPageOcrText(pattern, lim).executeAsList()
+
+        // Any branch maxed out -> the caller (UI) shows a "results truncated" footer.
+        val truncated = folderRows.size.toLong() >= lim ||
+            notebookRows.size.toLong() >= lim ||
+            textBoxRows.size.toLong() >= lim ||
+            ocrRows.size.toLong() >= lim
+
+        // pageId -> 1-based displayed index, computed once per notebook that has page hits.
+        val needsIndex = (textBoxRows.map { it.notebook_id } + ocrRows.map { it.notebook_id }).toSet()
+        val pageIndex: Map<String, Map<String, Int>> = needsIndex.associateWith { nbId ->
+            val pages = db.notebookQueries.listPagesForNotebook(nbId).executeAsList()
+            pages.withIndex().associate { (i, row) -> row.id to (i + 1) }
+        }
+
+        val hits = buildList(folderRows.size + notebookRows.size + textBoxRows.size + ocrRows.size) {
+            folderRows.forEach {
+                add(SearchHit.FolderHit(folderId = it.id, name = it.name, parentFolderId = it.parent_folder_id))
+            }
+            notebookRows.forEach {
+                add(SearchHit.NotebookHit(notebookId = it.id, name = it.name, folderId = it.folder_id))
+            }
+            textBoxRows.forEach { row ->
+                val idx = pageIndex[row.notebook_id]?.get(row.page_id) ?: 0
+                add(SearchHit.TextBoxHit(
+                    textBoxId = row.text_box_id,
+                    notebookId = row.notebook_id,
+                    notebookName = row.notebook_name,
+                    pageId = row.page_id,
+                    pageIndex = idx,
+                    snippet = SnippetExtractor.extract(row.hit_text, query)
+                ))
+            }
+            ocrRows.forEach { row ->
+                val idx = pageIndex[row.notebook_id]?.get(row.page_id) ?: 0
+                add(SearchHit.PageOcrHit(
+                    notebookId = row.notebook_id,
+                    notebookName = row.notebook_name,
+                    pageId = row.page_id,
+                    pageIndex = idx,
+                    snippet = SnippetExtractor.extract(row.hit_text, query)
+                ))
+            }
+        }
+
+        return SearchResults(hits, truncated)
     }
 
     // -- Sync capture (Phase 2) --------------------------------------------

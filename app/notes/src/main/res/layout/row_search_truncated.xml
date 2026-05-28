@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Footer row appended when any search branch capped at SEARCH_DEFAULT_LIMIT. Static; not
+     clickable. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/row_search_truncated_text"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingTop="14dp"
+    android:paddingBottom="18dp"
+    android:text="Showing the first 200 matches. Refine your query to narrow down."
+    android:textColor="@color/gray_dark"
+    android:textSize="11sp"
+    android:textStyle="italic" />

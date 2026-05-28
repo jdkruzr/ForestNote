@@ -91,6 +91,41 @@
                 android:paddingBottom="2dp" />
         </LinearLayout>
 
+        <!-- Search: opens a modal dialog over the Library that searches notebook + folder
+             names, text-box content, and per-page OCR text (server-authored). A direct
+             action (no ▾) — taps the magnifier to open the dialog. -->
+        <LinearLayout
+            android:id="@+id/btn_library_search"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="Search"
+            android:background="?attr/selectableItemBackground">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_search"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Search"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
+
         <!-- Up (back one level; shown only inside a folder) -->
         <LinearLayout
             android:id="@+id/btn_library_back"

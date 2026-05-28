@@ -32,6 +32,8 @@ class LibraryView {
         val onOpenRecycleBin: () -> Unit,
         /** Manual "Sync now" tap (Phase 5). */
         val onSyncNow: () -> Unit,
+        /** Open the Library search dialog (notebook/folder names + text-box + OCR content). */
+        val onOpenSearch: () -> Unit,
         // Bulk actions on the current selection (D1 wires the UI; D2/D3 fill in the dialogs).
         val onBulkMove: (Set<String>) -> Unit,
         val onBulkDelete: (Set<String>) -> Unit
@@ -97,6 +99,7 @@ class LibraryView {
 
         view.findViewById<View>(R.id.btn_library_settings).setOnClickListener { callbacks.onOpenSettings() }
         view.findViewById<View>(R.id.btn_library_sync).setOnClickListener { callbacks.onSyncNow() }
+        view.findViewById<View>(R.id.btn_library_search).setOnClickListener { callbacks.onOpenSearch() }
         view.findViewById<View>(R.id.btn_library_add_notebook).setOnClickListener { callbacks.onNewNotebook() }
 
         // Recycle Bin: enabled this phase (E3). The count badge is filled in by reload().
@@ -192,6 +195,18 @@ class LibraryView {
     }
 
     private fun enterFolder(folderId: String) {
+        exitSelectMode()
+        currentFolderId = folderId
+        reload()
+    }
+
+    /**
+     * Navigate the (already-showing) Library to [folderId] (null = root). Same effect as
+     * tapping a folder card, but callable from outside — used by the Library search dialog
+     * to jump to a folder-name hit. No-op if the Library isn't showing.
+     */
+    fun navigateToFolder(folderId: String?) {
+        if (root == null) return
         exitSelectMode()
         currentFolderId = folderId
         reload()

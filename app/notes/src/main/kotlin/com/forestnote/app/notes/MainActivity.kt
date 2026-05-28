@@ -80,6 +80,8 @@ class MainActivity : Activity() {
     private val libraryView = LibraryView()
     // Full-screen Recycle Bin overlay (E3). Opened from the Library header; system back closes it.
     private val recycleBinView = RecycleBinView()
+    // Library search dialog (modal AlertDialog over the Library overlay).
+    private val searchDialog = com.forestnote.app.notes.search.SearchDialog()
     // Shared with DrawView (same instance); DrawView updates its extents on layout, so
     // virtualLongAxis is current by the time paste() reads it for the in-bounds offset.
     private val pageTransform = PageTransform()
@@ -454,6 +456,24 @@ class MainActivity : Activity() {
     }
 
     /**
+     * Like [goToNotebook] but lands on a specific page within the destination notebook.
+     * Used by the Library search dialog to open a page-level hit (text-box or OCR match)
+     * directly. The repo switches notebook+page in one executor task; only the target
+     * page's strokes/text boxes are loaded into the editor.
+     */
+    private fun goToNotebookPage(notebookId: String, pageId: String) {
+        textBoxEditor.commit()
+        editorLoaded = true
+        drawView.clearAll()
+        store.switchNotebookToPage(notebookId, pageId) { strokes ->
+            drawView.mergeLoadedStrokes(strokes)
+            drawView.gcRefresh()
+            refreshPageIndicator()
+        }
+        store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
+    }
+
+    /**
      * Load + paint the active page's ink and text boxes into the editor. This is the deferred
      * initial render: at launch we skip it when heading into the Library (so the editor doesn't
      * ghost under the overlay), then call it the first time the editor actually becomes visible.
@@ -491,6 +511,7 @@ class MainActivity : Activity() {
             onOpenSettings = { openSettings() },
             onOpenRecycleBin = { openRecycleBin() },
             onSyncNow = { syncController.syncNow() },
+            onOpenSearch = { showSearchDialog() },
             onBulkMove = { ids -> showMoveTargetDialog(ids) },
             onBulkDelete = { ids -> confirmBulkDelete(ids) }
         ))
@@ -509,6 +530,20 @@ class MainActivity : Activity() {
         } else {
             drawView.gcRefresh()
         }
+    }
+
+    /**
+     * Open the Library search dialog over the Library overlay. Tapping a result dismisses
+     * the dialog and either navigates the Library (folder hit) or opens the editor at the
+     * matching notebook/page (notebook / text-box / OCR hits).
+     */
+    private fun showSearchDialog() {
+        if (searchDialog.isShowing) return
+        searchDialog.show(this, store, com.forestnote.app.notes.search.SearchDialog.Callbacks(
+            onOpenFolder = { folderId -> libraryView.navigateToFolder(folderId) },
+            onOpenNotebook = { notebookId -> libraryView.hide(); goToNotebook(notebookId) },
+            onOpenPage = { notebookId, pageId -> libraryView.hide(); goToNotebookPage(notebookId, pageId) }
+        ))
     }
 
     /** Show the full-screen Recycle Bin overlay over the Library (E3). */
@@ -834,6 +869,8 @@ class MainActivity : Activity() {
         super.onPause()
         // Persist any in-progress text edit before backgrounding.
         textBoxEditor.commit()
+        // Don't leak the search dialog window if we pause with it open.
+        searchDialog.dismiss()
         // Stop the periodic timer and flush pending changes to UltraBridge.
         syncController.pause()
         if (isEInk) {

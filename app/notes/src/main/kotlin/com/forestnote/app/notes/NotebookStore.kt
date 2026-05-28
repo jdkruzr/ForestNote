@@ -11,6 +11,7 @@ import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.format.PageMeta
 import com.forestnote.core.format.PageTemplate
+import com.forestnote.core.format.SearchResults
 import com.forestnote.core.format.Settings
 import com.forestnote.core.format.SyncOp
 import com.forestnote.core.ink.Stroke
@@ -256,6 +257,40 @@ class NotebookStore(
                 .onFailure { android.util.Log.e(TAG, "failed to switch notebook", it) }
                 .getOrDefault(emptyList())
             poster { onLoaded(strokes) }
+        }
+    }
+
+    /**
+     * Switch the active notebook AND active page in one round-trip, then load and post the
+     * target page's strokes. Used by Library search to open a page-level hit directly.
+     * If [pageId] does not belong to [notebookId] the second hop is a no-op (the repo's
+     * switchPage doesn't validate cross-notebook ids), so callers should pass a hit's own
+     * (notebookId, pageId) pair.
+     */
+    fun switchNotebookToPage(notebookId: String, pageId: String, onLoaded: (List<Stroke>) -> Unit) {
+        executor.execute {
+            val strokes = runCatching {
+                repo?.switchNotebook(notebookId)
+                repo?.switchPage(pageId)
+                repo?.loadStrokes() ?: emptyList()
+            }
+                .onFailure { android.util.Log.e(TAG, "failed to switch notebook to page", it) }
+                .getOrDefault(emptyList())
+            poster { onLoaded(strokes) }
+        }
+    }
+
+    /**
+     * Library-wide search across notebooks, folders, text-box content, and per-page OCR.
+     * Off-thread; posts the merged, ordered result list + a [SearchResults.truncated] flag.
+     * Queries shorter than [NotebookRepository.SEARCH_MIN_QUERY_LEN] return no hits.
+     */
+    fun search(query: String, onResult: (SearchResults) -> Unit) {
+        executor.execute {
+            val results = runCatching { repo?.search(query) ?: SearchResults(emptyList(), false) }
+                .onFailure { android.util.Log.e(TAG, "failed to search library", it) }
+                .getOrDefault(SearchResults(emptyList(), false))
+            poster { onResult(results) }
         }
     }
 
