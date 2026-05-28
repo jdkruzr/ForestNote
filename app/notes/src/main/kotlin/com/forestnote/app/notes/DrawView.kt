@@ -101,10 +101,16 @@ class DrawView @JvmOverloads constructor(
 
     // ===== Text boxes (z-ordered text elements) =====
     // Authoritative in-memory model for the active page, rendered into the static bitmap in two
-    // bands: ZBand.BOTTOM below ink, ZBand.TOP above it. The box whose id == editingBoxId is
-    // skipped while a live EditText overlay is showing its text (Phase 3).
+    // bands: ZBand.BOTTOM below ink, ZBand.TOP above it.
     private val textBoxes = mutableListOf<TextBox>()
-    var editingBoxId: String? = null
+
+    /**
+     * A freshly drag-drawn box that hasn't been persisted yet. The [TextBoxEditOverlay] is showing
+     * for this box; Done promotes it (commitOverlayBox), Cancel discards it (discardPendingNewBox)
+     * without any DB write. Held outside [textBoxes] so a Cancel is literally just clearing the
+     * marker — nothing to remove, nothing to roll back.
+     */
+    private var pendingNewBox: TextBox? = null
 
     // Active style applied to newly-created boxes (font + size chosen via the Phase 4 chooser).
     var activeTextFontName: String = ""
@@ -117,14 +123,12 @@ class DrawView @JvmOverloads constructor(
     private var textDragScreen: RectF? = null
 
     /**
-     * Fired when a box needs the in-place editor: a freshly placed box (drag-to-draw) or a tapped
-     * existing box (Phase 5). The host overlays an EditText at [screenRect] and drives editing;
-     * the box's id is in [editingBoxId] so its static render is suppressed meanwhile.
+     * Fired when a box needs the full-screen [TextBoxEditOverlay]: either a freshly drag-drawn box
+     * ([isNewBox] = true) or the user tapping Edit/Options on a selected existing box. The host
+     * shows the overlay over the activity's content root; the overlay's opaque white background
+     * hides the canvas, so the soft keyboard's pan/resize no longer leaves e-ink ghosts.
      */
-    var onTextEditRequested: ((box: TextBox, screenRect: RectF) -> Unit)? = null
-
-    /** Fired when a canvas touch lands while editing — the host should commit the active editor. */
-    var onCommitEditRequested: (() -> Unit)? = null
+    var onOverlayEditRequested: ((box: TextBox, isNewBox: Boolean) -> Unit)? = null
 
     /** Fired when a box is selected (tapped) — the host shows the Edit/Options/Delete menu. */
     var onBoxSelected: ((box: TextBox, screenRect: RectF) -> Unit)? = null
@@ -446,6 +450,7 @@ class DrawView @JvmOverloads constructor(
         // with any selection / in-progress transform that referenced them.
         if (clearTextBoxes) {
             textBoxes.clear()
+            pendingNewBox = null              // page change drops any in-flight new box
             transformBox = null
             transformingBoxId = null
             boxGesture = BoxGesture.NONE
@@ -527,13 +532,9 @@ class DrawView @JvmOverloads constructor(
     // ========== Touch Event Handling ==========
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // While a text box is being edited, the EditText overlay (a sibling view on top) owns its
-        // own area; any touch that reaches the canvas is therefore OUTSIDE the box → commit the
-        // edit and consume the touch (so it doesn't also start a new box / stroke).
-        if (editingBoxId != null) {
-            if (event.actionMasked == MotionEvent.ACTION_DOWN) onCommitEditRequested?.invoke()
-            return true
-        }
+        // The TextBoxEditOverlay (when up) covers the whole activity and swallows touches via its
+        // own clickable root, so canvas touches during editing are impossible by construction —
+        // the legacy "commit-on-canvas-touch" auto-commit hook is gone.
         // Tool-type filtering (AC1.3): stylus/eraser draw, finger ignored
         if (!shouldAcceptToolType(event.getToolType(0))) {
             return false
@@ -911,41 +912,11 @@ class DrawView @JvmOverloads constructor(
         invalidate()
     }
 
-    /** Re-open the in-place editor on the selected box. */
+    /** Open the [TextBoxEditOverlay] on the selected box (Edit pill). */
     fun editSelectedBox() {
         val box = selectedBox() ?: return
-        editingBoxId = box.id
         onBoxSelectionCleared?.invoke()
-        composeStaticBitmap() // suppress its static render while the editor shows it
-        invalidate()
-        onTextEditRequested?.invoke(box, boxScreenRect(box))
-    }
-
-    /**
-     * Apply the Options dialog choices to the selected box: visible border, z-band,
-     * font, and text size. Defaults for [fontName] / [fontSizeV] are the current values
-     * so existing callers that only change border + z-band continue to work unchanged.
-     * Height is left alone — the user can resize via handles if a larger size overflows
-     * the box (and the text-retention rule keeps the data intact regardless).
-     */
-    fun applySelectedBoxOptions(
-        hasBorder: Boolean,
-        zBand: ZBand,
-        fontName: String? = null,
-        fontSizeV: Int? = null
-    ) {
-        val box = selectedBox() ?: return
-        val idx = textBoxes.indexOfFirst { it.id == box.id }
-        if (idx < 0) return
-        val updated = box.copy(
-            borderWidth = if (hasBorder) TextBox.DEFAULT_BORDER_WIDTH else 0,
-            zBand = zBand,
-            fontName = fontName ?: box.fontName,
-            fontSize = fontSizeV ?: box.fontSize
-        )
-        textBoxes[idx] = updated
-        store?.saveTextBox(updated)
-        redrawBitmap()
+        onOverlayEditRequested?.invoke(box, false)
     }
 
     /** Delete the selected box (soft-delete + remove from the model). */
@@ -1014,7 +985,8 @@ class DrawView @JvmOverloads constructor(
         val dragH = kotlin.math.abs(upVy - downVy)
         val tap = dragW < MIN_TEXT_DRAG_V || dragH < MIN_TEXT_DRAG_V
         val w = if (tap) DEFAULT_TEXT_WIDTH_V else dragW
-        // A box must be at least ~two lines tall; it auto-grows downward as the user types.
+        // A box must be at least ~two lines tall; height auto-grows on commit if the wrapped text
+        // exceeds the initial rect.
         val minH = activeTextFontSize * 2
         val h = if (tap) minH else max(dragH, minH)
         // Anchor at the rect's top-left (tap anchors at the pen-down point), clamped fully on-page.
@@ -1028,11 +1000,10 @@ class DrawView @JvmOverloads constructor(
             fontSize = activeTextFontSize,
             color = activeTextColor
         )
-        textBoxes.add(box)
-        editingBoxId = box.id
-        composeStaticBitmap() // box skipped while editing; the EditText shows it
-        invalidate()
-        onTextEditRequested?.invoke(box, boxScreenRect(box))
+        // Hold as pending — not yet in [textBoxes], not yet persisted. The overlay's Done path
+        // (commitOverlayBox) promotes it; Cancel (discardPendingNewBox) drops it cleanly.
+        pendingNewBox = box
+        onOverlayEditRequested?.invoke(box, true)
     }
 
     /** A virtual font size mapped to screen px (so the editor matches the static render). */
@@ -1045,26 +1016,62 @@ class DrawView @JvmOverloads constructor(
     )
 
     /**
-     * Commit an in-place edit. [screenHeightPx] is the editor's final pixel height (the box grows
-     * downward as text wraps); it's converted back to virtual units. Empty text discards the box
-     * (and deletes it if it had been persisted — idempotent). Otherwise the box is updated + saved.
+     * Drop a pending (never-persisted) new box. Called by the overlay's Cancel path when the user
+     * backs out of editing a freshly drag-drawn box. No DB write; the box was never in [textBoxes]
+     * so nothing to remove. No-op when [id] doesn't match the current pending box (defensive).
      */
-    fun commitTextBox(id: String, text: String, screenHeightPx: Float) {
-        editingBoxId = null
-        val idx = textBoxes.indexOfFirst { it.id == id }
-        if (idx < 0) { redrawBitmap(); return }
-        if (text.isEmpty()) {
-            textBoxes.removeAt(idx)
-            store?.deleteTextBox(id) // no-op if it was never persisted
+    fun discardPendingNewBox(id: String) {
+        if (pendingNewBox?.id == id) pendingNewBox = null
+    }
+
+    /**
+     * Persist an edit from [TextBoxEditOverlay]. [updatedBox] carries the new style fields
+     * (fontName / fontSize / weight / borderWidth / zBand); its height is stale and recomputed
+     * here against [text] using the same [StaticLayout] as on-page render ([measureTextBoxHeightPx]).
+     *
+     *  - Empty [text] discards the box. If it was pending-new, drop the pending marker; if it
+     *    was an existing box, soft-delete via the store.
+     *  - Non-empty [text]: pending-new is promoted (first DB write); existing is replaced in
+     *    place with the recomputed height. Selection is moved to the just-committed box so the
+     *    pill reappears.
+     */
+    fun commitOverlayBox(updatedBox: TextBox, text: String) {
+        val wasPending = (pendingNewBox?.id == updatedBox.id)
+        val trimmed = text.trim()
+
+        if (trimmed.isEmpty()) {
+            if (wasPending) {
+                pendingNewBox = null
+            } else {
+                val idx = textBoxes.indexOfFirst { it.id == updatedBox.id }
+                if (idx >= 0) {
+                    val old = textBoxes.removeAt(idx)
+                    store?.deleteTextBox(old.id)
+                    if (selectedBoxId == old.id) { selectedBoxId = null; onBoxSelectionCleared?.invoke() }
+                }
+            }
             redrawBitmap()
             return
         }
-        // toVirtualX is a pure scale inverse, so it doubles as a px->virtual size converter.
-        val heightV = transform.toVirtualX(screenHeightPx).coerceAtLeast(textBoxes[idx].fontSize)
-        val updated = textBoxes[idx].copy(text = text, height = heightV)
-        textBoxes[idx] = updated
-        store?.saveTextBox(updated)
+
+        val heightPx = measureTextBoxHeightPx(
+            widthV = updatedBox.width,
+            fontName = updatedBox.fontName,
+            weight = updatedBox.weight,
+            fontSizeV = updatedBox.fontSize,
+            text = trimmed,
+        )
+        // toVirtualX is a pure scale inverse, so it doubles as a px→virtual size converter.
+        val heightV = transform.toVirtualX(heightPx.toFloat()).toInt().coerceAtLeast(updatedBox.fontSize)
+        val final = updatedBox.copy(text = trimmed, height = heightV)
+
+        val idx = textBoxes.indexOfFirst { it.id == final.id }
+        if (idx >= 0) textBoxes[idx] = final else textBoxes.add(final)
+        if (wasPending) pendingNewBox = null
+        store?.saveTextBox(final)
+        selectedBoxId = final.id
         redrawBitmap()
+        onBoxSelected?.invoke(final, boxScreenRect(final))
     }
 
     private fun handleEraser(event: MotionEvent): Boolean {
@@ -1517,8 +1524,8 @@ class DrawView @JvmOverloads constructor(
      * Repaint the full static composite onto the offscreen bitmap, in z-order:
      * template → bottom-band text boxes → ink → top-band text boxes. The single place that defines
      * page layering, so every rebuild path (size change, load, clear, erase/redraw) funnels through
-     * here and the bands can't drift. The box being live-edited ([editingBoxId]) is skipped — its
-     * text is shown by the EditText overlay instead (Phase 3).
+     * here and the bands can't drift. Boxes mid-resize/move ([transformingBoxId]) are skipped here
+     * — they're drawn live in [onDraw] at the gesture's current rect.
      */
     private fun composeStaticBitmap() {
         val canvas = writingCanvas ?: return
@@ -1531,7 +1538,7 @@ class DrawView @JvmOverloads constructor(
 
     /** A box is drawn into the static bitmap unless it's currently being edited or transformed
      *  (those are shown live by the EditText / the onDraw overlay instead). */
-    private fun String.isStaticallyDrawn(): Boolean = this != editingBoxId && this != transformingBoxId
+    private fun String.isStaticallyDrawn(): Boolean = this != transformingBoxId
 
     /**
      * Draw one text box onto [canvas]. Text wraps to the box width via a [StaticLayout] and is

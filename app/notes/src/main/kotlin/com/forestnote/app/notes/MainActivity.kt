@@ -6,6 +6,7 @@ import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -69,7 +70,7 @@ class MainActivity : Activity() {
     // In-process clipboard for lasso Cut/Copy/Paste (held across A7 selection + A8 paste).
     private val clipboard = InProcessClipboard()
     private lateinit var selectionMenu: SelectionMenuView
-    private lateinit var textBoxEditor: TextBoxEditor
+    private val textBoxEditOverlay = TextBoxEditOverlay()
     private lateinit var textBoxMenu: TextBoxMenuView
 
     /** Whether the editor's ink/text has been painted this session. False until we either launch
@@ -208,33 +209,26 @@ class MainActivity : Activity() {
             }
         }
 
-        // Text-box in-place editor: overlays an EditText on the canvas container. DrawView asks to
-        // open it (drag-to-draw / re-edit) and to commit it (a canvas touch while editing); the
-        // commit reports text + pixel height back to DrawView, which maps it to virtual geometry.
-        val canvasContainer: FrameLayout = findViewById(R.id.canvas_container)
-        textBoxEditor = TextBoxEditor(
-            container = canvasContainer,
-            fontResolver = { name, weight -> drawView.fontResolver(name, weight) },
-            onCommit = { id, text, heightPx -> drawView.commitTextBox(id, text, heightPx) },
-            // The IME pop/dismiss pans/resizes the window (default softInputMode); once it settles,
-            // GC-refresh the editor to clear the shift ghosting. 350ms ≈ keyboard slide + settle.
-            // (Tried windowSoftInputMode=adjustNothing on the Viwoods build: ANR'd hard on IME show
-            // — see [[viwoods-adjustnothing-anr]]. The reflow-ghost fix needs a different approach.)
-            onImeShifted = { drawView.postDelayed({ drawView.gcRefresh() }, 350L) }
-        )
-        drawView.onTextEditRequested = { box, rect ->
-            textBoxEditor.begin(box, rect, drawView.screenTextSize(box.fontSize))
+        // Text-box edit overlay: a full-screen opaque View attached to the activity's content root.
+        // Replaces the old in-canvas EditText approach — the canvas underneath is hidden during
+        // text entry, so the soft keyboard's pan/resize no longer ghosts the e-ink panel.
+        // ([[viwoods-adjustnothing-anr]]: `windowSoftInputMode=adjustNothing` is a dead-end on this
+        // device; opacity-hides-canvas is the right approach.)
+        drawView.onOverlayEditRequested = { box, isNewBox ->
+            openEditOverlay(box, isNewBox = isNewBox, focusForEditing = true)
         }
-        drawView.onCommitEditRequested = { textBoxEditor.commit() }
 
         // Text-box selection menu (Edit / Options / Delete), shown when a box is tapped.
         textBoxMenu = TextBoxMenuView(isEInk)
         drawView.onBoxSelected = { box, rect ->
             fileLogger.log("Box", "onBoxSelected id=${box.id} rect=($rect)")
             textBoxMenu.show(drawView, rect, TextBoxMenuView.Callbacks(
+                // Edit pill: opens the overlay with the EditText focused (keyboard pops).
                 onEdit = { drawView.editSelectedBox() },
-                onOptions = { drawView.selectedBox()?.let { showTextBoxOptions(it) } },
-                onDelete = { drawView.deleteSelectedBox() }
+                // Options pill: same overlay but with focusForEditing=false — user lands on the
+                // style strip with the keyboard down; tapping into the EditText pops it normally.
+                onOptions = { drawView.selectedBox()?.let { openEditOverlay(it, isNewBox = false, focusForEditing = false) } },
+                onDelete = { drawView.deleteSelectedBox() },
             ))
         }
         drawView.onBoxSelectionCleared = {
@@ -244,9 +238,9 @@ class MainActivity : Activity() {
 
         // Create and wire ToolBar
         toolBar = ToolBar(toolBarRoot, isEInk) { tool ->
-            // Switching tools commits any in-progress text edit first (a toolbar tap won't reach
-            // the canvas, so the canvas-touch commit path doesn't fire).
-            textBoxEditor.commit()
+            // Switching tools commits any in-flight overlay edit first — the user's typing isn't
+            // dropped just because they tapped a tool cell.
+            textBoxEditOverlay.commitIfShowing()
             drawView.activeTool = tool
         }
         // Propagate pen-variant choice to the canvas (affects width/colour/compositing).
@@ -349,96 +343,47 @@ class MainActivity : Activity() {
     }
 
     /**
-     * The selected text box's Options dialog: font, text size, visible-border toggle, and
-     * z-band (bottom = below ink, top = above everything). Pre-filled with the box's
-     * current values (not the active toolbar defaults — per-box semantic). Saving
-     * applies all four choices via DrawView in one redraw.
+     * Open the full-screen [TextBoxEditOverlay] over [box]. Used by both pill entries (Edit and
+     * Options) and by `DrawView.onOverlayEditRequested` (drag-to-draw new box). [focusForEditing]
+     * controls whether the EditText steals focus immediately + the IME pops — true from Edit, false
+     * from Options.
      *
-     * Font picker = a Spinner of device fonts from the captured [FontCatalog] (same list
-     * the ToolBar's Text-cell chooser uses). Size picker = a horizontal radio strip of
-     * the shared [TextStylePresets.SIZES]. If the catalog hasn't finished loading yet,
-     * the font Spinner stays disabled and the box keeps its current font on Save —
-     * border/zBand/size are still independently editable.
+     * On commit, the host (DrawView) recomputes the box's virtual height against the chosen font
+     * + text + width, persists, and re-selects the box so the pill reappears. On cancel of a new
+     * (pending) box, the overlay's wasNewBox=true routes through `discardPendingNewBox` — no DB
+     * write occurred for that box, so it disappears cleanly.
+     *
+     * Defensive: if the [FontCatalog] hasn't finished loading at the time of the request (rare —
+     * it loads off-thread during cold launch), we bail and leave the pill up. The user can retry
+     * a moment later.
      */
-    private fun showTextBoxOptions(box: TextBox) {
-        val pad = (16 * resources.displayMetrics.density).toInt()
-        val pad8 = (8 * resources.displayMetrics.density).toInt()
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, pad)
+    private fun openEditOverlay(box: TextBox, isNewBox: Boolean, focusForEditing: Boolean) {
+        val catalog = fontCatalog ?: run {
+            fileLogger.log("Box", "openEditOverlay deferred — FontCatalog not ready yet")
+            return
         }
-
-        // --- Font picker ---------------------------------------------------------
-        layout.addView(TextView(this).apply {
-            text = "Font"
-            setPadding(0, 0, 0, pad8)
-        })
-        val fontNames = fontCatalog?.names ?: emptyList()
-        val fontSpinner = android.widget.Spinner(this).apply {
-            adapter = android.widget.ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                if (fontNames.isEmpty()) listOf("(loading…)") else fontNames
-            )
-            isEnabled = fontNames.isNotEmpty()
-            if (fontNames.isNotEmpty()) {
-                val idx = fontNames.indexOf(box.fontName).coerceAtLeast(0)
-                setSelection(idx)
-            }
-        }
-        layout.addView(fontSpinner)
-
-        // --- Size picker ---------------------------------------------------------
-        layout.addView(TextView(this).apply {
-            text = "Size"
-            setPadding(0, pad, 0, pad8)
-        })
-        val sizeGroup = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL }
-        val sizeRadioIds = mutableMapOf<Int, Int>() // virtual-size → radio id
-        TextStylePresets.SIZES.forEach { (label, sizeV) ->
-            val rid = View.generateViewId()
-            sizeRadioIds[sizeV] = rid
-            sizeGroup.addView(RadioButton(this).apply {
-                id = rid
-                text = label
-                setPadding(0, 0, pad, 0)
-            })
-        }
-        // Pre-check the box's current size, or fall through to no selection if it's
-        // off-preset (a synced or hand-tuned size — Save keeps the original in that case).
-        sizeRadioIds[box.fontSize]?.let { sizeGroup.check(it) }
-        layout.addView(sizeGroup)
-
-        // --- Visible border ------------------------------------------------------
-        val borderCheck = CheckBox(this).apply {
-            text = "Show border"
-            isChecked = box.borderWidth > 0
-        }
-        layout.addView(borderCheck)
-
-        // --- Z-band --------------------------------------------------------------
-        val rbBottom = RadioButton(this).apply { text = "Bottom (below ink)"; id = View.generateViewId() }
-        val rbTop = RadioButton(this).apply { text = "Top (above everything)"; id = View.generateViewId() }
-        val zGroup = RadioGroup(this).apply {
-            orientation = RadioGroup.VERTICAL
-            addView(rbBottom)
-            addView(rbTop)
-            check(if (box.zBand == ZBand.TOP) rbTop.id else rbBottom.id)
-        }
-        layout.addView(zGroup)
-
-        AlertDialog.Builder(this)
-            .setTitle("Text box options")
-            .setView(layout)
-            .setPositiveButton("Save") { _, _ ->
-                val zBand = if (zGroup.checkedRadioButtonId == rbTop.id) ZBand.TOP else ZBand.BOTTOM
-                val newFont = if (fontNames.isNotEmpty()) fontNames[fontSpinner.selectedItemPosition] else null
-                val checkedSizeId = sizeGroup.checkedRadioButtonId
-                val newSize = sizeRadioIds.entries.firstOrNull { it.value == checkedSizeId }?.key
-                drawView.applySelectedBoxOptions(borderCheck.isChecked, zBand, newFont, newSize)
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        val host = findViewById<ViewGroup>(android.R.id.content)
+        textBoxEditOverlay.show(
+            host = host,
+            box = box,
+            isNewBox = isNewBox,
+            fontCatalog = catalog,
+            fontResolver = { name, weight -> drawView.fontResolver(name, weight) },
+            screenTextSize = { sizeV -> drawView.screenTextSize(sizeV) },
+            focusForEditing = focusForEditing,
+            callbacks = TextBoxEditOverlay.Callbacks(
+                onCommit = { updated, text ->
+                    drawView.commitOverlayBox(updated, text)
+                    textBoxEditOverlay.hide()
+                    drawView.gcRefresh()             // single clean refresh post-dismiss
+                },
+                onCancel = { boxId, wasNew ->
+                    if (wasNew) drawView.discardPendingNewBox(boxId)
+                    textBoxEditOverlay.hide()
+                    drawView.gcRefresh()
+                },
+            ),
+        )
     }
 
     /**
@@ -669,7 +614,7 @@ class MainActivity : Activity() {
 
     /** Swap to another page: clear canvas, load its ink, refresh overlay + indicator. */
     private fun goToPage(pageId: String) {
-        textBoxEditor.commit() // persist any in-progress text edit before leaving the page
+        textBoxEditOverlay.commitIfShowing() // persist any in-progress text edit before leaving the page
         drawView.clearAll()
         store.switchPage(pageId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
@@ -681,7 +626,7 @@ class MainActivity : Activity() {
 
     /** Reload whatever page the repo currently considers active (after a delete). */
     private fun reloadCurrentPage() {
-        textBoxEditor.commit()
+        textBoxEditOverlay.commitIfShowing()
         drawView.clearAll()
         store.load { strokes ->
             drawView.mergeLoadedStrokes(strokes)
@@ -694,7 +639,7 @@ class MainActivity : Activity() {
     /** Swap to another notebook: clear canvas, load its active/first page. Entered from the Library,
      *  so GC-refresh to clear any overlay ghost (and it counts as the editor's first paint). */
     private fun goToNotebook(notebookId: String) {
-        textBoxEditor.commit()
+        textBoxEditOverlay.commitIfShowing()
         editorLoaded = true
         drawView.clearAll()
         store.switchNotebook(notebookId) { strokes ->
@@ -712,7 +657,7 @@ class MainActivity : Activity() {
      * page's strokes/text boxes are loaded into the editor.
      */
     private fun goToNotebookPage(notebookId: String, pageId: String) {
-        textBoxEditor.commit()
+        textBoxEditOverlay.commitIfShowing()
         editorLoaded = true
         drawView.clearAll()
         store.switchNotebookToPage(notebookId, pageId) { strokes ->
@@ -772,7 +717,7 @@ class MainActivity : Activity() {
      */
     private fun openLibrary() {
         if (libraryView.isShowing) return
-        textBoxEditor.commit() // don't strand an open editor behind the Library overlay
+        textBoxEditOverlay.commitIfShowing() // don't strand an open editor behind the Library overlay
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
         libraryView.show(content, store, LibraryView.Callbacks(
             onOpenNotebook = { card -> libraryView.hide(); goToNotebook(card.id) },
@@ -985,6 +930,12 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        // Text-box edit overlay first — it sits over all other overlays. Back = Cancel (with the
+        // wasNewBox semantic: pending boxes are discarded; existing boxes revert to unchanged).
+        if (textBoxEditOverlay.isShowing) {
+            textBoxEditOverlay.requestCancel()
+            return
+        }
         if (recycleBinView.isShowing) {
             closeRecycleBin()
             return
@@ -1146,7 +1097,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause()
         // Persist any in-progress text edit before backgrounding.
-        textBoxEditor.commit()
+        textBoxEditOverlay.commitIfShowing()
         // Don't leak any modal dialog window if we pause with one open.
         searchDialog.dismiss()
         ocrTextDialog.dismiss()
@@ -1177,7 +1128,7 @@ class MainActivity : Activity() {
         // are up. Stray AlertDialogs are covered implicitly: an open AlertDialog holds window focus
         // away from this Activity, so `regained` only flips when the dialog has already closed.
         if (libraryView.isShowing || settingsView.isShowing || recycleBinView.isShowing ||
-            ocrTextDialog.isShowing || textBoxEditor.isActive) return
+            ocrTextDialog.isShowing || textBoxEditOverlay.isShowing) return
         drawView.post { drawView.gcRefresh() }
     }
 
