@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full-screen Text-Box Edit overlay. Opaque white + clickable so it covers the editor
+     and swallows stray touches; the canvas underneath is hidden, so the soft keyboard's
+     pan/resize no longer ghosts on the e-ink panel. Header (Cancel + title + Done) over
+     a 1px rule, then the body EditText (weight=1, fills), then the style strip at the
+     bottom (horizontally scrollable for narrow screens). Mirrors the LibraryView /
+     SettingsView / RecycleBinView pattern. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/textbox_edit_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/white"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Header: Cancel | title | Done -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
+
+        <TextView
+            android:id="@+id/btn_textbox_cancel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="←  Cancel"
+            android:textColor="@color/black"
+            android:textSize="18sp"
+            android:padding="8dp" />
+
+        <TextView
+            android:id="@+id/textbox_edit_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="Edit text"
+            android:textColor="@color/black"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btn_textbox_done"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Done  →"
+            android:textColor="@color/black"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:padding="8dp" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/black" />
+
+    <!-- Body: the EditText fills the middle. -->
+    <EditText
+        android:id="@+id/edit_textbox_body"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@android:color/transparent"
+        android:gravity="top|start"
+        android:inputType="textMultiLine|textCapSentences"
+        android:padding="24dp"
+        android:textColor="@color/black"
+        android:textSize="20sp" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/black" />
+
+    <!-- Style strip: font, size, weight, border, z-band. Horizontal scroll for narrow
+         screens; the AiPaper Mini is wide enough today but the strip stays robust. -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:fillViewport="false">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp">
+
+            <!-- Font label + dropdown -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Font"
+                android:textColor="@color/black"
+                android:textSize="14sp"
+                android:layout_marginEnd="6dp" />
+
+            <Spinner
+                android:id="@+id/spinner_textbox_font"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="160dp"
+                android:layout_marginEnd="20dp" />
+
+            <!-- Size label + RadioGroup populated from TextStylePresets.SIZES in code -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Size"
+                android:textColor="@color/black"
+                android:textSize="14sp"
+                android:layout_marginEnd="6dp" />
+
+            <RadioGroup
+                android:id="@+id/group_textbox_size"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginEnd="20dp" />
+
+            <!-- Weight: Normal / Bold -->
+            <ToggleButton
+                android:id="@+id/toggle_textbox_weight"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textOn="Bold"
+                android:textOff="Normal"
+                android:textSize="14sp"
+                android:layout_marginEnd="20dp" />
+
+            <!-- Border -->
+            <CheckBox
+                android:id="@+id/check_textbox_border"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Border"
+                android:textColor="@color/black"
+                android:textSize="14sp"
+                android:layout_marginEnd="20dp" />
+
+            <!-- Z-band label + RadioGroup -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Layer"
+                android:textColor="@color/black"
+                android:textSize="14sp"
+                android:layout_marginEnd="6dp" />
+
+            <RadioGroup
+                android:id="@+id/group_textbox_zband"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <RadioButton
+                    android:id="@+id/radio_textbox_zband_bottom"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Below ink"
+                    android:textColor="@color/black"
+                    android:textSize="14sp" />
+
+                <RadioButton
+                    android:id="@+id/radio_textbox_zband_top"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Above ink"
+                    android:textColor="@color/black"
+                    android:textSize="14sp" />
+            </RadioGroup>
+        </LinearLayout>
+    </HorizontalScrollView>
+</LinearLayout>
