@@ -402,6 +402,10 @@ class MainActivity : Activity() {
         store.listPages { pages, activeId ->
             pageIds = pages.map { it.id }
             activePageId = activeId
+            // The OCR toolbar button's enabled state depends on activePageId, so refresh it
+            // HERE — inside the same callback where activePageId actually gets set — not at
+            // the original call site (which runs while activePageId is still stale/empty).
+            refreshOcrButtonState()
             pageIndicator.text = PageNavigationLogic.label(pageIds, activePageId)
             // On the last page the next arrow grows a "+" badge (AC3.1).
             btnNext.setImageResource(
@@ -430,8 +434,7 @@ class MainActivity : Activity() {
         store.switchPage(pageId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()       // clears e-ink ghosting on switch (AC6.4)
-            refreshPageIndicator()
-            refreshOcrButtonState()
+            refreshPageIndicator() // its listPages callback chains the OCR refresh too
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
@@ -443,8 +446,7 @@ class MainActivity : Activity() {
         store.load { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()
-            refreshPageIndicator()
-            refreshOcrButtonState()
+            refreshPageIndicator() // chains refreshOcrButtonState
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
@@ -458,8 +460,7 @@ class MainActivity : Activity() {
         store.switchNotebook(notebookId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             drawView.gcRefresh()
-            refreshPageIndicator()
-            refreshOcrButtonState()
+            refreshPageIndicator() // chains refreshOcrButtonState
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
@@ -477,8 +478,7 @@ class MainActivity : Activity() {
         store.switchNotebookToPage(notebookId, pageId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             drawView.gcRefresh()
-            refreshPageIndicator()
-            refreshOcrButtonState()
+            refreshPageIndicator() // chains refreshOcrButtonState
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
@@ -492,8 +492,7 @@ class MainActivity : Activity() {
         editorLoaded = true
         store.load { strokes ->
             drawView.mergeLoadedStrokes(strokes)
-            refreshPageIndicator()
-            refreshOcrButtonState()
+            refreshPageIndicator() // chains refreshOcrButtonState
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
     }
