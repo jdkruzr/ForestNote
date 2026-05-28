@@ -7,6 +7,7 @@ import com.forestnote.core.ink.StrokePoint
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -201,7 +202,7 @@ class MigrationTest {
         // openExisting → bootstrap queries the current tables (notebook incl. modified_at +
         // folder_id + soft-delete cols, app_state incl. settings_json) AND reads the notebook_live
         // view, so migrate all the way up to the current schema.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 12L)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 13L)
 
         // openExisting (no schema.create) must work against the migrated DB.
         val repo = NotebookRepository.openExisting(driver)
@@ -225,7 +226,7 @@ class MigrationTest {
         createV2Schema(driver)
 
         // Migrate to the current version; runs v2->v3 plus every later step up to v11->v12.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 12L)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 13L)
 
         assertTrue(tableExists(driver, "notebook"), "notebook table exists after v2->v3")
         assertTrue(tableExists(driver, "app_state"), "app_state table exists after v2->v3")
@@ -569,8 +570,9 @@ class MigrationTest {
         // pre-existing notebook (this would throw "no such table: notebook_live" if not).
         // The repo's generated queries target the current schema, so finish the upgrade before
         // opening (v7->v8 sync tables + deleted_at; v8->v9 joined; v9->v10 text_box; v10->v11
-        // backfill_version; v11->v12 page_text_* tables; no view change).
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 12L)
+        // backfill_version; v11->v12 page_text_* tables; v12->v13 local stale_at column;
+        // no view change).
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 13L)
         val repo = NotebookRepository.openExisting(driver)
         assertTrue(repo.listNotebooks().any { it.id == "n1" }, "live query (via notebook_live view) returns the kept notebook")
 
@@ -766,6 +768,45 @@ class MigrationTest {
             { c -> c.next(); text = c.getString(0); QueryResult.Value(Unit) }, 0
         )
         assertEquals("hello world", text, "page_text_from_server row round-trips after migration")
+
+        driver.close()
+    }
+
+    /**
+     * Local-only OCR staleness column: migrating v12 -> v13 adds page_text_from_server.stale_at
+     * non-destructively. The column is LOCAL-ONLY — it must NOT appear in the sync wire (see
+     * OcrStalenessTest's wire-purity assertions). v12 rows survive with NULL stale_at (= fresh).
+     */
+    @Test
+    fun v12ToV13AddsStaleAtColumn() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        createV7PageStroke(driver)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 12L)
+        // Seed a pre-v13 page_text row so we can assert v12 rows survive the column add.
+        driver.execute(
+            null,
+            "INSERT INTO page_text_from_server(id, text, ocr_at, model, created_at, deleted_at) " +
+                "VALUES ('p1', 'hi', 100, 'ub-ocr', 90, NULL)",
+            0
+        )
+        assertFalse(columnNames(driver, "page_text_from_server").contains("stale_at"),
+            "v12 has no stale_at column")
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 12L, newVersion = 13L)
+
+        assertTrue(columnNames(driver, "page_text_from_server").contains("stale_at"),
+            "stale_at exists after v12->v13")
+        // page_text_from_client deliberately does NOT get stale_at (the reserved client-OCR
+        // sibling is not consulted by the dialog; if/when it ships, add separately).
+        assertFalse(columnNames(driver, "page_text_from_client").contains("stale_at"),
+            "stale_at is added ONLY to page_text_from_server, not the reserved client sibling")
+
+        var preservedStale: Long? = -1L
+        driver.executeQuery(
+            null, "SELECT stale_at FROM page_text_from_server WHERE id = 'p1'",
+            { c -> c.next(); preservedStale = c.getLong(0); QueryResult.Value(Unit) }, 0
+        )
+        assertNull(preservedStale, "pre-existing v12 rows survive with NULL stale_at (= fresh)")
 
         driver.close()
     }

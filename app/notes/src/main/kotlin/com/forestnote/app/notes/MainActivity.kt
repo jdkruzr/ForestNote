@@ -649,19 +649,56 @@ class MainActivity : Activity() {
             toolBar.setOcrEnabled(false)
             return
         }
-        store.loadPageTextFromServer(pageId) { r -> toolBar.setOcrEnabled(r != null) }
+        // Capture pageId locally so a slow callback that lands AFTER a page switch can
+        // be ignored — otherwise the toolbar (and the open dialog) would briefly show
+        // the previous page's OCR state. Same discipline used in showOcrDialog below.
+        val requestedPageId = pageId
+        store.loadPageTextFromServer(requestedPageId) { r ->
+            if (activePageId != requestedPageId) return@loadPageTextFromServer
+            toolBar.setOcrEnabled(r != null)
+            // If the dialog is open on the same page, push the fresh row in so the dimmed
+            // "OCR pending" state clears (or appears) without the user closing/reopening.
+            // Hook is called on every page switch AND on SyncStatus.Synced, so this is
+            // the natural place for dialog auto-refresh too.
+            ocrTextDialog.update(r)
+        }
     }
 
     /**
      * Open the OCR-text viewer dialog for the active page. Re-reads the OCR row each open
      * (cheap, off-thread) rather than caching, so a sync that delivered new text since the
      * button was enabled is reflected without a separate refresh round-trip.
+     *
+     * The dialog's refresh button re-runs the same load path (page-scoped). The auto-refresh
+     * on SyncStatus.Synced runs through [refreshOcrButtonState] (which calls
+     * [ocrTextDialog.update] when the dialog is open).
      */
     private fun showOcrDialog() {
         if (ocrTextDialog.isShowing) return
         val pageId = activePageId.takeIf { it.isNotEmpty() } ?: return
-        store.loadPageTextFromServer(pageId) { r ->
-            ocrTextDialog.show(this, r, onRedrawNeeded = { drawView.gcRefresh() })
+        val requestedPageId = pageId
+        store.loadPageTextFromServer(requestedPageId) { r ->
+            if (activePageId != requestedPageId) return@loadPageTextFromServer
+            ocrTextDialog.show(
+                this,
+                recognizedFromServer = r,
+                onRefresh = { refreshOcrInDialog() },
+                onRedrawNeeded = { drawView.gcRefresh() }
+            )
+        }
+    }
+
+    /**
+     * Re-read the active page's server-OCR row and push it into the open dialog (no-op
+     * if not open). Wired to the refresh button in OcrTextDialog.show(); page-scoped so
+     * a fast user can't get the previous page's row pushed into the current page's view.
+     */
+    private fun refreshOcrInDialog() {
+        if (!ocrTextDialog.isShowing) return
+        val requestedPageId = activePageId.takeIf { it.isNotEmpty() } ?: return
+        store.loadPageTextFromServer(requestedPageId) { r ->
+            if (activePageId != requestedPageId) return@loadPageTextFromServer
+            ocrTextDialog.update(r)
         }
     }
 

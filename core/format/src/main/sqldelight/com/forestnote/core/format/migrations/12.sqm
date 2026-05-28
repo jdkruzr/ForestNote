@@ -1,0 +1,10 @@
+-- v12 -> v13: add a LOCAL-ONLY stale marker to page_text_from_server. NON-destructive.
+--   * stale_at: ms-UTC the device noticed the page changed since the server-OCR'd text was
+--     recorded. Set by markPageTextStale on stroke/text-box mutations; cleared on every
+--     server upsert (applyUpsertPageTextFromServer). NULL = either no row, or row matches
+--     current page state.
+-- IMPORTANT: stale_at is NOT a synced column. It is deliberately ABSENT from
+-- SyncWire.pageTextCols, SyncMerge.knownCols["page_text_from_server"], and the
+-- corresponding decode path. The v3 schema hash (724411eb…) does not change.
+-- create() and migrate() never both run on one DB.
+ALTER TABLE page_text_from_server ADD COLUMN stale_at INTEGER;

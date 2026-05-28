@@ -58,11 +58,17 @@ data class FolderMeta(
  * Server-authored recognized text for a single page (`page_text_from_server`). pk is the
  * page's ULID — 1:1 with a page. [model] is the OCR engine identifier set by UltraBridge
  * (may be NULL for older rows). Null when the server has not OCR'd the page yet.
+ *
+ * [isStale] = true when the device has locally noticed a page mutation (stroke or text-box
+ * change) since the row's [ocrAt] — the dialog uses this to dim the body and show a
+ * "pending" badge until the next server upsert lands and clears the marker. Source is the
+ * LOCAL-ONLY `stale_at` column (NOT a synced field; see notebook.sq §page_text_from_server).
  */
 data class RecognizedText(
     val text: String,
     val ocrAt: Long,
-    val model: String?
+    val model: String?,
+    val isStale: Boolean = false
 )
 
 /**
@@ -674,6 +680,7 @@ class NotebookRepository private constructor(
                 created_at = now
             )
             enqueueOp("stroke", stroke.id, now)
+            markPageOcrStale(currentPageId, now)
             touchCurrentNotebook()
         }
     }
@@ -727,6 +734,7 @@ class NotebookRepository private constructor(
             val now = clock()
             db.notebookQueries.softDeleteStroke(now, strokeId)
             enqueueOp("stroke", strokeId, now)
+            markPageOcrStale(currentPageId, now)
             touchCurrentNotebook()
         }
     }
@@ -765,6 +773,7 @@ class NotebookRepository private constructor(
                 )
                 enqueueOp("stroke", stroke.id, now)
             }
+            markPageOcrStale(currentPageId, now)
             touchCurrentNotebook()
         }
     }
@@ -779,6 +788,7 @@ class NotebookRepository private constructor(
             val ids = db.notebookQueries.getStrokesForPage(currentPageId).executeAsList().map { it.id }
             db.notebookQueries.softDeleteStrokesForPage(now, currentPageId)
             ids.forEach { enqueueOp("stroke", it, now) }
+            markPageOcrStale(currentPageId, now)
             touchCurrentNotebook()
         }
     }
@@ -812,6 +822,7 @@ class NotebookRepository private constructor(
                 created_at = now
             )
             if (TEXT_BOX_SYNC_ENABLED) enqueueOp("text_box", box.id, now)
+            markPageOcrStale(currentPageId, now)
             touchCurrentNotebook()
         }
     }
@@ -844,6 +855,7 @@ class NotebookRepository private constructor(
             val now = clock()
             db.notebookQueries.softDeleteTextBox(now, boxId)
             if (TEXT_BOX_SYNC_ENABLED) enqueueOp("text_box", boxId, now)
+            markPageOcrStale(currentPageId, now)
             touchCurrentNotebook()
         }
     }
@@ -853,11 +865,32 @@ class NotebookRepository private constructor(
      * server has not OCR'd this page yet. The editor's OCR-text viewer uses null to
      * decide the toolbar button's greyed state — page_text_from_server is single-writer
      * (server-only), so there is no client author path to invalidate.
+     *
+     * Surfaces the LOCAL stale_at marker via [RecognizedText.isStale]: true when a
+     * stroke/text-box mutation has flipped the row stale since the last server upsert.
+     * The dialog dims the body + shows a "pending" badge in that state; the next server
+     * upsert clears stale_at automatically (see applyUpsertPageTextFromServer).
      */
     fun loadPageTextFromServer(pageId: String): RecognizedText? =
         db.notebookQueries.getLivePageTextFromServer(pageId).executeAsOneOrNull()?.let {
-            RecognizedText(text = it.text, ocrAt = it.ocr_at, model = it.model)
+            RecognizedText(
+                text = it.text,
+                ocrAt = it.ocr_at,
+                model = it.model,
+                isStale = it.stale_at != null
+            )
         }
+
+    /**
+     * Mark the page's server-OCR row as locally stale (called from inside the mutation's
+     * own transaction by saveStroke/deleteStroke/applyErase/clearPage/saveTextBox/
+     * deleteTextBox). No-op when the page has no row yet (toolbar is already disabled in
+     * that case) or when the row is already stale (first-mutation-wins keeps stale_at
+     * meaningful as "stale since when"). Not a sync op — stale_at is local-only.
+     */
+    private fun markPageOcrStale(pageId: String, now: Long) {
+        db.notebookQueries.markPageTextStale(now, pageId)
+    }
 
     // -- Library search ----------------------------------------------------
     //

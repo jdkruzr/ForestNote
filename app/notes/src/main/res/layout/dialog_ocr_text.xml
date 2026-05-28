@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Editor OCR-text viewer dialog. A modal AlertDialog (title set in code) hosts this:
-     a Spinner picks the source ("Server recognized" / "Device recognized"), a small meta
-     line shows the model + recognition timestamp, and a ScrollView shows the recognized
-     text body. Device recognition is a stub for now — the spinner entry is present so
-     the UI is forward-compatible; selecting it shows a "not available yet" message. -->
+     a Spinner picks the source ("Server recognized" / "Device recognized"), a meta row
+     shows the model + recognition timestamp alongside a refresh button, an optional
+     stale badge appears when the page has been edited since the last server OCR, and
+     a ScrollView shows the recognized text body (dimmed when stale). Device recognition
+     is a stub for now — the spinner entry is present so the UI is forward-compatible;
+     selecting it shows a "not available yet" message. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/ocr_root"
     android:layout_width="match_parent"
@@ -21,16 +23,51 @@
         android:layout_height="wrap_content"
         android:contentDescription="Recognition source" />
 
-    <TextView
-        android:id="@+id/ocr_source_meta"
+    <!-- Meta row: model+timestamp on the left, refresh button on the right. Refresh
+         re-reads page_text_from_server (in case sync delivered a new row mid-dialog). -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
         android:paddingTop="8dp"
-        android:paddingBottom="8dp"
-        android:textColor="@color/gray_dark"
+        android:paddingBottom="8dp">
+
+        <TextView
+            android:id="@+id/ocr_source_meta"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="@color/gray_dark"
+            android:textSize="11sp"
+            android:maxLines="2"
+            android:ellipsize="end" />
+
+        <ImageButton
+            android:id="@+id/ocr_refresh"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_refresh"
+            android:contentDescription="Refresh OCR text" />
+    </LinearLayout>
+
+    <!-- Stale badge: visibility=GONE unless the row's stale_at marker is set. Sits
+         above the divider so it reads as part of the header strip. -->
+    <TextView
+        android:id="@+id/ocr_stale_badge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="6dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:background="@color/gray_light"
+        android:textColor="@color/black"
         android:textSize="11sp"
-        android:maxLines="2"
-        android:ellipsize="end" />
+        android:text="OCR pending — page edited since last sync"
+        android:visibility="gone" />
 
     <View
         android:layout_width="match_parent"

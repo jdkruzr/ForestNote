@@ -93,13 +93,20 @@ CREATE INDEX text_box_page_id ON text_box(page_id);
 -- per-page string ("" is valid). NULL deleted_at = live. page_text_from_client is the RESERVED
 -- sibling for a future on-device-recognition feature (client-authored) — present now only so its
 -- columns are in the v3 schema hash; nothing authors it yet. (added v12)
+--
+-- stale_at (added v13) is a LOCAL-ONLY marker: ms-UTC the device noticed the page changed
+-- (stroke/text-box mutation) since the server-OCR'd text was recorded. Cleared on every server
+-- upsert via applyUpsertPageTextFromServer. NOT a synced column — deliberately ABSENT from
+-- SyncWire.pageTextCols / SyncMerge.knownCols["page_text_from_server"] so the v3 schema hash
+-- (724411eb…) does NOT change.
 CREATE TABLE page_text_from_server (
     id TEXT PRIMARY KEY NOT NULL,
     text TEXT NOT NULL,
     ocr_at INTEGER NOT NULL,
     model TEXT,
     created_at INTEGER NOT NULL,
-    deleted_at INTEGER
+    deleted_at INTEGER,
+    stale_at INTEGER -- LOCAL-ONLY; see header comment. Always present in v13+ schema.
 );
 CREATE TABLE page_text_from_client (
     id TEXT PRIMARY KEY NOT NULL,
@@ -582,15 +589,19 @@ ON CONFLICT(id) DO UPDATE SET
 -- Apply a RELAYED page-text op. Both tables are server-/future-authored, so there is NO syncRow*
 -- / all*Ids capture query for them (the client never builds outbox ops for these — see
 -- NotebookRepository.buildCols). deleted_at may be a tombstone.
+-- Every server upsert clears stale_at: a fresh OCR row IS the post-mutation state, so any
+-- prior staleness marker is no longer meaningful. The sync wire shape itself stays at the
+-- v3 5-column form (stale_at is local-only); the bind list below mirrors that.
 applyUpsertPageTextFromServer:
-INSERT INTO page_text_from_server(id, text, ocr_at, model, created_at, deleted_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO page_text_from_server(id, text, ocr_at, model, created_at, deleted_at, stale_at)
+VALUES (?, ?, ?, ?, ?, ?, NULL)
 ON CONFLICT(id) DO UPDATE SET
     text = excluded.text,
     ocr_at = excluded.ocr_at,
     model = excluded.model,
     created_at = excluded.created_at,
-    deleted_at = excluded.deleted_at;
+    deleted_at = excluded.deleted_at,
+    stale_at = NULL;
 
 applyUpsertPageTextFromClient:
 INSERT INTO page_text_from_client(id, text, ocr_at, model, created_at, deleted_at)
@@ -606,10 +617,22 @@ ON CONFLICT(id) DO UPDATE SET
 -- Used by the editor's OCR-text modal. Returns the live (non-tombstoned) server-
 -- authored OCR row for a page, or no rows if the server has not OCR'd it yet
 -- (controls the toolbar button's greyed state — null = disabled). pk on
--- page_text_from_server is the page's ULID (1:1 with a page).
+-- page_text_from_server is the page's ULID (1:1 with a page). stale_at is local-only
+-- (see header comment on the table): non-NULL means "row exists but the page has
+-- mutated since this OCR was recorded" — the dialog dims the body and shows a
+-- pending badge until the next server upsert clears the marker.
 getLivePageTextFromServer:
-SELECT text, ocr_at, model FROM page_text_from_server
+SELECT text, ocr_at, model, stale_at FROM page_text_from_server
 WHERE id = ? AND deleted_at IS NULL;
+
+-- Mark a page's server-OCR row as locally-stale. Stamp wall_ts only if a live row
+-- exists AND it isn't already stale (first-mutation-wins keeps the marker meaningful
+-- as "stale since when"); if the page has no row yet, the toolbar button is already
+-- disabled — UPDATE is a no-op and that's intentional. NOT a sync op.
+markPageTextStale:
+UPDATE page_text_from_server
+SET stale_at = ?
+WHERE id = ? AND deleted_at IS NULL AND stale_at IS NULL;
 
 -- ── Library search ──────────────────────────────────────────────────────────
 -- Four parallel queries powering the Library search dialog. All scope library-wide
