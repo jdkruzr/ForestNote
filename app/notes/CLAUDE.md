@@ -77,3 +77,4 @@ Main application module that wires together ink rendering, storage, and user int
 - ViwoodsBackend cast in onResume: only safe because isEInk guards it
 - Crash handler writes to /sdcard/Download/ first, falls back to app filesDir
 - E-ink mode disables animations and ripple effects to prevent ghosting
+- **Never call `drawView.gcRefresh()` while a non-editor View is on screen** (any dialog or full-screen overlay). The Viwoods writing overlay composites ABOVE the regular View pipeline on this panel, so `gcRefresh`'s `pushBackgroundBitmap` puts the editor bitmap on top of whatever else is showing. Safe contexts: editor↔editor transitions (page/notebook switch — funnel through `refreshPageIndicator`'s callback) and dialog/overlay DISMISS paths. `OcrTextDialog.show` documents this rule inline; learned the hard way building task #12
