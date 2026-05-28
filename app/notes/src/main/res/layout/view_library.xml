@@ -138,7 +138,9 @@
                 android:textSize="9sp"
                 android:textColor="@color/black"
                 android:maxLines="1"
-                android:paddingBottom="2dp" />
+                android:paddingBottom="2dp"
+                android:gravity="center_horizontal"
+                android:minWidth="56dp" />
         </LinearLayout>
 
         <!-- Search: opens a modal dialog over the Library that searches notebook + folder
