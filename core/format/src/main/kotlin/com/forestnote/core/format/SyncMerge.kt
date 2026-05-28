@@ -21,6 +21,8 @@ object SyncMerge {
         "folder" to listOf("created_at", "deleted_at", "name", "parent_folder_id", "sort_order"),
         "notebook" to listOf("created_at", "deleted_at", "folder_id", "name", "sort_order"),
         "page" to listOf("created_at", "deleted_at", "notebook_id", "sort_order", "template", "template_pitch_mm"),
+        "page_text_from_client" to listOf("created_at", "deleted_at", "model", "ocr_at", "text"),
+        "page_text_from_server" to listOf("created_at", "deleted_at", "model", "ocr_at", "text"),
         "stroke" to listOf("color", "created_at", "deleted_at", "page_id", "pen_width_max", "pen_width_min", "points", "z"),
         "text_box" to listOf("border_width", "color", "created_at", "deleted_at", "font_name", "font_size", "height", "page_id", "text", "weight", "width", "x", "y", "z")
     )

@@ -12,10 +12,14 @@ import kotlinx.serialization.json.JsonObject
  * encoding never leaks into the storage layer.
  *
  * The schema_hash gate (§6). A request carrying a hash the server doesn't accept is refused with
- * 409. v2 = folder/notebook/page/stroke/text_box (UB accepts {v1, v2} during the rollout grace
- * window). v1 was 9b807dc88cd0465d171892bb17e65ad94190eda058594e207caad3368eb1f2fe.
+ * 409. v3 = folder/notebook/page/page_text_from_client/page_text_from_server/stroke/text_box
+ * (UB accepts {v2, v3} during the rollout grace window). v2 was
+ * bc1953e2b85e766a572329e7023b4582b768094b4d27e28a632e21bedb776874 (no page_text_* tables);
+ * v1 (pre-text_box) was 9b807dc88cd0465d171892bb17e65ad94190eda058594e207caad3368eb1f2fe and is
+ * no longer accepted. sha256 of the canonical schema string (tables alphabetical, the two new
+ * tables falling between `page` and `stroke`; columns alphabetical within each table).
  */
-const val SCHEMA_HASH = "bc1953e2b85e766a572329e7023b4582b768094b4d27e28a632e21bedb776874"
+const val SCHEMA_HASH = "724411eb845ad3487393a77cb5559690e69332c35fdb5ee3e85c1767bf71f3fe"
 
 /** The current protocol version (§8). */
 const val PROTOCOL_VERSION = 1

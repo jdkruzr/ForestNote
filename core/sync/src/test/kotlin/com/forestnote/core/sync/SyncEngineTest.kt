@@ -67,6 +67,43 @@ class SyncEngineTest {
     }
 
     @Test
+    fun `relayed page_text_from_server op is logged with page id and text length`() = runTest {
+        val store = FakeStore()
+        val pageText = SyncOp(
+            "page_text_from_server", "0000000000000000000000PG1", "00000000000000000000000UB", 4, 200,
+            buildJsonObject { put("text", "hello ocr"); put("ocr_at", 200L); put("created_at", 100L) }
+        ).toWire()
+        val transport = FakeTransport(ArrayDeque(listOf(resp(acceptedThrough = 0, cursor = 1, ops = listOf(pageText)))))
+        val logs = mutableListOf<String>()
+        val engine = SyncEngine(store, transport, clock = { 1 }, log = { logs += it })
+
+        engine.syncOnce()
+
+        assertEquals(listOf("0000000000000000000000PG1"), store.applied.map { it.pk }, "the op was applied")
+        val line = logs.singleOrNull { it.contains("page=0000000000000000000000PG1") }
+        assertTrue(line != null, "a page_text confirmation line was logged: $logs")
+        assertTrue(line!!.contains("textLen=9"), "logs the recognized-text length: $line")
+        assertTrue(!line.contains("TOMBSTONE"), "a live op is not flagged as a tombstone: $line")
+    }
+
+    @Test
+    fun `relayed page_text tombstone is flagged in the log`() = runTest {
+        val store = FakeStore()
+        val tomb = SyncOp(
+            "page_text_from_server", "0000000000000000000000PG2", "00000000000000000000000UB", 5, 300,
+            buildJsonObject { put("text", ""); put("ocr_at", 0L); put("created_at", 100L); put("deleted_at", 300L) }
+        ).toWire()
+        val transport = FakeTransport(ArrayDeque(listOf(resp(acceptedThrough = 0, cursor = 1, ops = listOf(tomb)))))
+        val logs = mutableListOf<String>()
+        val engine = SyncEngine(store, transport, clock = { 1 }, log = { logs += it })
+
+        engine.syncOnce()
+
+        val line = logs.single { it.contains("page=0000000000000000000000PG2") }
+        assertTrue(line.contains("TOMBSTONE"), "a tombstone op is flagged: $line")
+    }
+
+    @Test
     fun `has_more drives a second round until drained`() = runTest {
         val store = FakeStore()
         val transport = FakeTransport(

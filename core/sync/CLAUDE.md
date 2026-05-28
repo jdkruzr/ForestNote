@@ -3,7 +3,7 @@
 Last verified: 2026-05-26
 
 ## Purpose
-The ForestNote↔UltraBridge (UB) sync client: drives the `POST /sync/v1` round-trip that uploads this device's local ops and applies the ops relayed from the user's other devices. The wire protocol and merge rule are a frozen dual-language contract — UB `docs/sync/forestnote-sync-protocol.md`, schema_hash `9b807dc8…f2fe`. This module owns the network + orchestration (coroutines); the durable merge/decode and the outbox live in `core:format`.
+The ForestNote↔UltraBridge (UB) sync client: drives the `POST /sync/v1` round-trip that uploads this device's local ops and applies the ops relayed from the user's other devices. The wire protocol and merge rule are a frozen dual-language contract — UB `docs/sync/forestnote-sync-protocol.md`, schema_hash v3 `724411eb…f3fe` (UB accepts {v2 `bc1953e2…`, v3} during the page_text rollout grace window). This module owns the network + orchestration (coroutines); the durable merge/decode and the outbox live in `core:format`.
 
 ## Contracts
 - **Exposes**: `SyncEngine(store, transport, schemaHash?, clock?, onRejected?)` with `suspend syncOnce(): SyncResult` + `status: StateFlow<SyncStatus>`; `SyncTransport` interface + `SyncOutcome` (Ok/HttpError/TransportError) + production `HttpUrlTransport(endpoint, authHeader, …)`; `SyncLocalStore` interface (the engine's view of persistence — implemented by an app-side adapter over `NotebookStore`); wire DTOs `SyncRequest`/`SyncResponse`/`RejectedOp`/`WireOp` + `SyncOp.toWire()`/`WireOp.toSyncOp()`; constants `SCHEMA_HASH`, `PROTOCOL_VERSION`.

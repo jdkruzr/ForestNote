@@ -1,0 +1,43 @@
+{
+  "name": "page-text-basic",
+  "description": "One page_text_from_server op materializes to one live row carrying all 5 synced columns (created_at, deleted_at, model, ocr_at, text) and provenance. pk == the page ULID. model is the recognizer/source; deleted_at null = live.",
+  "ops": [
+    {
+      "table": "page_text_from_server",
+      "pk": "00000000000000000000000PG1",
+      "site_id": "0000000000000000000000000A",
+      "op_seq": 1,
+      "wall_ts": 1000,
+      "cols": {
+        "created_at": 1000,
+        "deleted_at": null,
+        "model": "claude-3-5-sonnet",
+        "ocr_at": 1000,
+        "text": "hello world"
+      }
+    }
+  ],
+  "expected_state": {
+    "folder": [],
+    "notebook": [],
+    "page": [],
+    "page_text_from_client": [],
+    "page_text_from_server": [
+      {
+        "pk": "00000000000000000000000PG1",
+        "site_id": "0000000000000000000000000A",
+        "op_seq": 1,
+        "wall_ts": 1000,
+        "cols": {
+          "created_at": 1000,
+          "deleted_at": null,
+          "model": "claude-3-5-sonnet",
+          "ocr_at": 1000,
+          "text": "hello world"
+        }
+      }
+    ],
+    "stroke": [],
+    "text_box": []
+  }
+}

@@ -1,0 +1,26 @@
+-- v11 -> v12: per-page recognized text (OCR round-trip). NON-destructive.
+--  * page_text_from_server: text the UltraBridge server OCRs from a synced page and pushes
+--    BACK to the device (server-authored ONLY — the client never writes it). pk = page ULID
+--    (1:1 with a page).
+--  * page_text_from_client: RESERVED sibling for a future on-device-recognition feature
+--    (client-authored). The table + apply path exist now so its columns are baked into the v3
+--    schema hash and no second hash bump is ever needed; nothing authors it yet.
+-- Both tables are empty on upgrade, so no backfill (the server backfills existing OCR text into
+-- the changelog, which then relays down as ordinary ops). No view changes.
+-- create() and migrate() never both run on one DB.
+CREATE TABLE page_text_from_server (
+    id TEXT PRIMARY KEY NOT NULL,   -- the page's ULID (1:1 with page)
+    text TEXT NOT NULL,             -- recognized text (flat, per-page; "" is valid)
+    ocr_at INTEGER NOT NULL,        -- ms UTC, last recognition time
+    model TEXT,                     -- OCR/recognizer model or source (nullable)
+    created_at INTEGER NOT NULL,    -- ms UTC, first recognition time
+    deleted_at INTEGER              -- tombstone; NULL = live
+);
+CREATE TABLE page_text_from_client (
+    id TEXT PRIMARY KEY NOT NULL,
+    text TEXT NOT NULL,
+    ocr_at INTEGER NOT NULL,
+    model TEXT,
+    created_at INTEGER NOT NULL,
+    deleted_at INTEGER
+);
