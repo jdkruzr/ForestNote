@@ -1285,6 +1285,18 @@ class NotebookRepository private constructor(
         }
     }
 
+    /**
+     * Cheap "anything to push?" probe: the count of unacked outbox rows. Used by the
+     * sync-on-close path in MainActivity to skip a `syncNow()` round trip when nothing
+     * has changed since the last successful upload. Returns 0 when sync is disabled
+     * (no site_id ⇒ no ops are being captured anyway), so callers don't need to gate.
+     */
+    fun countPendingOps(): Long {
+        if (syncSiteId() == null) return 0L
+        val acked = syncAckedOpSeq()
+        return db.notebookQueries.countPendingOpsAbove(acked).executeAsOne()
+    }
+
     /** Advance the ack high-water to [through] and prune the now-settled outbox ops (one txn). */
     fun markAckedThrough(through: Long) {
         db.transaction {

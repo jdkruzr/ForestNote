@@ -72,6 +72,21 @@ class SettingsTest {
     }
 
     @Test
+    fun syncOnCloseDefaultsTrueAndRoundTrips() {
+        // Default is true — sync-on-close is opt-out, not opt-in.
+        assertEquals(true, Settings().syncOnClose)
+
+        // An older blob that pre-dates the field still decodes cleanly with the default.
+        val pre = json.decodeFromString(Settings.serializer(), """{}""")
+        assertEquals(true, pre.syncOnClose)
+
+        // Explicit false survives the round trip.
+        val opted = Settings(syncOnClose = false)
+        val redecoded = json.decodeFromString(Settings.serializer(), json.encodeToString(Settings.serializer(), opted))
+        assertEquals(false, redecoded.syncOnClose)
+    }
+
+    @Test
     fun penWidthLevelsRoundTripAndDefaultEmpty() {
         assertEquals(emptyMap(), Settings().penWidthLevels)
 

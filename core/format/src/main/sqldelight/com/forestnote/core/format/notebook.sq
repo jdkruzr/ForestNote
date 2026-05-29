@@ -519,6 +519,11 @@ SELECT lww_wall_ts, lww_op_seq, lww_site_id FROM sync_row_meta WHERE table_name 
 pendingOutbox:
 SELECT op_seq, table_name, pk, wall_ts, payload FROM outbox WHERE op_seq > ? ORDER BY op_seq ASC;
 
+-- Cheap "is there anything to sync?" probe: count of unacked outbox rows. Drives the
+-- dirty-gate on sync-on-close (skip the round trip when there's nothing to push).
+countPendingOpsAbove:
+SELECT count(*) FROM outbox WHERE op_seq > ?;
+
 -- Prune acked ops (at/below the contiguous accepted_through high-water).
 pruneOutbox:
 DELETE FROM outbox WHERE op_seq <= ?;

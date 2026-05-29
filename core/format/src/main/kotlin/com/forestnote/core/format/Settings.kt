@@ -42,6 +42,14 @@ data class Settings(
     val syncPassword: String = "",
     /** Periodic background sync interval in minutes while the app is open. 0 = no timer. */
     val syncIntervalMinutes: Int = 15,
+    /**
+     * Fire `syncController.syncNow()` when the user returns from a full-screen
+     * overlay (Library / Recycle Bin / Settings) back to the editor — but only if
+     * the outbox has unacked ops (`countPendingOps() > 0`). On by default; the
+     * surprise-minimizing behavior is "my edits get to the server promptly." Toggle
+     * off to fall back to the periodic timer + lifecycle (`onPause`) sync only.
+     */
+    val syncOnClose: Boolean = true,
     val selectionRecognitionUrl: String = "",
     val fullTextTranscriptionUrl: String = "",
     val chatUrl: String = "",

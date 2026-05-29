@@ -159,6 +159,15 @@
                 android:inputType="number"
                 android:imeOptions="actionDone" />
 
+            <CheckBox
+                android:id="@+id/check_sync_on_close"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minHeight="44dp"
+                android:textSize="15sp"
+                android:textColor="@color/black"
+                android:text="Sync when returning to Library (only if there are unsynced changes)" />
+
             <!-- ===== AI endpoints ===== -->
             <TextView style="@style/SettingsSection" android:text="AI endpoints" />
 
