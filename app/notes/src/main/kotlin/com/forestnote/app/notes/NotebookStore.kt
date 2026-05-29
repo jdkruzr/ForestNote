@@ -115,6 +115,26 @@ class NotebookStore(
     }
 
     /**
+     * Apply a batch of text-box moves/pastes/deletes off the main thread, then post
+     * [onDone] back to the main thread (lasso-textboxes Phase 4). Mirrors
+     * [replaceStrokes]: drag-commit / cut / delete / paste in Phase 5/6 call this
+     * and [replaceStrokes] back-to-back. The single-threaded executor serializes
+     * the two — strokes and boxes are NOT atomic with each other across tables,
+     * which matches the existing failure model.
+     */
+    fun replaceTextBoxes(
+        removedIds: List<String>,
+        added: List<TextBox>,
+        onDone: () -> Unit = {},
+    ) {
+        executor.execute {
+            runCatching { repo?.applyTextBoxBatch(removedIds, added) }
+                .onFailure { android.util.Log.e(TAG, "failed to replace text boxes", it) }
+            poster { onDone() }
+        }
+    }
+
+    /**
      * Reconcile an erase gesture (geometry + transaction) off-thread, then post the
      * resulting diff (removed ids + surviving fragments) to the main thread.
      */
