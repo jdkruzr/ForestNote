@@ -14,6 +14,12 @@ import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.format.RecognizedText
 import com.forestnote.core.format.SearchResults
 import com.forestnote.core.format.Settings
+import com.forestnote.app.notes.caldav.CalDavClient
+import com.forestnote.app.notes.caldav.CalDavCredentials
+import com.forestnote.app.notes.caldav.CalDavResult
+import com.forestnote.app.notes.caldav.SecureCredentialsStore
+import com.forestnote.app.notes.caldav.VTodoBuilder
+import com.forestnote.app.notes.caldav.VTodoInput
 import com.forestnote.core.format.SyncOp
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeGeometry
@@ -42,7 +48,18 @@ data class ThumbnailSource(val pageId: String, val strokeCount: Long, val modifi
 class NotebookStore(
     private val repoProvider: () -> NotebookRepository,
     private val executor: ExecutorService,
-    private val poster: (Runnable) -> Unit
+    private val poster: (Runnable) -> Unit,
+    /**
+     * Optional credential store used by [createCalDavTask] and (after migration) by
+     * [SyncController] for sync auth. `null` is the legacy path: sync still reads its
+     * creds out of [Settings] and CalDAV task creation is a no-op (returns TransportError).
+     */
+    private val secureCredentials: SecureCredentialsStore? = null,
+    /**
+     * Optional CalDAV PUT client. `null` means CalDAV task creation is unavailable —
+     * [createCalDavTask] posts [CalDavResult.TransportError]. Most JVM tests don't need it.
+     */
+    private val calDavClient: CalDavClient? = null,
 ) {
     // Written and read only on the executor thread, so no synchronization is needed.
     private var repo: NotebookRepository? = null
@@ -293,6 +310,46 @@ class NotebookStore(
                 .onFailure { android.util.Log.e(TAG, "failed to load page OCR text", it) }
                 .getOrNull()
             poster { onResult(r) }
+        }
+    }
+
+    // --- CalDAV (lasso-recognize → VTODO) ----------------------------------------
+
+    /**
+     * Build a VTODO from [input] and PUT it to the user's configured CalDAV collection.
+     *
+     * The build + PUT both run on the single-writer executor. This makes the path
+     * back-pressure-aware with the rest of the DB work (so a slow CalDAV server can't
+     * starve, but it also can't run concurrently with a save) — acceptable because
+     * task creation is user-driven and infrequent. The [onResult] callback fires on
+     * the poster (main thread in production, inline in tests).
+     *
+     * Posts [CalDavResult.TransportError] when CalDAV isn't configured (no client
+     * injected, or no creds in the secure store) — the UI surfaces that as a normal
+     * error dialog so the user is told why instead of nothing happening.
+     */
+    fun createCalDavTask(
+        input: VTodoInput,
+        onResult: (CalDavResult) -> Unit,
+    ) {
+        val client = calDavClient
+        val creds: CalDavCredentials? = secureCredentials?.caldavCreds()
+        if (client == null || creds == null) {
+            poster {
+                onResult(
+                    CalDavResult.TransportError(
+                        IllegalStateException("CalDAV not configured")
+                    )
+                )
+            }
+            return
+        }
+        executor.execute {
+            val result = runCatching {
+                val body = VTodoBuilder.build(input)
+                client.putVtodo(creds, body, input.uid)
+            }.getOrElse { CalDavResult.TransportError(it) }
+            poster { onResult(result) }
         }
     }
 
@@ -608,14 +665,25 @@ class NotebookStore(
         private const val TAG = "NotebookStore"
         private const val SHUTDOWN_TIMEOUT_SECONDS = 5L
 
-        /** Production factory: real single-thread executor, main-thread Handler poster. */
-        fun create(context: Context): NotebookStore {
+        /**
+         * Production factory: real single-thread executor, main-thread Handler poster.
+         * [secureCredentials] + [calDavClient] are optional — passing both enables the
+         * lasso-recognize → CalDAV VTODO flow (see [createCalDavTask]). Tests usually
+         * construct [NotebookStore] directly and leave them null.
+         */
+        fun create(
+            context: Context,
+            secureCredentials: SecureCredentialsStore? = null,
+            calDavClient: CalDavClient? = null,
+        ): NotebookStore {
             val appContext = context.applicationContext
             val mainHandler = Handler(Looper.getMainLooper())
             return NotebookStore(
                 repoProvider = { NotebookRepository.open(appContext) },
                 executor = Executors.newSingleThreadExecutor(),
-                poster = { runnable -> mainHandler.post(runnable) }
+                poster = { runnable -> mainHandler.post(runnable) },
+                secureCredentials = secureCredentials,
+                calDavClient = calDavClient,
             )
         }
     }

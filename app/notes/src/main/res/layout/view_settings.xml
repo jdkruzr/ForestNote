@@ -199,16 +199,51 @@
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="16dp" />
 
-            <!-- ===== Calendar ===== -->
-            <TextView style="@style/SettingsSection" android:text="Calendar" />
+            <!-- ===== Calendar (CalDAV tasks) =====
+                 Configures the lasso-recognize → VTODO PUT flow. The pill + task sheet only
+                 appear after recognition when all three fields below are non-blank.
+                 Credentials are stored in EncryptedSharedPreferences via SecureCredentialsStore,
+                 NOT in the Settings JSON blob (which previously held only the URL). -->
+            <TextView style="@style/SettingsSection" android:text="Calendar (CalDAV tasks)" />
 
-            <TextView style="@style/SettingsLabel" android:text="CalDAV server URL" />
+            <TextView style="@style/SettingsLabel" android:text="Collection URL" />
             <EditText
                 android:id="@+id/input_caldav_url"
                 style="@style/SettingsInput"
-                android:hint="https://…"
+                android:hint="https://nc.example.com/remote.php/dav/calendars/USER/tasks/"
                 android:inputType="textUri"
                 android:imeOptions="actionDone" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/gray_dark"
+                android:textSize="12sp"
+                android:paddingTop="2dp"
+                android:text="iCloud: caldav.icloud.com (use an app-specific password)" />
+
+            <TextView style="@style/SettingsLabel" android:text="Username" />
+            <EditText
+                android:id="@+id/input_caldav_username"
+                style="@style/SettingsInput"
+                android:hint="username"
+                android:inputType="text"
+                android:imeOptions="actionDone" />
+
+            <TextView style="@style/SettingsLabel" android:text="Password" />
+            <EditText
+                android:id="@+id/input_caldav_password"
+                style="@style/SettingsInput"
+                android:hint="password"
+                android:inputType="textPassword"
+                android:imeOptions="actionDone" />
+
+            <Button
+                android:id="@+id/btn_caldav_test"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Test connection"
+                android:layout_marginTop="8dp" />
 
             <!-- ===== Recycle Bin ===== -->
             <TextView style="@style/SettingsSection" android:text="Recycle Bin" />

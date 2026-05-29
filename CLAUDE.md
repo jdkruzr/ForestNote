@@ -12,6 +12,8 @@ E-ink note-taking app for the Viwoods AiPaper Mini tablet. Uses reverse-engineer
 - Geometry: Jetpack Ink API 1.0.0 (brush/geometry/strokes)
 - UI: Android Views (no Compose), Material 3
 - Handwriting recognition: Google ML Kit Digital Ink 18.1.0 (stroke-native; bundled-only artifact requires GMS + one-time per-language ~20 MB model download via `RemoteModelManager` — host tablet has GMS + Google account)
+- CalDAV transport: OkHttp 4.12.0 (scoped to `app/notes/caldav/` only — the sync engine still rides `HttpURLConnection` per `core:sync` rationale)
+- Secret storage: `androidx.security:security-crypto` 1.1.0-alpha06 (EncryptedSharedPreferences, AES-256 key in Android Keystore) — owns sync + CalDAV credentials; `Settings` JSON blob is non-secrets only
 
 ## Commands
 - `./gradlew :app:notes:assembleDebug` - Build debug APK

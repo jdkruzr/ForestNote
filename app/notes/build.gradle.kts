@@ -39,7 +39,16 @@ dependencies {
     // Stroke-native; downloads a per-language model on first use via GMS.
     implementation(libs.findLibrary("mlkit-digital-ink").get())
 
+    // CalDAV task creation: OkHttp for the VTODO PUT (scoped to caldav; sync stays on HttpURLConnection).
+    implementation(libs.findLibrary("okhttp").get())
+
+    // EncryptedSharedPreferences — sync + caldav credentials (replaces plaintext Settings.syncUsername/syncPassword).
+    implementation(libs.findLibrary("androidx-security-crypto").get())
+
     // Real SQLite driver for NotebookStore tests (JVM, in-memory + file-backed)
     testImplementation(libs.findLibrary("sqldelight-sqlite-driver").get())
     testImplementation(libs.findLibrary("kotlinx-coroutines-test").get())
+
+    // MockWebServer for CalDavClient HTTP tests.
+    testImplementation(libs.findLibrary("okhttp-mockwebserver").get())
 }

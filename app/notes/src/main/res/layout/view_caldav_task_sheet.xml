@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full-screen CalDAV "Create task" sheet (peer to SettingsView). Opaque white +
+     clickable + focusable so it captures touches and the soft keyboard's pan-resize
+     never ghosts onto the editor canvas (see [[viwoods-writing-overlay]]).
+
+     Layout: header (Cancel + title + Send) → SUMMARY EditText → Due-date chip row
+     (None/Today/Tomorrow/+1 week/Pick…) → Note EditText. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/caldav_sheet_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/white"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Header: Cancel ← / title / Send. Cancel discards. Send validates SUMMARY,
+         then dispatches the VTODO PUT via NotebookStore.createCalDavTask. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
+
+        <TextView
+            android:id="@+id/btn_caldav_cancel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Cancel"
+            android:textColor="@color/black"
+            android:textSize="18sp"
+            android:padding="8dp" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="Create task"
+            android:textColor="@color/black"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btn_caldav_send"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Send"
+            android:textColor="@color/black"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:padding="8dp" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/black" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="20dp"
+            android:paddingBottom="32dp">
+
+            <TextView style="@style/SettingsLabel" android:text="Summary" />
+
+            <EditText
+                android:id="@+id/input_caldav_summary"
+                style="@style/SettingsInput"
+                android:hint="Task title"
+                android:inputType="textCapSentences"
+                android:singleLine="true"
+                android:textColor="@color/black"
+                android:textSize="18sp" />
+
+            <TextView
+                style="@style/SettingsLabel"
+                android:text="Due date"
+                android:paddingTop="16dp" />
+
+            <!-- Five chips: None (default) / Today / Tomorrow / +1 week / Pick… The
+                 currently-selected chip is highlighted in code via DueChoice. -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/chip_due_none"
+                    style="@style/CalDavDueChip"
+                    android:text="None" />
+
+                <TextView
+                    android:id="@+id/chip_due_today"
+                    style="@style/CalDavDueChip"
+                    android:text="Today" />
+
+                <TextView
+                    android:id="@+id/chip_due_tomorrow"
+                    style="@style/CalDavDueChip"
+                    android:text="Tomorrow" />
+
+                <TextView
+                    android:id="@+id/chip_due_plus_week"
+                    style="@style/CalDavDueChip"
+                    android:text="+1 week" />
+
+                <TextView
+                    android:id="@+id/chip_due_pick"
+                    style="@style/CalDavDueChip"
+                    android:text="Pick…" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/text_due_summary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/black"
+                android:textSize="14sp"
+                android:paddingTop="6dp" />
+
+            <TextView
+                style="@style/SettingsLabel"
+                android:text="Note (optional)"
+                android:paddingTop="16dp" />
+
+            <EditText
+                android:id="@+id/input_caldav_note"
+                style="@style/SettingsInput"
+                android:hint="Extra details"
+                android:inputType="textMultiLine|textCapSentences"
+                android:minLines="2"
+                android:maxLines="6"
+                android:gravity="top|start"
+                android:textColor="@color/black"
+                android:textSize="16sp" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

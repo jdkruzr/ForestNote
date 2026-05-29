@@ -25,9 +25,17 @@ import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.ViwoodsBackend
 import com.forestnote.core.ink.ZBand
 import com.forestnote.core.sync.SyncStatus
+import com.forestnote.app.notes.caldav.CalDavResult
+import com.forestnote.app.notes.caldav.CalDavTaskSheet
+import com.forestnote.app.notes.caldav.EncryptedPrefsCredentialsBackend
+import com.forestnote.app.notes.caldav.OkHttpCalDavClient
+import com.forestnote.app.notes.caldav.RecognizePillView
+import com.forestnote.app.notes.caldav.SecureCredentialsStore
+import com.forestnote.app.notes.caldav.SettingsCredsView
 import com.forestnote.app.notes.recognize.MlKitRecognizer
 import com.forestnote.app.notes.recognize.RecognitionModelManager
 import com.forestnote.app.notes.recognize.RecognizedText
+import okhttp3.OkHttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -83,6 +91,13 @@ class MainActivity : Activity() {
     private val libraryView = LibraryView()
     // Full-screen Recycle Bin overlay (E3). Opened from the Library header; system back closes it.
     private val recycleBinView = RecycleBinView()
+    // Floating "Create task" pill shown after lasso-recognize when CalDAV is configured.
+    private val recognizePill = RecognizePillView()
+    // Full-screen "Create CalDAV task" sheet (SUMMARY + DUE chips + note + Send).
+    private val caldavTaskSheet = CalDavTaskSheet()
+    // EncryptedSharedPreferences-backed store for sync + CalDAV creds. Built in onCreate so
+    // FileLogger is available for the (rare) ESP init failure log line.
+    private lateinit var secureCreds: SecureCredentialsStore
     // Library search dialog (modal AlertDialog over the Library overlay).
     private val searchDialog = com.forestnote.app.notes.search.SearchDialog()
     // Editor OCR-text viewer (modal AlertDialog over the editor).
@@ -114,18 +129,48 @@ class MainActivity : Activity() {
         backend = detection.backend
         isEInk = detection.isEInk
 
-        // Open storage. The store opens the repository on its own background thread,
-        // so onCreate never makes a synchronous DB call (AC1.2).
-        store = NotebookStore.create(this)
         // File logging for the on-device debug loop (gated by Settings.debugLogging). Primary dir is
         // public /sdcard/ForestNote (readable by the SSH/Termux loop, same place the crash handler
-        // reaches); falls back to app-private storage if that isn't writable.
+        // reaches); falls back to app-private storage if that isn't writable. Built FIRST so the
+        // secure-creds backend can log init failures and the CalDAV client can trace PUTs.
         fileLogger = FileLogger(dir = java.io.File("/sdcard/Download"), fallbackDir = java.io.File(filesDir, "logs"))
-        syncController = SyncController(store, syncScope, log = { fileLogger.log("Sync", it) })
-        // Apply the persisted Debug Logs toggle and announce startup.
+
+        // EncryptedSharedPreferences-backed credential store: holds sync creds (post-migration)
+        // and CalDAV creds. The backend never throws; failures degrade to "no creds configured".
+        secureCreds = SecureCredentialsStore(
+            EncryptedPrefsCredentialsBackend(this, log = { fileLogger.log("ESP", it) })
+        )
+
+        // OkHttp transport for the CalDAV VTODO PUT. One client per app lifetime (connection pooling).
+        val caldavClient = OkHttpCalDavClient(
+            OkHttpClient(),
+            log = { fileLogger.log("CalDAV", it) },
+        )
+
+        // Open storage. The store opens the repository on its own background thread,
+        // so onCreate never makes a synchronous DB call (AC1.2).
+        store = NotebookStore.create(this, secureCreds, caldavClient)
+        syncController = SyncController(
+            store, syncScope,
+            log = { fileLogger.log("Sync", it) },
+            secureCreds = secureCreds,
+        )
+        // Apply the persisted Debug Logs toggle, announce startup, and one-shot migrate the
+        // sync creds out of Settings into ESP (idempotent; subsequent launches no-op).
         store.loadSettings { s ->
             fileLogger.enabled = s.debugLogging
             fileLogger.log("App", "ForestNote launched (debugLogging=${s.debugLogging})")
+            val view = SettingsCredsView(s.syncUsername, s.syncPassword)
+            val (result, after) = secureCreds.migrateSyncCredsFromSettings(view)
+            if (result == SecureCredentialsStore.MigrationResult.Migrated) {
+                fileLogger.log("ESP", "migrated sync creds from Settings → ESP; clearing plaintext")
+                store.updateSettings(transform = { existing ->
+                    existing.copy(
+                        syncUsername = after.syncUsername,
+                        syncPassword = after.syncPassword,
+                    )
+                })
+            }
         }
         // Reflect sync status in the Library header caption (no-op while the Library is hidden).
         // Also re-check the OCR button state when a sync run completes, since the server may
@@ -512,12 +557,73 @@ class MainActivity : Activity() {
      * text. Copy is a header action inside the overlay (`Cancel | title | Copy | Done`).
      */
     private fun showRecognitionResult(text: String, screenBounds: android.graphics.RectF) {
-        fileLogger.log("Recognize", "result → overlay textLen=${text.length} bounds=$screenBounds")
+        val caldavReady = secureCreds.caldavCreds() != null
+        fileLogger.log("Recognize", "result textLen=${text.length} caldavReady=$caldavReady bounds=$screenBounds")
+        if (!caldavReady) {
+            // Unconfigured fallback: keep the pre-CalDAV behaviour (lasso-recognize → text box)
+            // so users who haven't set up CalDAV yet still get a useful feature.
+            legacyInsertAsTextBox(text, screenBounds)
+            return
+        }
+        val host = findViewById<ViewGroup>(android.R.id.content)
+        recognizePill.show(
+            host = host,
+            recognizedText = text,
+            anchorScreenBounds = screenBounds,
+            onCreateTask = { confirmed -> openCalDavTaskSheet(confirmed) },
+            onDismiss = { fileLogger.log("Recognize", "pill dismissed without action") },
+        )
+    }
+
+    /** The pre-CalDAV path: recognized text becomes a pending text box via [TextBoxEditOverlay]. */
+    private fun legacyInsertAsTextBox(text: String, screenBounds: android.graphics.RectF) {
         val box = drawView.prepareRecognizedTextBox(screenBounds, text) ?: run {
             fileLogger.log("Recognize", "prepareRecognizedTextBox returned null (blank text) — nothing to insert")
             return
         }
         openEditOverlay(box, isNewBox = true, focusForEditing = true)
+    }
+
+    /** Open the modal task sheet (Summary / Due chips / note) prefilled with [prefill]. */
+    private fun openCalDavTaskSheet(prefill: String) {
+        val host = findViewById<ViewGroup>(android.R.id.content)
+        caldavTaskSheet.show(
+            host = host,
+            prefillSummary = prefill,
+            callbacks = CalDavTaskSheet.Callbacks(
+                onSend = { input ->
+                    fileLogger.log("CalDAV", "send uid=${input.uid} sum=\"${input.summary.take(60)}\" due=${input.due}")
+                    store.createCalDavTask(input) { result -> handleCalDavResult(result) }
+                },
+                onCancel = { fileLogger.log("CalDAV", "task creation cancelled") },
+            ),
+        )
+    }
+
+    /** Translate a [CalDavResult] into a toast (success) or AlertDialog (failure). */
+    private fun handleCalDavResult(result: CalDavResult) {
+        when (result) {
+            CalDavResult.Ok -> {
+                android.widget.Toast.makeText(this, "Task created", android.widget.Toast.LENGTH_SHORT).show()
+                fileLogger.log("CalDAV", "PUT ok")
+            }
+            is CalDavResult.HttpError -> {
+                fileLogger.log("CalDAV", "PUT http error ${result.code}: ${result.message.take(120)}")
+                AlertDialog.Builder(this)
+                    .setTitle("Task creation failed")
+                    .setMessage("HTTP ${result.code}: ${result.message.ifBlank { "(no message)" }}")
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+            is CalDavResult.TransportError -> {
+                fileLogger.log("CalDAV", "PUT transport error: ${result.cause}")
+                AlertDialog.Builder(this)
+                    .setTitle("Task creation failed")
+                    .setMessage(result.cause.message ?: "Network error")
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+        }
     }
 
     /**
@@ -825,7 +931,7 @@ class MainActivity : Activity() {
     private fun openSettings() {
         if (settingsView.isShowing) return
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
-        settingsView.show(content, store, modelManager) { closeSettings() }
+        settingsView.show(content, store, modelManager, secureCreds) { closeSettings() }
     }
 
     /** Dismiss the Settings overlay and return to the editor. */
@@ -926,6 +1032,16 @@ class MainActivity : Activity() {
         // wasNewBox semantic: pending boxes are discarded; existing boxes revert to unchanged).
         if (textBoxEditOverlay.isShowing) {
             textBoxEditOverlay.requestCancel()
+            return
+        }
+        // CalDAV task sheet sits above the editor too; Back cancels without sending.
+        if (caldavTaskSheet.isShowing) {
+            caldavTaskSheet.requestCancel()
+            return
+        }
+        // Recognize pill is a transient confirmation; Back dismisses without action.
+        if (recognizePill.isShowing) {
+            recognizePill.hide()
             return
         }
         if (recycleBinView.isShowing) {

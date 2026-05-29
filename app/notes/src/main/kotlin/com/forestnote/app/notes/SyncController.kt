@@ -28,6 +28,13 @@ class SyncController(
     private val store: NotebookStore,
     private val scope: CoroutineScope,
     private val log: (String) -> Unit = {},
+    /**
+     * Authoritative source for sync credentials when populated. Falls back to
+     * [Settings.syncUsername]/[Settings.syncPassword] when null or empty — this lets
+     * existing tests and pre-migration builds keep working while the ESP store is
+     * the future-proof destination for credentials (see [SecureCredentialsStore]).
+     */
+    private val secureCreds: com.forestnote.app.notes.caldav.SecureCredentialsStore? = null,
     private val transportFactory: (SyncConfig) -> SyncTransport = { HttpUrlTransport(it.endpoint, it.authHeader, log = log) },
     private val maxRetries: Int = 4,
     private val backoffBaseMs: Long = 1_000,
@@ -41,7 +48,20 @@ class SyncController(
 
     private suspend fun config(): SyncConfig? {
         val s = store.syncSettings()
-        return SyncConfig.from(s.syncServerUrl, s.syncUsername, s.syncPassword)
+        val (user, pass) = resolveCredentials(s)
+        return SyncConfig.from(s.syncServerUrl, user, pass)
+    }
+
+    /**
+     * Pick the live credential source. ESP wins when populated (post-migration);
+     * Settings fields serve as the fallback so a pre-migration session — or a test
+     * that doesn't wire up a [SecureCredentialsStore] — still resolves correctly.
+     */
+    private fun resolveCredentials(s: com.forestnote.core.format.Settings): Pair<String, String> {
+        val esp = secureCreds?.syncCreds()
+        val user = esp?.username?.takeIf { it.isNotBlank() } ?: s.syncUsername
+        val pass = esp?.password?.takeIf { it.isNotBlank() } ?: s.syncPassword
+        return user to pass
     }
 
     /** Fire-and-forget a sync session (manual button, lifecycle hook, or timer tick). */
@@ -133,7 +153,8 @@ class SyncController(
     fun resume() {
         scope.launch {
             val s = store.syncSettings()
-            if (SyncConfig.from(s.syncServerUrl, s.syncUsername, s.syncPassword) == null) {
+            val (user, pass) = resolveCredentials(s)
+            if (SyncConfig.from(s.syncServerUrl, user, pass) == null) {
                 _status.value = SyncStatus.Idle
                 return@launch
             }

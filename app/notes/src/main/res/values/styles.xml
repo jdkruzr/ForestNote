@@ -41,4 +41,21 @@
         <item name="android:maxLines">1</item>
     </style>
 
+    <!-- Tap target on the CalDAV task sheet's "Due date" chip row. Selected/unselected
+         backgrounds are swapped in code (see CalDavTaskSheet.applyChipSelection). -->
+    <style name="CalDavDueChip">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/black</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:paddingStart">14dp</item>
+        <item name="android:paddingEnd">14dp</item>
+        <item name="android:paddingTop">10dp</item>
+        <item name="android:paddingBottom">10dp</item>
+        <item name="android:layout_marginEnd">6dp</item>
+        <item name="android:minWidth">56dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:background">@drawable/chip_caldav_due_unselected</item>
+    </style>
+
 </resources>
