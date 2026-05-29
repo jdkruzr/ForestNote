@@ -397,12 +397,19 @@ class MainActivity : Activity() {
             // Phase 5 widens the callback to ClipboardPayload(strokes, textBoxes). The Recognize /
             // To-do paths still operate on strokes (they recognize handwriting); Cut / Copy / Delete
             // semantics for mixed selections are widened in Phase 6.
+            //
+            // Phase-5 interim gate: the lasso CAN select boxes (so the pen-up handler builds a mixed
+            // payload), but DrawView's cutSelection/copySelection/deleteSelection are still strokes-
+            // only. Showing the pill for a boxes-only selection would expose a half-honest UI (Cut
+            // silently drops boxes; Delete no-ops). Until Phase 6 widens those three methods, hide
+            // the pill when the selection has no strokes. Box-only selections then just leave the
+            // lasso outline visible — exactly the AC6 "lasso outline is the sole indicator" rule.
             val strokes = payload.strokes
             fileLogger.log(
                 "Sel",
                 "onSelectionChanged strokes=${strokes.size} boxes=${payload.textBoxes.size} bounds=${bounds != null}"
             )
-            if (payload.isEmpty() || bounds == null) {
+            if (strokes.isEmpty() || bounds == null) {
                 selectionMenu.dismiss()
             } else {
                 selectionMenu.show(

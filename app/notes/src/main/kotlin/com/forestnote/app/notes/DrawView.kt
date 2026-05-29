@@ -609,6 +609,11 @@ class DrawView @JvmOverloads constructor(
                 lassoPoints.clear()
                 selectedStrokeIds = emptySet()
                 selectedTextBoxIds = emptySet()
+                // Defensive: transformingBoxIds is normally empty here (only set on
+                // drag-start, cleared on commit / clearLassoState), but a future
+                // drag-cancel path that forgets to reset it would leak ids into the
+                // static-bitmap-skip set on the next lasso.
+                transformingBoxIds = emptySet()
                 lassoClosed = false
                 if (hadSelection) onSelectionChanged?.invoke(ClipboardPayload.EMPTY, null)
                 lassoPoints.add(LassoSelectionLogic.Point(vx, vy))
@@ -716,11 +721,11 @@ class DrawView @JvmOverloads constructor(
 
         // Text boxes (parallel batch path landed in Phase 4).
         val boxIds = selectedTextBoxIds.toList()
-        val movedBoxes = LassoSelectionLogic.translateTextBoxes(
-            getSelectedTextBoxes(), dx, dy
-        ) { it.id }
-        if (boxIds.isNotEmpty()) store?.replaceTextBoxes(boxIds, movedBoxes)
         if (boxIds.isNotEmpty()) {
+            val movedBoxes = LassoSelectionLogic.translateTextBoxes(
+                getSelectedTextBoxes(), dx, dy
+            ) { it.id }
+            store?.replaceTextBoxes(boxIds, movedBoxes)
             val boxIdSet = boxIds.toHashSet()
             val kept = textBoxes.filter { it.id !in boxIdSet }
             textBoxes.clear()
@@ -761,7 +766,8 @@ class DrawView @JvmOverloads constructor(
 
     /** The strokes currently selected by the lasso (live lookup against the model). */
     fun getSelectedStrokes(): List<Stroke> =
-        completedStrokes.filter { it.id in selectedStrokeIds }
+        if (selectedStrokeIds.isEmpty()) emptyList()
+        else completedStrokes.filter { it.id in selectedStrokeIds }
 
     /** The text boxes currently selected by the lasso (live lookup against the model). */
     fun getSelectedTextBoxes(): List<TextBox> =
