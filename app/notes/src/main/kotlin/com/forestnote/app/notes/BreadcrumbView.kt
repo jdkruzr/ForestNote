@@ -29,6 +29,7 @@ class BreadcrumbView(
     private fun separator(): TextView = TextView(container.context).apply {
         text = " / "
         gravity = Gravity.CENTER_VERTICAL
+        textSize = BREADCRUMB_TEXT_SP
     }
 
     private fun segmentView(seg: BreadcrumbLogic.Segment): TextView =
@@ -36,6 +37,10 @@ class BreadcrumbView(
             text = seg.label
             gravity = Gravity.CENTER_VERTICAL
             maxLines = 1
+            // Treat the breadcrumb as a screen title — system-default ~14sp reads small,
+            // especially for the root "Library" segment. The breadcrumb has its own row
+            // (see view_library.xml) so this no longer competes with the toolbar height.
+            textSize = BREADCRUMB_TEXT_SP
             if (seg.interactive) {
                 isClickable = true
                 val tv = android.util.TypedValue()
@@ -46,4 +51,10 @@ class BreadcrumbView(
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
             }
         }
+
+    private companion object {
+        // "A little larger" than the ~14sp system default. Picked so the root segment
+        // reads as a screen title without crowding the new dedicated breadcrumb row.
+        const val BREADCRUMB_TEXT_SP = 18f
+    }
 }

@@ -142,6 +142,7 @@ class SettingsView {
         val caldavTestBtn = view.findViewById<Button>(R.id.btn_caldav_test)
         val binRetentionInput = view.findViewById<EditText>(R.id.input_bin_retention_days)
         val debugLogsCheck = view.findViewById<CheckBox>(R.id.check_debug_logs)
+        val prefillTimestampCheck = view.findViewById<CheckBox>(R.id.check_prefill_timestamp)
 
         // While populating from loaded values, suppress the change listeners so the
         // programmatic set doesn't immediately write back.
@@ -175,12 +176,18 @@ class SettingsView {
             caldavPassInput.setText(caldav?.password.orEmpty())
             binRetentionInput.setText(s.recycleBinRetentionDays.toString())
             debugLogsCheck.isChecked = s.debugLogging
+            prefillTimestampCheck.isChecked = s.prefillNotebookNameTimestamp
             loading = false
         }
 
         debugLogsCheck.setOnCheckedChangeListener { _, checked ->
             if (loading) return@setOnCheckedChangeListener
             store.updateSettings({ it.copy(debugLogging = checked) })
+        }
+
+        prefillTimestampCheck.setOnCheckedChangeListener { _, checked ->
+            if (loading) return@setOnCheckedChangeListener
+            store.updateSettings({ it.copy(prefillNotebookNameTimestamp = checked) })
         }
 
         rgTemplate.setOnCheckedChangeListener { _, checkedId ->
@@ -200,6 +207,13 @@ class SettingsView {
             if (loading) return@setOnCheckedChangeListener
             val startView = if (checkedId == R.id.rb_start_library) StartView.LIBRARY else StartView.LAST_NOTEBOOK
             store.updateSettings({ it.copy(startView = startView) })
+            // Mirror to a synchronous SharedPreferences cache so the very next cold launch
+            // can decide LIBRARY-vs-editor on the UI thread (the DB blob round-trip is too
+            // slow to consult before setContentView). MainActivity.onCreate reads this.
+            view.context.getSharedPreferences(LAUNCH_PREFS, android.content.Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_START_VIEW, startView.name)
+                .apply()
         }
 
         wireUrl(syncInput) { s, v -> s.copy(syncServerUrl = v) }.also { it.guard = { loading } }
@@ -589,5 +603,12 @@ class SettingsView {
 
         // Content-Type for the PROPFIND probe body in onTestCalDavConnection.
         val MEDIA_XML = "application/xml; charset=utf-8".toMediaType()
+
+        // Synchronous launch-preference cache. Mirrors Settings.startView only — the next
+        // cold launch reads it on the UI thread before setContentView so the editor never
+        // gets a paint frame on the LIBRARY path. Must stay in lockstep with the same
+        // constants in MainActivity (intentionally duplicated; this is a one-key cache).
+        const val LAUNCH_PREFS = "forestnote_launch"
+        const val KEY_START_VIEW = "start_view"
     }
 }

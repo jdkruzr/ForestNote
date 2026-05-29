@@ -115,6 +115,15 @@
                 <RadioButton android:id="@+id/rb_start_library" style="@style/SettingsRadio" android:text="Library" />
             </RadioGroup>
 
+            <CheckBox
+                android:id="@+id/check_prefill_timestamp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minHeight="44dp"
+                android:textSize="15sp"
+                android:textColor="@color/black"
+                android:text="Pre-fill new-notebook names with timestamp (YYYYMMDD_HHMMSS)" />
+
             <!-- ===== Sync ===== -->
             <TextView style="@style/SettingsSection" android:text="Sync" />
 

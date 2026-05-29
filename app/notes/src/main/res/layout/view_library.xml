@@ -23,100 +23,11 @@
         android:gravity="center_vertical"
         android:background="@color/white">
 
-        <!-- Title-on-left, actions-on-right layout: Up + breadcrumb lead the header so the
-             Library label (the breadcrumb's root segment) sits flush left; the icon
-             clusters (Settings/Sync/Search · count/Select/Recycle · Folder/Notebook) all
-             trail behind. Up is hidden at root; the breadcrumb's layout_weight=1 absorbs
-             the remaining space so the trailing icons stay pinned to the right edge. -->
-
-        <!-- Up (back one level; shown only inside a folder, paired with the breadcrumb) -->
-        <LinearLayout
-            android:id="@+id/btn_library_back"
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:clickable="true"
-            android:focusable="true"
-            android:contentDescription="Up one level"
-            android:background="?attr/selectableItemBackground"
-            android:visibility="gone">
-            <ImageButton
-                android:layout_width="wrap_content"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:src="@drawable/ic_arrow_left"
-                android:clickable="false"
-                android:focusable="false"
-                android:importantForAccessibility="no"
-                android:background="@null"
-                android:scaleType="fitCenter" />
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Up"
-                android:textSize="9sp"
-                android:textColor="@color/black"
-                android:maxLines="1"
-                android:paddingBottom="2dp" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/breadcrumb_container"
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingStart="8dp"
-            android:paddingEnd="4dp" />
-
-        <!-- Compact library-wide counts displayed inline beside the title segment of the
-             breadcrumb ("Library" at root, current folder name when descended). Two small
-             icon+number pairs (notebook · folder); set from NotebookStore.libraryTotals. -->
-        <LinearLayout
-            android:id="@+id/library_counts"
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingStart="4dp"
-            android:paddingEnd="4dp">
-            <ImageView
-                android:layout_width="14dp"
-                android:layout_height="14dp"
-                android:src="@drawable/ic_notebook"
-                android:tint="@color/black"
-                android:importantForAccessibility="no" />
-            <TextView
-                android:id="@+id/text_notebook_count"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="4dp"
-                android:paddingEnd="10dp"
-                android:textColor="@color/black"
-                android:textSize="12sp"
-                android:maxLines="1" />
-            <ImageView
-                android:layout_width="14dp"
-                android:layout_height="14dp"
-                android:src="@drawable/ic_folder"
-                android:tint="@color/black"
-                android:importantForAccessibility="no" />
-            <TextView
-                android:id="@+id/text_folder_count"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="4dp"
-                android:textColor="@color/black"
-                android:textSize="12sp"
-                android:maxLines="1" />
-        </LinearLayout>
-
-        <!-- Spacer: absorbs the remaining horizontal space so the trailing icon clusters
-             (Settings/Sync/Search · Select/Recycle · Folder/Notebook) stay pinned to the
-             right edge while the title + counts stay flush left. -->
+        <!-- Two-row header: this is row A (toolbar only). The breadcrumb + counts + Up
+             button now own their own row below (see @id/library_breadcrumb_row) so the
+             breadcrumb can grow without squashing or shoving the trailing toolbar cells.
+             Leading weight=1 spacer pins the icon clusters (Settings/Sync/Search ·
+             Select/Recycle · Folder/Notebook) to the right edge. -->
         <View
             android:layout_width="0dp"
             android:layout_height="match_parent"
@@ -371,6 +282,110 @@
                 android:maxLines="1"
                 android:paddingBottom="2dp" />
         </LinearLayout>
+    </LinearLayout>
+
+    <!-- Row B: breadcrumb (+ Up button + library-wide counts). Lives on its own line so
+         a deep folder path can grow horizontally without affecting the toolbar row above.
+         Up is hidden at root; the trailing weight=1 spacer keeps everything left-aligned. -->
+    <LinearLayout
+        android:id="@+id/library_breadcrumb_row"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:background="@color/white">
+
+        <!-- Up (back one level; shown only inside a folder, paired with the breadcrumb). -->
+        <LinearLayout
+            android:id="@+id/btn_library_back"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="4dp"
+            android:paddingEnd="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="Up one level"
+            android:background="?attr/selectableItemBackground"
+            android:visibility="gone">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_arrow_left"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Up"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/breadcrumb_container"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingEnd="4dp" />
+
+        <!-- Compact library-wide counts displayed inline beside the title segment of the
+             breadcrumb ("Library" at root, current folder name when descended). Two small
+             icon+number pairs (notebook · folder); set from NotebookStore.libraryTotals. -->
+        <LinearLayout
+            android:id="@+id/library_counts"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp">
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:src="@drawable/ic_notebook"
+                android:tint="@color/black"
+                android:importantForAccessibility="no" />
+            <TextView
+                android:id="@+id/text_notebook_count"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="4dp"
+                android:paddingEnd="10dp"
+                android:textColor="@color/black"
+                android:textSize="12sp"
+                android:maxLines="1" />
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:src="@drawable/ic_folder"
+                android:tint="@color/black"
+                android:importantForAccessibility="no" />
+            <TextView
+                android:id="@+id/text_folder_count"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="4dp"
+                android:textColor="@color/black"
+                android:textSize="12sp"
+                android:maxLines="1" />
+        </LinearLayout>
+
+        <!-- Trailing spacer: keeps everything packed to the left if/when the breadcrumb is short. -->
+        <View
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1" />
     </LinearLayout>
 
     <View

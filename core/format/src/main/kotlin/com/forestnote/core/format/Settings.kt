@@ -51,6 +51,12 @@ data class Settings(
     /** Mirror diagnostics to /sdcard/ForestNote/forestnote.log for the SSH debug loop. Off by default. */
     val debugLogging: Boolean = false,
     /**
+     * Pre-fill the New Notebook name field with `YYYYMMDD_HHMMSS ` (note the trailing space) so
+     * the user can just type the rest of the name. Matches the convention recognised by
+     * [com.forestnote.app.notes.NotebookNameParser]. Off by default.
+     */
+    val prefillNotebookNameTimestamp: Boolean = false,
+    /**
      * Per-variant pen width level (A10), keyed by `PenVariant.name` → `PenWidthLevel.name`.
      * Stringly-typed so this module needn't pull in core:ink's enums for serialization; the
      * app layer converts. Empty/missing ⇒ that variant defaults to M (the v1 width).

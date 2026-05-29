@@ -128,6 +128,17 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         installCrashHandler()
 
+        // Read the cached "start in Library" preference SYNCHRONOUSLY before anything
+        // can paint. The authoritative value lives in Settings.startView (a JSON blob
+        // read off-thread), but that two-hop callback is too slow to consult before
+        // setContentView — so we mirror just this one field to plain SharedPreferences
+        // every time the user toggles it (see SettingsView.rgStartView listener). The
+        // worst case (user just toggled and the cache is stale) is a one-launch lag
+        // that self-corrects from the write-back below.
+        val launchPrefs = getSharedPreferences(LAUNCH_PREFS, MODE_PRIVATE)
+        val cachedStartLibrary = launchPrefs.getString(KEY_START_VIEW, StartView.LAST_NOTEBOOK.name) ==
+            StartView.LIBRARY.name
+
         // Detect and initialize backend
         val detection = BackendDetector.detect(this)
         backend = detection.backend
@@ -247,12 +258,25 @@ class MainActivity : Activity() {
         btnNotebooks = findViewById(R.id.btn_notebooks)
         btnNotebooks.setOnClickListener { openLibrary() }
 
+        // Anti-flash: if the cached preference says we're starting in the Library, hide the
+        // editor chrome NOW (before the first paint frame) and show the Library overlay
+        // synchronously so the user never sees an editor frame. Without this, the two-hop
+        // async settings → listNotebooks load lets the empty editor get one paint cycle
+        // before openLibrary() runs. The authoritative `store.loadSettings` block below
+        // confirms the choice and writes the cache; if it disagrees we reverse course.
+        if (cachedStartLibrary) {
+            findViewById<View>(R.id.navbar).visibility = View.INVISIBLE
+            drawView.visibility = View.INVISIBLE
+            openLibrary()
+        }
+
         // AC4.1: cold launch resumes the editor on the last-active notebook, unless the user's
         // startView preference is the Library (or there's no notebook to resume into). We decide
         // BEFORE painting the editor: painting it and then slamming the Library overlay on top
         // leaves the half-drawn editor ghosting under the Library on e-ink. So when we're heading
         // to the Library, we DON'T render the editor now — closeLibrary() / goToNotebook() render
-        // it when it actually becomes visible.
+        // it when it actually becomes visible. The visibility cover above handles the empty-editor-
+        // shell flash; this block handles the editor-content (strokes) flash.
         store.loadSettings { settings ->
             // A10: seed per-variant pen widths from settings, then prime the canvas with the
             // active variant's width. (toolBar is assigned below in onCreate; this async
@@ -263,11 +287,21 @@ class MainActivity : Activity() {
             toolBar.loadTextStyle(settings.textFontName, settings.textFontSizeV)
             drawView.activeTextFontName = settings.textFontName
             drawView.activeTextFontSize = settings.textFontSizeV
+            // Refresh the synchronous launch cache so the next cold start makes the right
+            // call without consulting the DB. (Idempotent if unchanged.)
+            launchPrefs.edit().putString(KEY_START_VIEW, settings.startView.name).apply()
             store.listNotebooks { notebooks, activeId ->
                 val startOnLibrary = settings.startView == StartView.LIBRARY
                 if (LaunchLogic.shouldOpenLibraryOnLaunch(activeId, notebooks.size, startOnLibrary)) {
-                    openLibrary() // editor paint deferred (see closeLibrary / goToNotebook)
+                    openLibrary() // no-op if the anti-flash cover already opened it
                 } else {
+                    // Cache disagreed with reality (user toggled the setting since last launch,
+                    // or the defensive case isn't hit). Reverse course: dismiss the eager Library
+                    // and reveal the editor. One-launch flicker; self-corrects from here.
+                    if (cachedStartLibrary) {
+                        libraryView.hide()
+                        revealEditorChrome()
+                    }
                     loadEditor()
                 }
             }
@@ -716,6 +750,9 @@ class MainActivity : Activity() {
      *  so GC-refresh to clear any overlay ghost (and it counts as the editor's first paint). */
     private fun goToNotebook(notebookId: String) {
         textBoxEditOverlay.commitIfShowing()
+        // If we eagerly hid the editor at launch (start-in-Library), reveal it now so
+        // the freshly opened notebook actually paints. Idempotent otherwise.
+        revealEditorChrome()
         editorLoaded = true
         drawView.clearAll()
         store.switchNotebook(notebookId) { strokes ->
@@ -734,6 +771,8 @@ class MainActivity : Activity() {
      */
     private fun goToNotebookPage(notebookId: String, pageId: String) {
         textBoxEditOverlay.commitIfShowing()
+        // Same revival as goToNotebook — search can route us here from the eager Library.
+        revealEditorChrome()
         editorLoaded = true
         drawView.clearAll()
         store.switchNotebookToPage(notebookId, pageId) { strokes ->
@@ -860,12 +899,23 @@ class MainActivity : Activity() {
      */
     private fun closeLibrary() {
         libraryView.hide()
+        revealEditorChrome()
         if (!editorLoaded) {
             loadEditor()
             drawView.post { drawView.gcRefresh() }
         } else {
             drawView.gcRefresh()
         }
+    }
+
+    /**
+     * Make the navbar + canvas visible again. Called when we leave the Library back to
+     * the editor; idempotent if the chrome wasn't hidden in the first place. Pairs with
+     * the anti-flash visibility cover applied during onCreate when starting in Library.
+     */
+    private fun revealEditorChrome() {
+        findViewById<View>(R.id.navbar)?.visibility = View.VISIBLE
+        drawView.visibility = View.VISIBLE
     }
 
     /**
@@ -1078,18 +1128,33 @@ class MainActivity : Activity() {
 
     /** New-notebook dialog. [parentFolderId] places it in the folder being viewed (null = root). */
     private fun promptNewNotebook(parentFolderId: String? = null) {
-        val input = EditText(this).apply { hint = "Notebook name" }
-        AlertDialog.Builder(this)
-            .setTitle("New Notebook")
-            .setView(input)
-            .setPositiveButton("Create") { _, _ ->
-                val name = input.text.toString().trim().ifEmpty { "Untitled" }
-                // Created from the Library (or editor): open the new notebook, hiding the
-                // Library if it's showing (no-op when invoked from the editor).
-                store.createNotebook(name, parentFolderId) { newId -> libraryView.hide(); goToNotebook(newId) }
+        // Settings is loaded off-thread so we can't read it synchronously. The one-shot
+        // loadSettings posts its callback to the main thread; we build the dialog there.
+        // Cost is one DB read per New Notebook tap, which is negligible.
+        store.loadSettings { s ->
+            val input = EditText(this).apply { hint = "Notebook name" }
+            if (s.prefillNotebookNameTimestamp) {
+                // YYYYMMDD_HHMMSS + trailing space — matches the convention parsed by
+                // NotebookNameParser, so the resulting names round-trip cleanly. UTC vs
+                // local: local time matches what the user just looked at on their watch
+                // (this is a human-facing convenience, not a sort key).
+                val ts = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+                    .format(java.util.Date())
+                input.setText("$ts ")
+                input.setSelection(input.text.length)
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            AlertDialog.Builder(this)
+                .setTitle("New Notebook")
+                .setView(input)
+                .setPositiveButton("Create") { _, _ ->
+                    val name = input.text.toString().trim().ifEmpty { "Untitled" }
+                    // Created from the Library (or editor): open the new notebook, hiding the
+                    // Library if it's showing (no-op when invoked from the editor).
+                    store.createNotebook(name, parentFolderId) { newId -> libraryView.hide(); goToNotebook(newId) }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
     }
 
     /** New-folder dialog (mirrors promptNewNotebook). Creates inside [parentFolderId] (null = root). */
@@ -1340,5 +1405,15 @@ class MainActivity : Activity() {
 
         // How long the Send-side optimistic try waits before falling back to "Task queued".
         const val OPTIMISTIC_SEND_TIMEOUT_MS = 500L
+
+        // Synchronous launch-preference cache. Mirrors Settings.startView only — the
+        // authoritative blob is too slow to consult before setContentView, so we read
+        // this on the UI thread to decide LIBRARY-vs-editor and avoid the empty-editor
+        // flash. SettingsView writes this through whenever the user toggles the radio,
+        // and the post-loadSettings callback in onCreate refreshes it. Must stay in
+        // lockstep with the same constants in SettingsView (intentionally duplicated;
+        // this is a one-key cache and the two callers don't share any other code).
+        const val LAUNCH_PREFS = "forestnote_launch"
+        const val KEY_START_VIEW = "start_view"
     }
 }
