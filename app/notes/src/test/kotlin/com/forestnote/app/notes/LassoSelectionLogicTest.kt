@@ -8,6 +8,7 @@ import com.forestnote.core.ink.ZBand
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -389,5 +390,45 @@ class LassoSelectionLogicTest {
         val out = LassoSelectionLogic.translate(listOf(s), dx = 5, dy = 5) { it.id }
         assertEquals("keep", out[0].id, "move keeps the original id (it's an update, not a copy)")
         assertEquals(15 to 15, out[0].points[0].let { it.x to it.y })
+    }
+
+    // --- Phase-5 supporting geometry: mixed selection + band-agnostic ---
+
+    @Test
+    fun selectedTextBoxIdsIncludesBothBands() {
+        // AC8.3 — both BOTTOM and TOP boxes are eligible for a lasso.
+        val bottomBox = box(id = "bot", x = 0, y = 0, w = 100, h = 100)            // centroid (50,50)
+        val topBox = box(id = "top", x = 200, y = 200, w = 100, h = 100)           // centroid (250,250)
+            .copy(zBand = ZBand.TOP)
+        val polygon = listOf(
+            Point(-10, -10), Point(310, -10), Point(310, 310), Point(-10, 310)
+        )
+        val ids = LassoSelectionLogic.selectedTextBoxIds(listOf(bottomBox, topBox), polygon)
+        assertEquals(setOf("bot", "top"), ids)
+    }
+
+    @Test
+    fun combinedBoundsExampleMixedTwoStrokesOneBox() {
+        // AC1.3 geometry — two stroke centroids and one box centroid all inside the
+        // polygon; the resulting combined bounds is the union of the geometries.
+        val s1 = stroke("s1", 50 to 50)
+        val s2 = stroke("s2", 60 to 60)
+        val b1 = box(id = "b1", x = 65, y = 65, w = 10, h = 10)  // centroid (70,70)
+        val polygon = square // (0,0)-(100,100)
+
+        val selectedStrokeIds = LassoSelectionLogic.selectedIds(listOf(s1, s2), polygon)
+        val selectedBoxIds = LassoSelectionLogic.selectedTextBoxIds(listOf(b1), polygon)
+        val strokes = listOf(s1, s2).filter { it.id in selectedStrokeIds }
+        val boxes = listOf(b1).filter { it.id in selectedBoxIds }
+        assertEquals(2, strokes.size)
+        assertEquals(1, boxes.size)
+
+        val bounds = LassoSelectionLogic.combinedBounds(strokes, boxes)
+        assertNotNull(bounds)
+        // strokes span (50,50)..(60,60); box spans (65,65)..(75,75); union (50,50)..(75,75).
+        assertEquals(50, bounds.minX)
+        assertEquals(50, bounds.minY)
+        assertEquals(75, bounds.maxX)
+        assertEquals(75, bounds.maxY)
     }
 }
