@@ -901,11 +901,34 @@ class MainActivity : Activity() {
         libraryView.hide()
         revealEditorChrome()
         if (!editorLoaded) {
+            // First reveal of the editor this session, OR a deferred reload after a
+            // delete-while-Library-showing. Wipe any stale bitmap (deleted notebook's
+            // content, or template residue from launch-into-Library) before merging the
+            // active notebook's strokes in. Safe now — DrawView is the topmost View again.
+            drawView.clearAll()
             loadEditor()
             drawView.post { drawView.gcRefresh() }
         } else {
             drawView.gcRefresh()
         }
+    }
+
+    /**
+     * When the user deletes a notebook/folder from a full-screen overlay (the Library), the
+     * repo may reassign the active notebook id — but we MUST NOT paint the editor while the
+     * overlay is on screen. On Viwoods the writing overlay composites ABOVE the regular View
+     * pipeline ([[viwoods-writing-overlay]]): any clearAll/fullRefresh/gcRefresh pushes the
+     * editor bitmap on TOP of the Library overlay, briefly flashing the fallback notebook's
+     * content and leaving a hard ghost when the bitmap goes away.
+     *
+     * Defer the reload: mark `editorLoaded = false` so `closeLibrary` (or `goToNotebook` on
+     * a card tap) will fully clear + reload the editor when it actually becomes visible.
+     * Returns true if a defer happened (caller skips its own reload), false otherwise.
+     */
+    private fun deferEditorReloadIfOverlayShowing(): Boolean {
+        if (!libraryView.isShowing) return false
+        editorLoaded = false
+        return true
     }
 
     /**
@@ -983,8 +1006,13 @@ class MainActivity : Activity() {
             .setMessage("Move $n $what to the Recycle Bin?")
             .setPositiveButton("Delete") { _, _ ->
                 store.bulkDeleteNotebooks(ids.toList()) {
-                    reloadCurrentPage()
-                    if (libraryView.isShowing) libraryView.reload()
+                    // The repo may have reassigned the active notebook if any deleted id was
+                    // active. Defer the editor reload — see deferEditorReloadIfOverlayShowing.
+                    if (deferEditorReloadIfOverlayShowing()) {
+                        libraryView.reload()
+                    } else {
+                        reloadCurrentPage()
+                    }
                     libraryView.exitSelectMode()
                 }
             }
@@ -1198,8 +1226,14 @@ class MainActivity : Activity() {
             .setMessage("Move \"${folder.name}\" and everything inside it to the Recycle Bin?")
             .setPositiveButton("Delete") { _, _ ->
                 store.deleteFolder(folder.id) {
-                    reloadCurrentPage()
-                    if (libraryView.isShowing) libraryView.reload()
+                    // Same defer-on-overlay rule as confirmBulkDelete — folder cascade may
+                    // tombstone the active notebook, but we can't paint editor content while
+                    // the Library is up without ghosting.
+                    if (deferEditorReloadIfOverlayShowing()) {
+                        libraryView.reload()
+                    } else {
+                        reloadCurrentPage()
+                    }
                 }
             }
             .setNegativeButton("Cancel", null)
@@ -1248,9 +1282,13 @@ class MainActivity : Activity() {
             .setMessage("Move \"${notebook.name}\" to the Recycle Bin?")
             .setPositiveButton("Delete") { _, _ ->
                 store.deleteNotebook(notebook.id) {
-                    // Repo already switched to a remaining/bootstrapped notebook.
-                    reloadCurrentPage()
-                    if (libraryView.isShowing) libraryView.reload()
+                    // Repo already switched to a remaining/bootstrapped notebook. Defer the
+                    // editor reload — see deferEditorReloadIfOverlayShowing.
+                    if (deferEditorReloadIfOverlayShowing()) {
+                        libraryView.reload()
+                    } else {
+                        reloadCurrentPage()
+                    }
                 }
             }
             .setNegativeButton("Cancel", null)
