@@ -75,6 +75,46 @@ object LassoSelectionLogic {
             .toSet()
     }
 
+    /**
+     * Axis-aligned bounding box over a list of text boxes, in virtual units.
+     * Returns null when [boxes] is empty (mirror of [bounds] for strokes).
+     */
+    fun boundsOfBoxes(boxes: List<TextBox>): Bounds? {
+        if (boxes.isEmpty()) return null
+        var minX = Int.MAX_VALUE
+        var minY = Int.MAX_VALUE
+        var maxX = Int.MIN_VALUE
+        var maxY = Int.MIN_VALUE
+        for (b in boxes) {
+            if (b.x < minX) minX = b.x
+            if (b.y < minY) minY = b.y
+            if (b.x + b.width > maxX) maxX = b.x + b.width
+            if (b.y + b.height > maxY) maxY = b.y + b.height
+        }
+        return Bounds(minX, minY, maxX, maxY)
+    }
+
+    /**
+     * Combined axis-aligned bounding box over strokes AND boxes. Used by the lasso
+     * drag-clamp rect and the paste anchor delta (`tap − combinedBounds.center`).
+     * Returns null when both lists are empty.
+     */
+    fun combinedBounds(strokes: List<Stroke>, boxes: List<TextBox>): Bounds? {
+        val s = bounds(strokes)
+        val b = boundsOfBoxes(boxes)
+        return when {
+            s == null && b == null -> null
+            s == null -> b
+            b == null -> s
+            else -> Bounds(
+                minX = minOf(s.minX, b.minX),
+                minY = minOf(s.minY, b.minY),
+                maxX = maxOf(s.maxX, b.maxX),
+                maxY = maxOf(s.maxY, b.maxY),
+            )
+        }
+    }
+
     /** Min/max virtual rect over every point of every stroke; null when there are no points. */
     fun bounds(strokes: List<Stroke>): Bounds? {
         var minX = Int.MAX_VALUE

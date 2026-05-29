@@ -182,6 +182,64 @@ class LassoSelectionLogicTest {
         )
     }
 
+    // --- Phase-1 Task 2: boundsOfBoxes + combinedBounds ---
+
+    @Test
+    fun boundsOfBoxesUnionsBoxRects() {
+        val a = box(id = "a", x = 10, y = 10, w = 20, h = 20)
+        val b = box(id = "b", x = 100, y = 200, w = 50, h = 50)
+        assertEquals(
+            LassoSelectionLogic.Bounds(minX = 10, minY = 10, maxX = 150, maxY = 250),
+            LassoSelectionLogic.boundsOfBoxes(listOf(a, b))
+        )
+    }
+
+    @Test
+    fun boundsOfBoxesEmptyReturnsNull() {
+        assertEquals(null, LassoSelectionLogic.boundsOfBoxes(emptyList()))
+    }
+
+    @Test
+    fun boundsOfBoxesSingleBoxReturnsItsRect() {
+        assertEquals(
+            LassoSelectionLogic.Bounds(5, 7, 20, 30),
+            LassoSelectionLogic.boundsOfBoxes(listOf(box(x = 5, y = 7, w = 15, h = 23)))
+        )
+    }
+
+    @Test
+    fun combinedBoundsUnionsStrokeAndBoxBounds() {
+        val s = stroke("s", 0 to 0, 50 to 50)
+        val b = box(id = "b", x = 100, y = 100, w = 30, h = 30)
+        assertEquals(
+            LassoSelectionLogic.Bounds(0, 0, 130, 130),
+            LassoSelectionLogic.combinedBounds(listOf(s), listOf(b))
+        )
+    }
+
+    @Test
+    fun combinedBoundsEmptyStrokesUsesBoxBounds() {
+        val b = box(id = "b", x = 5, y = 5, w = 10, h = 10)
+        assertEquals(
+            LassoSelectionLogic.boundsOfBoxes(listOf(b)),
+            LassoSelectionLogic.combinedBounds(emptyList(), listOf(b))
+        )
+    }
+
+    @Test
+    fun combinedBoundsEmptyBoxesUsesStrokeBounds() {
+        val s = stroke("s", 1 to 2, 3 to 4)
+        assertEquals(
+            LassoSelectionLogic.bounds(listOf(s)),
+            LassoSelectionLogic.combinedBounds(listOf(s), emptyList())
+        )
+    }
+
+    @Test
+    fun combinedBoundsBothEmptyReturnsNull() {
+        assertEquals(null, LassoSelectionLogic.combinedBounds(emptyList(), emptyList()))
+    }
+
     // --- A8 Task 2: translate (clone with fresh ids + shifted points) ---
 
     @Test
