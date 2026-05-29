@@ -701,6 +701,21 @@ class NotebookStore(
     /** Read the persisted sync config (server URL + credentials), off-thread. */
     suspend fun syncSettings(): Settings = onDb { it.settings() }
 
+    /**
+     * "Anything to push?" probe: counts unacked outbox rows off-thread. Drives the
+     * sync-on-close dirty gate in MainActivity — short-circuits the round trip when
+     * nothing has changed since the last successful upload. Returns 0 on any I/O
+     * failure (defensive — we'd rather skip a sync than crash a close path).
+     */
+    fun countPendingOps(onResult: (Long) -> Unit) {
+        executor.execute {
+            val n = runCatching { repo?.countPendingOps() ?: 0L }
+                .onFailure { android.util.Log.e(TAG, "failed to count pending ops", it) }
+                .getOrDefault(0L)
+            poster { onResult(n) }
+        }
+    }
+
     /** Drain pending writes, then close the driver as the last task. */
     fun shutdown() {
         executor.execute { runCatching { repo?.close() } }
