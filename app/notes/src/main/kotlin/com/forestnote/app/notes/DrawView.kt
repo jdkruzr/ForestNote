@@ -774,24 +774,39 @@ class DrawView @JvmOverloads constructor(
         if (selectedTextBoxIds.isEmpty()) emptyList()
         else textBoxes.filter { it.id in selectedTextBoxIds }
 
-    /** Copy the current selection to [clipboard] (leaves the strokes on the page). */
+    /** Copy the current selection (strokes + text boxes) to [clipboard] — leaves the
+     *  selection on the page. AC3.1: both lists land in the payload. */
     fun copySelection(clipboard: Clipboard) {
-        // Phase 2 widens the clipboard contract; selected boxes are wired in Phase 5+6.
-        clipboard.set(ClipboardPayload(strokes = getSelectedStrokes(), textBoxes = emptyList()))
+        clipboard.set(
+            ClipboardPayload(
+                strokes = getSelectedStrokes(),
+                textBoxes = getSelectedTextBoxes(),
+            )
+        )
     }
 
-    /** Remove the current selection from the page (persisted off-thread) without stashing.
-     *  Phase 5 keeps this strokes-only; Phase 6 widens deleteSelection / cut to also
-     *  remove lasso-selected text boxes. */
+    /** Remove the current selection (strokes AND text boxes) from the page, persisted
+     *  off-thread via the batch ops (AC3.3). Strokes go through [NotebookStore.deleteStrokes];
+     *  boxes go through [NotebookStore.replaceTextBoxes] with `added = emptyList()` so the
+     *  soft-delete + sync-op enqueue + OCR-stale + notebook-touch all fire in one
+     *  transaction per table. */
     fun deleteSelection() {
-        val ids = selectedStrokeIds.toList()
-        if (ids.isEmpty()) return
-        store?.deleteStrokes(ids)
-        val idSet = ids.toHashSet()
-        completedStrokes.removeAll { it.id in idSet }
+        val strokeIds = selectedStrokeIds.toList()
+        val boxIds = selectedTextBoxIds.toList()
+        if (strokeIds.isEmpty() && boxIds.isEmpty()) return
+
+        if (strokeIds.isNotEmpty()) store?.deleteStrokes(strokeIds)
+        if (boxIds.isNotEmpty()) store?.replaceTextBoxes(boxIds, emptyList())
+
+        val strokeIdSet = strokeIds.toHashSet()
+        val boxIdSet = boxIds.toHashSet()
         // Clear selection + dismiss the menu BEFORE redrawing so the highlight loop
-        // never references a removed stroke (the loop iterates completedStrokes anyway).
+        // never references a removed element.
+        completedStrokes.removeAll { it.id in strokeIdSet }
+        textBoxes.removeAll { it.id in boxIdSet }
         selectedStrokeIds = emptySet()
+        selectedTextBoxIds = emptySet()
+        transformingBoxIds = emptySet()
         lassoPoints.clear()
         lassoClosed = false
         onSelectionChanged?.invoke(ClipboardPayload.EMPTY, null)
