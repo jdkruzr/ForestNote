@@ -29,8 +29,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 
@@ -360,11 +362,26 @@ class SettingsView {
      * exceptions surface as "not reachable". Runs off-thread; result via toast.
      */
     private fun onTestCalDavConnection(view: View) {
-        val creds = secureCreds?.caldavCreds()
-        if (creds == null) {
+        // Read the live EditText values rather than going through ESP — wireSecure
+        // commits on blur, but tapping Test doesn't necessarily blur the focused
+        // field (button-while-input-focused is a known Android race), so a user
+        // who types all three then taps Test would see "Fill in…" even with the
+        // form full. Also persist what we just read so the test reflects the same
+        // creds the drainer will use on the next attempt.
+        val urlField = view.findViewById<EditText>(R.id.input_caldav_url)
+        val userField = view.findViewById<EditText>(R.id.input_caldav_username)
+        val passField = view.findViewById<EditText>(R.id.input_caldav_password)
+        val url = urlField?.text?.toString().orEmpty().trim()
+        val user = userField?.text?.toString().orEmpty()
+        val pass = passField?.text?.toString().orEmpty()
+        if (url.isBlank() || user.isBlank() || pass.isBlank()) {
             Toast.makeText(view.context, "Fill in URL, username, and password first.", Toast.LENGTH_LONG).show()
             return
         }
+        val creds = CalDavCredentials(collectionUrl = url, username = user, password = pass)
+        // Persist now so the drainer / a subsequent app launch sees the same creds we
+        // just tested (matches the user's mental model of "Test = verify-and-save").
+        secureCreds?.setCaldavCreds(creds)
         val s = scope ?: return
         Toast.makeText(view.context, "Testing…", Toast.LENGTH_SHORT).show()
         s.launch {
@@ -376,9 +393,19 @@ class SettingsView {
                         .build()
                     val basic = "Basic " + Base64.getEncoder()
                         .encodeToString("${creds.username}:${creds.password}".toByteArray(Charsets.UTF_8))
+                    // PROPFIND Depth: 0 with a minimal displayname query is the
+                    // canonical "is this collection reachable + are these creds valid"
+                    // probe in CalDAV / WebDAV. We tried OPTIONS first but Nextcloud /
+                    // Sabre DAV return 405 on collection URLs (they only accept OPTIONS
+                    // on the WebDAV root). PROPFIND is universally supported.
+                    val propfindBody = """<?xml version="1.0" encoding="utf-8"?>
+                        |<d:propfind xmlns:d="DAV:"><d:prop><d:displayname/></d:prop></d:propfind>
+                        |""".trimMargin().toRequestBody(MEDIA_XML)
                     val req = Request.Builder()
                         .url(creds.collectionUrl)
-                        .method("OPTIONS", null)
+                        .method("PROPFIND", propfindBody)
+                        .header("Content-Type", "application/xml; charset=utf-8")
+                        .header("Depth", "0")
                         .header("Authorization", basic)
                         .build()
                     client.newCall(req).execute().use { it.code }
@@ -388,8 +415,10 @@ class SettingsView {
             outcome.fold(
                 onSuccess = { code ->
                     val msg = when {
-                        code in 200..299 -> "Connection ok (HTTP $code)"
+                        // 207 Multi-Status = the canonical PROPFIND success; 200 just in case.
+                        code == 207 || code == 200 -> "Connection ok (HTTP $code)"
                         code == 401 || code == 403 -> "Auth failed (HTTP $code) — check username/password."
+                        code == 404 -> "Not found (HTTP 404) — check the collection URL."
                         else -> "Server responded with HTTP $code"
                     }
                     Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
@@ -557,5 +586,8 @@ class SettingsView {
     private companion object {
         // Base for code-generated pitch RadioButton ids (must be > 0 and stable).
         const val PITCH_ID_BASE = 0x70_00_01
+
+        // Content-Type for the PROPFIND probe body in onTestCalDavConnection.
+        val MEDIA_XML = "application/xml; charset=utf-8".toMediaType()
     }
 }
