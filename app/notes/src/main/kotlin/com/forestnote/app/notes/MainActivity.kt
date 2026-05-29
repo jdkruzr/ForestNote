@@ -371,8 +371,21 @@ class MainActivity : Activity() {
                 drawView.fontResolver = catalog::resolve
                 toolBar.setFontNames(catalog.names)
                 toolBar.setFontPreview { name -> catalog.resolve(name, com.forestnote.core.ink.TextBox.WEIGHT_NORMAL) }
-                // Re-render any already-loaded boxes now that real typefaces are available.
-                drawView.fullRefresh()
+                // Re-render any already-loaded boxes now that real typefaces are available —
+                // but ONLY when the editor is actually the topmost View. fullRefresh() goes
+                // through backend.pushBackgroundBitmap / resetOverlay, which on Viwoods
+                // composites ABOVE the View pipeline ([[viwoods-writing-overlay]]). On launch
+                // into the Library, the font scan completes ~a few hundred ms after onCreate,
+                // and that push would paint the editor's bitmap (the empty template, or worse,
+                // whatever the editor last held) on top of the Library overlay — visible as a
+                // brief note-flash + a faint negative ghost on Library card cells. The next
+                // time the editor actually becomes visible (closeLibrary → loadEditor, or
+                // goToNotebook), composeStaticBitmap runs with the live fontResolver and the
+                // boxes get the right typefaces anyway, so skipping the refresh here is loss-
+                // less. Same gate as the delete-handler fix.
+                if (editorLoaded && !libraryView.isShowing && !settingsView.isShowing && !recycleBinView.isShowing) {
+                    drawView.fullRefresh()
+                }
             }
         }.start()
 
