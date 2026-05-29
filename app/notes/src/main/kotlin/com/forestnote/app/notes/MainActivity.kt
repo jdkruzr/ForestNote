@@ -393,13 +393,20 @@ class MainActivity : Activity() {
         // Lasso selection menu: show the action pill over a closed selection, dismiss
         // it when the selection clears (tool switch / new lasso / cut / delete).
         selectionMenu = SelectionMenuView(isEInk)
-        drawView.onSelectionChanged = { strokes, bounds ->
-            fileLogger.log("Sel", "onSelectionChanged strokes=${strokes.size} bounds=${bounds != null}")
-            if (strokes.isEmpty() || bounds == null) {
+        drawView.onSelectionChanged = { payload, bounds ->
+            // Phase 5 widens the callback to ClipboardPayload(strokes, textBoxes). The Recognize /
+            // To-do paths still operate on strokes (they recognize handwriting); Cut / Copy / Delete
+            // semantics for mixed selections are widened in Phase 6.
+            val strokes = payload.strokes
+            fileLogger.log(
+                "Sel",
+                "onSelectionChanged strokes=${strokes.size} boxes=${payload.textBoxes.size} bounds=${bounds != null}"
+            )
+            if (payload.isEmpty() || bounds == null) {
                 selectionMenu.dismiss()
             } else {
                 selectionMenu.show(
-                    drawView, strokes.size, bounds,
+                    drawView, strokes.size + payload.textBoxes.size, bounds,
                     SelectionMenuView.Callbacks(
                         onCut = { drawView.cutSelection(clipboard) },
                         onCopy = { drawView.copySelection(clipboard) },
