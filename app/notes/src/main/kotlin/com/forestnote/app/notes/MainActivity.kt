@@ -443,7 +443,7 @@ class MainActivity : Activity() {
 
         // Paste cell: enabled live whenever the clipboard is non-empty (AC1.6).
         toolBar.setOnPasteClicked { paste() }
-        clipboard.addListener { strokes -> toolBar.setPasteEnabled(strokes.isNotEmpty()) }
+        clipboard.addListener { payload -> toolBar.setPasteEnabled(!payload.isEmpty()) }
         toolBar.setPasteEnabled(!clipboard.isEmpty())
 
         // Template cell: per-page template override picker (B4).
@@ -468,7 +468,10 @@ class MainActivity : Activity() {
         val src = clipboard.get()
         if (src.isEmpty()) return
         toolBar.setPasteArmed(true)
-        drawView.armPaste(src) { toolBar.setPasteArmed(false) }
+        // Phase 2 widens the clipboard contract; paste continues to operate on strokes
+        // only in this phase. Phase 6 wires armPaste to the full ClipboardPayload so
+        // mixed (strokes + textBoxes) paste lands at the tap.
+        drawView.armPaste(src.strokes) { toolBar.setPasteArmed(false) }
     }
 
     /**

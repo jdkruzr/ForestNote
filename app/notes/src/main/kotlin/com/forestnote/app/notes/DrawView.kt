@@ -688,7 +688,8 @@ class DrawView @JvmOverloads constructor(
 
     /** Copy the current selection to [clipboard] (leaves the strokes on the page). */
     fun copySelection(clipboard: Clipboard) {
-        clipboard.set(getSelectedStrokes())
+        // Phase 2 widens the clipboard contract; selected boxes are wired in Phase 5+6.
+        clipboard.set(ClipboardPayload(strokes = getSelectedStrokes(), textBoxes = emptyList()))
     }
 
     /** Remove the current selection from the page (persisted off-thread) without stashing. */
