@@ -475,10 +475,9 @@ class MainActivity : Activity() {
         val src = clipboard.get()
         if (src.isEmpty()) return
         toolBar.setPasteArmed(true)
-        // Phase 2 widens the clipboard contract; paste continues to operate on strokes
-        // only in this phase. Phase 6 wires armPaste to the full ClipboardPayload so
-        // mixed (strokes + textBoxes) paste lands at the tap.
-        drawView.armPaste(src.strokes) { toolBar.setPasteArmed(false) }
+        // Phase 6: armPaste takes the full payload; tap-to-place anchors the combined
+        // (strokes + boxes) bounds on the tap point, with fresh ULIDs per element.
+        drawView.armPaste(src) { toolBar.setPasteArmed(false) }
     }
 
     /**

@@ -240,18 +240,18 @@ class DrawView @JvmOverloads constructor(
         invalidate()
     }
 
-    // ===== Paste-placement mode (A8): tap Paste, then tap the canvas to drop =====
-    private var pendingPaste: List<Stroke>? = null
+    // ===== Paste-placement mode (A8 / lasso-textboxes.AC3.4): tap Paste, then tap the canvas to drop =====
+    private var pendingPaste: ClipboardPayload? = null
     private var onPasteModeEnded: (() -> Unit)? = null
 
     /**
-     * Arm paste placement: the next canvas tap drops [strokes] centred on it (clamped
-     * on-page), with fresh ULIDs. [onEnded] fires when the mode ends (placed OR cancelled)
-     * so the caller can reset the Paste cell caption.
+     * Arm paste placement: the next canvas tap drops [payload] (strokes + text boxes)
+     * centred on it, clamped on-page, with fresh ULIDs (AC3.4). [onEnded] fires when
+     * the mode ends (placed OR cancelled) so the caller can reset the Paste cell caption.
      */
-    fun armPaste(strokes: List<Stroke>, onEnded: () -> Unit) {
-        if (strokes.isEmpty()) return
-        pendingPaste = strokes
+    fun armPaste(payload: ClipboardPayload, onEnded: () -> Unit) {
+        if (payload.isEmpty()) return
+        pendingPaste = payload
         onPasteModeEnded = onEnded
     }
 
@@ -268,21 +268,41 @@ class DrawView @JvmOverloads constructor(
         cb?.invoke()
     }
 
-    /** Drop the pending paste centred on a tapped screen point, clamped fully on-page. */
+    /**
+     * Drop the pending paste centred on a tapped screen point, clamped fully on-page
+     * (AC3.4). The combined-bounds centre anchors the union so relative offsets between
+     * strokes and boxes are preserved. Persists via the Phase-4 batch path so the
+     * OCR-stale + notebook-touch side effects fire exactly once per table — an upgrade
+     * over the pre-Phase-6 per-stroke save loop.
+     */
     private fun placePasteAt(screenX: Float, screenY: Float) {
-        val strokes = pendingPaste ?: return
-        val b = LassoSelectionLogic.bounds(strokes)
-        if (b == null) { endPasteMode(); return }
+        val payload = pendingPaste ?: return
+        val combined = LassoSelectionLogic.combinedBounds(payload.strokes, payload.textBoxes)
+            ?: run { endPasteMode(); return }
+
         val tapVx = transform.toVirtualX(screenX)
         val tapVy = transform.toVirtualY(screenY)
-        val centreX = (b.minX + b.maxX) / 2
-        val centreY = (b.minY + b.maxY) / 2
-        // Offset to centre the selection on the tap, clamped so the bbox stays on-page.
-        val dx = clampOffset(tapVx - centreX, -b.minX, PageTransform.VIRTUAL_SHORT_AXIS - b.maxX)
-        val dy = clampOffset(tapVy - centreY, -b.minY, transform.virtualLongAxis - b.maxY)
-        val pasted = LassoSelectionLogic.translate(strokes, dx, dy) { Ulid.generate() }  // fresh ids
+        val centreX = (combined.minX + combined.maxX) / 2
+        val centreY = (combined.minY + combined.maxY) / 2
+        // Offset to centre the union on the tap, clamped so the combined bbox stays on-page.
+        val dx = clampOffset(tapVx - centreX, -combined.minX, PageTransform.VIRTUAL_SHORT_AXIS - combined.maxX)
+        val dy = clampOffset(tapVy - centreY, -combined.minY, transform.virtualLongAxis - combined.maxY)
+
+        // Fresh ULIDs so the originals and the pasted copies coexist in the DB.
+        val pastedStrokes = LassoSelectionLogic.translate(payload.strokes, dx, dy) { Ulid.generate() }
+        val pastedBoxes = LassoSelectionLogic.translateTextBoxes(payload.textBoxes, dx, dy) { Ulid.generate() }
+
+        if (pastedStrokes.isNotEmpty()) {
+            store?.replaceStrokes(removedIds = emptyList(), added = pastedStrokes)
+            completedStrokes.addAll(pastedStrokes)
+        }
+        if (pastedBoxes.isNotEmpty()) {
+            store?.replaceTextBoxes(removedIds = emptyList(), added = pastedBoxes)
+            textBoxes.addAll(pastedBoxes)
+        }
+
         endPasteMode()
-        addPastedStrokes(pasted)
+        redrawBitmap()
     }
 
     /** Coerce into [lo, hi]; if the content is wider than the page (lo > hi), pin to lo. */
@@ -817,20 +837,6 @@ class DrawView @JvmOverloads constructor(
     fun cutSelection(clipboard: Clipboard) {
         copySelection(clipboard)
         deleteSelection()
-    }
-
-    /**
-     * Insert already-offset, fresh-id strokes onto the page (lasso Paste, AC1.6). Mirrors
-     * the pen-up path: add to the in-memory model + persist each off-thread, then redraw.
-     * Persistence bumps the notebook's modified_at via saveStroke→touchCurrentNotebook.
-     */
-    fun addPastedStrokes(strokes: List<Stroke>) {
-        if (strokes.isEmpty()) return
-        for (s in strokes) {
-            completedStrokes.add(s)
-            store?.save(s)
-        }
-        redrawBitmap()
     }
 
     // ===== Text box placement + editing (Tool.Text) =====
