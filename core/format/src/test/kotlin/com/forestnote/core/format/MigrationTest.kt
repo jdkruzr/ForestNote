@@ -810,4 +810,56 @@ class MigrationTest {
 
         driver.close()
     }
+
+    @Test
+    fun v13ToV14AddsCaldavOutboxTableAndIndex() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        createV7PageStroke(driver)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 13L)
+        assertFalse(tableExists(driver, "caldav_outbox"),
+            "v13 has no caldav_outbox table")
+        // Seed a row in an unrelated table so we can also assert pre-v14 data survives.
+        driver.execute(
+            null,
+            "INSERT INTO page_text_from_server(id, text, ocr_at, model, created_at, deleted_at, stale_at) " +
+                "VALUES ('p1', 'hi', 100, 'ub-ocr', 90, NULL, NULL)",
+            0
+        )
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 13L, newVersion = 14L)
+
+        assertTrue(tableExists(driver, "caldav_outbox"),
+            "caldav_outbox exists after v13->v14")
+        assertTrue(indexExists(driver, "caldav_outbox_drain"),
+            "caldav_outbox_drain index exists after v13->v14")
+        val cols = columnNames(driver, "caldav_outbox")
+        for (expected in listOf(
+            "id", "summary", "vtodo_body", "created_at",
+            "attempts", "next_attempt_at", "last_error", "status",
+        )) {
+            assertTrue(cols.contains(expected), "caldav_outbox column $expected exists")
+        }
+        // Sanity-check that a basic insert + select round-trips on the migrated DB.
+        driver.execute(
+            null,
+            "INSERT INTO caldav_outbox(id, summary, vtodo_body, created_at) VALUES ('u1', 's', 'b', 1)",
+            0,
+        )
+        var roundTripped: String? = null
+        driver.executeQuery(
+            null, "SELECT status FROM caldav_outbox WHERE id = 'u1'",
+            { c -> c.next(); roundTripped = c.getString(0); QueryResult.Value(Unit) }, 0
+        )
+        assertEquals("pending", roundTripped, "default status = pending after insert")
+
+        // Pre-existing v13 row in an unrelated table survives the migration.
+        var preservedText: String? = null
+        driver.executeQuery(
+            null, "SELECT text FROM page_text_from_server WHERE id = 'p1'",
+            { c -> c.next(); preservedText = c.getString(0); QueryResult.Value(Unit) }, 0
+        )
+        assertEquals("hi", preservedText, "pre-v14 rows survive the additive migration")
+
+        driver.close()
+    }
 }

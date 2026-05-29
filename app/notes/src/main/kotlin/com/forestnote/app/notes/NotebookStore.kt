@@ -15,11 +15,11 @@ import com.forestnote.core.format.RecognizedText
 import com.forestnote.core.format.SearchResults
 import com.forestnote.core.format.Settings
 import com.forestnote.app.notes.caldav.CalDavClient
-import com.forestnote.app.notes.caldav.CalDavCredentials
-import com.forestnote.app.notes.caldav.CalDavResult
+import com.forestnote.app.notes.caldav.CalDavOutboxStore
 import com.forestnote.app.notes.caldav.SecureCredentialsStore
 import com.forestnote.app.notes.caldav.VTodoBuilder
 import com.forestnote.app.notes.caldav.VTodoInput
+import com.forestnote.core.format.CalDavOutboxEntry
 import com.forestnote.core.format.SyncOp
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeGeometry
@@ -50,16 +50,13 @@ class NotebookStore(
     private val executor: ExecutorService,
     private val poster: (Runnable) -> Unit,
     /**
-     * Optional credential store used by [createCalDavTask] and (after migration) by
-     * [SyncController] for sync auth. `null` is the legacy path: sync still reads its
-     * creds out of [Settings] and CalDAV task creation is a no-op (returns TransportError).
+     * Optional credential store used by [SyncController] (after migration) for sync auth.
+     * `null` keeps the legacy path: sync still reads its creds out of [Settings].
+     *
+     * CalDAV creds are *not* consulted by NotebookStore directly — the drainer
+     * resolves them itself, so this field is purely a Settings-migration concern.
      */
     private val secureCredentials: SecureCredentialsStore? = null,
-    /**
-     * Optional CalDAV PUT client. `null` means CalDAV task creation is unavailable —
-     * [createCalDavTask] posts [CalDavResult.TransportError]. Most JVM tests don't need it.
-     */
-    private val calDavClient: CalDavClient? = null,
 ) {
     // Written and read only on the executor thread, so no synchronization is needed.
     private var repo: NotebookRepository? = null
@@ -313,44 +310,83 @@ class NotebookStore(
         }
     }
 
-    // --- CalDAV (lasso-recognize → VTODO) ----------------------------------------
+    // --- CalDAV outbox (lasso-recognize → VTODO; OFFLINE-FIRST) ------------------
+    //
+    // Send-path: UI → enqueueCalDavTask → outbox row → CalDavOutboxDrainer (separate
+    // class) reads from [calDavOutboxStore] and PUTs against the configured CalDAV
+    // collection. The actual `CalDavClient.putVtodo` is invoked from the drainer,
+    // NOT from this method — that's the whole point of the queue. NotebookStore
+    // owns the durable side; the drainer owns the network side.
 
     /**
-     * Build a VTODO from [input] and PUT it to the user's configured CalDAV collection.
-     *
-     * The build + PUT both run on the single-writer executor. This makes the path
-     * back-pressure-aware with the rest of the DB work (so a slow CalDAV server can't
-     * starve, but it also can't run concurrently with a save) — acceptable because
-     * task creation is user-driven and infrequent. The [onResult] callback fires on
-     * the poster (main thread in production, inline in tests).
-     *
-     * Posts [CalDavResult.TransportError] when CalDAV isn't configured (no client
-     * injected, or no creds in the secure store) — the UI surfaces that as a normal
-     * error dialog so the user is told why instead of nothing happening.
+     * Append a VTODO PUT to the outbox. Freezes the iCalendar body at enqueue time
+     * so a credential edit can't corrupt an in-flight task; credentials/URL are
+     * resolved fresh by the drainer on every attempt.
      */
-    fun createCalDavTask(
-        input: VTodoInput,
-        onResult: (CalDavResult) -> Unit,
-    ) {
-        val client = calDavClient
-        val creds: CalDavCredentials? = secureCredentials?.caldavCreds()
-        if (client == null || creds == null) {
-            poster {
-                onResult(
-                    CalDavResult.TransportError(
-                        IllegalStateException("CalDAV not configured")
-                    )
-                )
-            }
-            return
-        }
+    fun enqueueCalDavTask(input: VTodoInput, onDone: () -> Unit = {}) {
         executor.execute {
-            val result = runCatching {
-                val body = VTodoBuilder.build(input)
-                client.putVtodo(creds, body, input.uid)
-            }.getOrElse { CalDavResult.TransportError(it) }
-            poster { onResult(result) }
+            runCatching {
+                repo?.enqueueCalDavOutbox(
+                    id = input.uid,
+                    summary = input.summary,
+                    vtodoBody = VTodoBuilder.build(input),
+                    now = System.currentTimeMillis(),
+                )
+            }.onFailure { android.util.Log.e(TAG, "failed to enqueue caldav task", it) }
+            poster { onDone() }
         }
+    }
+
+    /** List for the Settings "Queued tasks" section. Pending first, then failed. */
+    fun listCalDavOutbox(onResult: (List<CalDavOutboxEntry>) -> Unit) {
+        executor.execute {
+            val rows = runCatching { repo?.listCalDavOutbox() ?: emptyList() }
+                .onFailure { android.util.Log.e(TAG, "failed to list caldav outbox", it) }
+                .getOrDefault(emptyList())
+            poster { onResult(rows) }
+        }
+    }
+
+    /** Drop a row entirely. Wires to Settings's [Cancel]/[Delete] buttons. */
+    fun deleteCalDavOutboxEntry(id: String, onDone: () -> Unit = {}) {
+        executor.execute {
+            runCatching { repo?.deleteCalDavOp(id) }
+                .onFailure { android.util.Log.e(TAG, "failed to delete caldav op", it) }
+            poster { onDone() }
+        }
+    }
+
+    /** Reset a `failed` row to `pending` so the drainer picks it back up. */
+    fun retryCalDavOutboxEntry(id: String, onDone: () -> Unit = {}) {
+        executor.execute {
+            runCatching { repo?.retryCalDavOpFromDeadLetter(id, System.currentTimeMillis()) }
+                .onFailure { android.util.Log.e(TAG, "failed to retry caldav op", it) }
+            poster { onDone() }
+        }
+    }
+
+    /**
+     * The drainer's view onto the queue. Every method bridges to the executor via
+     * [onDb] (same pattern as [syncLocalStore]) so calls from arbitrary coroutines
+     * stay serialized with the rest of the DB work.
+     */
+    fun calDavOutboxStore(): CalDavOutboxStore = object : CalDavOutboxStore {
+        override suspend fun nextDrainable(now: Long): CalDavOutboxEntry? =
+            onDb { it.nextDrainableCalDavOp(now) }
+
+        override suspend fun findById(id: String): CalDavOutboxEntry? =
+            onDb { it.findCalDavOpById(id) }
+
+        override suspend fun markAttempted(id: String, attempts: Int, nextAttemptAt: Long, lastError: String?) =
+            onDb { it.markCalDavOpAttempted(id, attempts, nextAttemptAt, lastError) }
+
+        override suspend fun markDeadLettered(id: String, lastError: String) =
+            onDb { it.markCalDavOpDeadLettered(id, lastError) }
+
+        override suspend fun delete(id: String) = onDb { it.deleteCalDavOp(id) }
+
+        override suspend fun counts(): Pair<Int, Int> =
+            onDb { it.countCalDavOutboxByStatus() }
     }
 
     /**
@@ -667,14 +703,13 @@ class NotebookStore(
 
         /**
          * Production factory: real single-thread executor, main-thread Handler poster.
-         * [secureCredentials] + [calDavClient] are optional — passing both enables the
-         * lasso-recognize → CalDAV VTODO flow (see [createCalDavTask]). Tests usually
-         * construct [NotebookStore] directly and leave them null.
+         * [secureCredentials] threads through to the post-migration sync credential
+         * source (see [SyncController]); leaving it null preserves the pre-CalDAV
+         * Settings-only behaviour used by JVM tests.
          */
         fun create(
             context: Context,
             secureCredentials: SecureCredentialsStore? = null,
-            calDavClient: CalDavClient? = null,
         ): NotebookStore {
             val appContext = context.applicationContext
             val mainHandler = Handler(Looper.getMainLooper())
@@ -683,7 +718,6 @@ class NotebookStore(
                 executor = Executors.newSingleThreadExecutor(),
                 poster = { runnable -> mainHandler.post(runnable) },
                 secureCredentials = secureCredentials,
-                calDavClient = calDavClient,
             )
         }
     }

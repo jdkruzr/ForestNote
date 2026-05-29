@@ -14,8 +14,11 @@ import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import com.forestnote.app.notes.caldav.CalDavCredentials
+import com.forestnote.app.notes.caldav.CalDavOutboxDrainer
 import com.forestnote.app.notes.caldav.SecureCredentialsStore
 import com.forestnote.app.notes.caldav.SyncCredentials
+import com.forestnote.core.format.CalDavOutboxEntry
+import com.forestnote.core.format.CalDavOutboxStatus
 import com.forestnote.app.notes.recognize.RecognitionModelManager
 import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.format.Settings
@@ -50,6 +53,7 @@ class SettingsView {
     private var scope: CoroutineScope? = null
     private var modelManager: RecognitionModelManager? = null
     private var secureCreds: SecureCredentialsStore? = null
+    private var caldavDrainer: CalDavOutboxDrainer? = null
 
     /** Whether the overlay is currently attached. */
     val isShowing: Boolean get() = root != null
@@ -65,12 +69,14 @@ class SettingsView {
         store: NotebookStore,
         modelManager: RecognitionModelManager,
         secureCreds: SecureCredentialsStore,
+        caldavDrainer: CalDavOutboxDrainer,
         onClose: () -> Unit,
     ) {
         if (isShowing) return
         this.host = host
         this.modelManager = modelManager
         this.secureCreds = secureCreds
+        this.caldavDrainer = caldavDrainer
         this.scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val view = LayoutInflater.from(host.context).inflate(R.layout.view_settings, host, false)
         host.addView(view)
@@ -87,6 +93,7 @@ class SettingsView {
         scope = null
         modelManager = null
         secureCreds = null
+        caldavDrainer = null
         root?.let { host?.removeView(it) }
         root = null
         host = null
@@ -232,6 +239,97 @@ class SettingsView {
             .also { it.guard = { loading } }
 
         wireRecognitionModels(view)
+        wireCalDavQueue(view)
+    }
+
+    /**
+     * Render the "Queued tasks" section: a row per pending or failed outbox entry
+     * with Cancel / Retry / Delete affordances. The section hides itself entirely
+     * when the queue is empty so the rest of Settings stays uncluttered.
+     *
+     * Refreshes on every drainer status emission (one per drain pass start and
+     * end) so a row that just sent disappears immediately.
+     */
+    private fun wireCalDavQueue(view: View) {
+        val label = view.findViewById<TextView>(R.id.label_caldav_queued)
+        val container = view.findViewById<LinearLayout>(R.id.container_caldav_queued)
+        val drainNowBtn = view.findViewById<Button>(R.id.btn_caldav_drain_now)
+        drainNowBtn.setOnClickListener { caldavDrainer?.drainNow() }
+
+        fun refresh() {
+            val s = store ?: return
+            s.listCalDavOutbox { rows ->
+                container.removeAllViews()
+                if (rows.isEmpty()) {
+                    label.visibility = View.GONE
+                    drainNowBtn.visibility = View.GONE
+                    return@listCalDavOutbox
+                }
+                label.visibility = View.VISIBLE
+                drainNowBtn.visibility = View.VISIBLE
+                for (row in rows) addRow(container, row)
+            }
+        }
+
+        refresh()
+        // The drainer emits Idle status after every drain pass — that's our cue to
+        // re-render. The scope is cancelled in hide() so this auto-cleans up.
+        val drainer = caldavDrainer ?: return
+        val s = scope ?: return
+        s.launch {
+            drainer.status.collect { _ -> refresh() }
+        }
+    }
+
+    /** One row in the queued-tasks list. Distinguishes pending vs failed visually. */
+    private fun addRow(container: LinearLayout, row: CalDavOutboxEntry) {
+        val ctx = container.context
+        val rowView = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, 6, 0, 6)
+        }
+        val summary = TextView(ctx).apply {
+            text = buildString {
+                append(row.summary.ifBlank { "(empty)" })
+                when (row.status) {
+                    CalDavOutboxStatus.Pending -> {
+                        if (row.attempts > 0) append("  ·  retries: ${row.attempts}")
+                    }
+                    CalDavOutboxStatus.Failed -> {
+                        append("  ·  ${row.lastError ?: "failed"}")
+                    }
+                }
+            }
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            textSize = 14f
+            setTextColor(
+                ctx.getColor(
+                    if (row.status == CalDavOutboxStatus.Failed) android.R.color.holo_red_dark
+                    else android.R.color.black
+                ),
+            )
+        }
+        rowView.addView(summary)
+        // Failed rows get Retry + Delete; pending rows get Cancel only.
+        if (row.status == CalDavOutboxStatus.Failed) {
+            rowView.addView(Button(ctx).apply {
+                text = "Retry"
+                setOnClickListener {
+                    store?.retryCalDavOutboxEntry(row.id) { caldavDrainer?.drainNow() }
+                }
+            })
+            rowView.addView(Button(ctx).apply {
+                text = "Delete"
+                setOnClickListener { store?.deleteCalDavOutboxEntry(row.id) }
+            })
+        } else {
+            rowView.addView(Button(ctx).apply {
+                text = "Cancel"
+                setOnClickListener { store?.deleteCalDavOutboxEntry(row.id) }
+            })
+        }
+        container.addView(rowView)
     }
 
     /**

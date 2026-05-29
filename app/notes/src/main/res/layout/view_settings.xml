@@ -245,6 +245,31 @@
                 android:text="Test connection"
                 android:layout_marginTop="8dp" />
 
+            <!-- Offline-queue UI: populated by SettingsView from
+                 NotebookStore.listCalDavOutbox + CalDavOutboxDrainer.status. Each row
+                 is built programmatically with Cancel/Retry/Delete affordances. Hidden
+                 entirely when the queue is empty. -->
+            <TextView
+                android:id="@+id/label_caldav_queued"
+                style="@style/SettingsLabel"
+                android:text="Queued tasks"
+                android:paddingTop="16dp"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/container_caldav_queued"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <Button
+                android:id="@+id/btn_caldav_drain_now"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Drain now"
+                android:layout_marginTop="4dp"
+                android:visibility="gone" />
+
             <!-- ===== Recycle Bin ===== -->
             <TextView style="@style/SettingsSection" android:text="Recycle Bin" />
 

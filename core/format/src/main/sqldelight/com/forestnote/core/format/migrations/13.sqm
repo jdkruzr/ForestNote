@@ -1,0 +1,25 @@
+-- v13 -> v14: add the LOCAL-ONLY CalDAV outbox queue. NON-destructive.
+--
+-- caldav_outbox persists pending CalDAV VTODO PUTs so a network drop doesn't lose
+-- tasks. The drainer (app:notes CalDavOutboxDrainer) reads + mutates this table off
+-- the single-writer thread, same as everything else in NotebookRepository. The
+-- index covers the drainer's hot query: "oldest pending row whose retry window
+-- has opened".
+--
+-- IMPORTANT: caldav_outbox is NOT a synced table. It is deliberately ABSENT from
+-- SyncWire.knownCols, SyncMerge.knownCols, and the SyncWire decoders. The v3
+-- schema hash (724411eb…) does not change. Same local-only discipline as
+-- page_text_from_server.stale_at (added in 12.sqm).
+--
+-- create() and migrate() never both run on one DB.
+CREATE TABLE caldav_outbox (
+    id              TEXT PRIMARY KEY NOT NULL,
+    summary         TEXT NOT NULL,
+    vtodo_body      TEXT NOT NULL,
+    created_at      INTEGER NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending'
+);
+CREATE INDEX caldav_outbox_drain ON caldav_outbox(status, next_attempt_at);

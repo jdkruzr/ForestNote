@@ -117,6 +117,27 @@ CREATE TABLE page_text_from_client (
     deleted_at INTEGER
 );
 
+-- ── CalDAV outbox (lasso-recognize → VTODO) — LOCAL ONLY ────────────────────────
+-- Persists pending CalDAV VTODO PUTs so a flaky network doesn't lose tasks. The
+-- iCalendar body is frozen at enqueue time (so a credential edit can't corrupt
+-- in-flight tasks), but credentials/URL are resolved fresh from
+-- SecureCredentialsStore on every drain attempt — that way a password fix
+-- recovers stuck rows. LOCAL ONLY: deliberately ABSENT from SyncWire.knownCols
+-- and SyncMerge, so the v3 schema hash is unchanged (same pattern as
+-- page_text_from_server.stale_at).
+CREATE TABLE caldav_outbox (
+    id              TEXT PRIMARY KEY NOT NULL,        -- VTODO UID; reused across retries (PUT is idempotent w/ If-None-Match:*)
+    summary         TEXT NOT NULL,                    -- for the Settings list + dead-letter messaging
+    vtodo_body      TEXT NOT NULL,                    -- prebuilt iCalendar body (VTodoBuilder.build at enqueue time)
+    created_at      INTEGER NOT NULL,                 -- ms UTC, enqueue time
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL DEFAULT 0,       -- 0 = drain now; otherwise ms UTC
+    last_error      TEXT,                             -- nullable; populated on failure
+    status          TEXT NOT NULL DEFAULT 'pending'   -- 'pending' | 'failed'
+);
+-- The drainer's hottest query is "next drainable op", filtered by status + readiness.
+CREATE INDEX caldav_outbox_drain ON caldav_outbox(status, next_attempt_at);
+
 -- Singleton "where the user left off" (id is always 0).
 CREATE TABLE app_state (
     id INTEGER PRIMARY KEY NOT NULL CHECK (id = 0),
@@ -687,3 +708,53 @@ WHERE pfs.text LIKE ? ESCAPE '\'
 ORDER BY n.name COLLATE NOCASE ASC, p.sort_order ASC
 LIMIT ?;
 
+
+-- ── CalDAV outbox queries (LOCAL only) ─────────────────────────────────────────
+
+enqueueCalDavOutbox:
+INSERT INTO caldav_outbox(id, summary, vtodo_body, created_at, attempts, next_attempt_at, last_error, status)
+VALUES (?, ?, ?, ?, 0, 0, NULL, 'pending');
+
+listCalDavOutbox:
+SELECT id, summary, vtodo_body, created_at, attempts, next_attempt_at, last_error, status
+FROM caldav_outbox
+ORDER BY created_at ASC;
+
+-- Oldest pending row whose retry window has opened. The drainer loops on this.
+nextDrainableCalDavOp:
+SELECT id, summary, vtodo_body, created_at, attempts, next_attempt_at, last_error, status
+FROM caldav_outbox
+WHERE status = 'pending' AND next_attempt_at <= ?
+ORDER BY created_at ASC
+LIMIT 1;
+
+-- Counts surfaced via NotebookStore → CalDavOutboxDrainer.status to the UI.
+countCalDavOutboxByStatus:
+SELECT status, COUNT(*) AS n FROM caldav_outbox GROUP BY status;
+
+markCalDavOpAttempted:
+UPDATE caldav_outbox
+SET attempts = ?, next_attempt_at = ?, last_error = ?
+WHERE id = ?;
+
+markCalDavOpDeadLettered:
+UPDATE caldav_outbox
+SET status = 'failed', last_error = ?
+WHERE id = ?;
+
+-- User-tapped "Retry" on a dead-letter row: clear failure state and request immediate drain.
+retryCalDavOpFromDeadLetter:
+UPDATE caldav_outbox
+SET status = 'pending', attempts = 0, next_attempt_at = 0, last_error = NULL
+WHERE id = ?;
+
+deleteCalDavOp:
+DELETE FROM caldav_outbox WHERE id = ?;
+
+-- Single-row lookup used by CalDavOutboxDrainer.tryImmediately (the optimistic
+-- "Task created" toast on Send — looks up the row we just enqueued, even if
+-- another older row would otherwise be picked first by nextDrainableCalDavOp).
+findCalDavOpById:
+SELECT id, summary, vtodo_body, created_at, attempts, next_attempt_at, last_error, status
+FROM caldav_outbox
+WHERE id = ?;

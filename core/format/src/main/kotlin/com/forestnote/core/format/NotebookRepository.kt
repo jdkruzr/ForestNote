@@ -892,6 +892,98 @@ class NotebookRepository private constructor(
         db.notebookQueries.markPageTextStale(now, pageId)
     }
 
+    // -- CalDAV outbox (lasso-recognize → VTODO; LOCAL ONLY) -----------------
+    //
+    // Pending and dead-letter rows for the offline queue. The drainer
+    // (app:notes CalDavOutboxDrainer) reads `nextDrainableCalDavOp(now)` in a
+    // loop, attempts the PUT, then routes the result back through one of
+    // `markCalDavOpAttempted` (transient failure — bumps next_attempt_at),
+    // `markCalDavOpDeadLettered` (poison pill, e.g. 401/403/404/400), or
+    // `deleteCalDavOp` (success). `retryCalDavOpFromDeadLetter` is the user's
+    // "Retry" tap in Settings — resets status + attempts, asks for an
+    // immediate drain. All paths are LOCAL-only — `caldav_outbox` is
+    // deliberately absent from SyncWire / SyncMerge (same discipline as
+    // `page_text_from_server.stale_at`).
+
+    fun enqueueCalDavOutbox(id: String, summary: String, vtodoBody: String, now: Long) {
+        db.notebookQueries.enqueueCalDavOutbox(
+            id = id, summary = summary, vtodo_body = vtodoBody, created_at = now,
+        )
+    }
+
+    fun listCalDavOutbox(): List<CalDavOutboxEntry> =
+        db.notebookQueries.listCalDavOutbox().executeAsList().map { r ->
+            CalDavOutboxEntry(
+                id = r.id, summary = r.summary, vtodoBody = r.vtodo_body,
+                createdAt = r.created_at, attempts = r.attempts.toInt(),
+                nextAttemptAt = r.next_attempt_at, lastError = r.last_error,
+                status = parseCalDavOutboxStatus(r.status),
+            )
+        }
+
+    fun nextDrainableCalDavOp(now: Long): CalDavOutboxEntry? =
+        db.notebookQueries.nextDrainableCalDavOp(now).executeAsOneOrNull()?.let { r ->
+            CalDavOutboxEntry(
+                id = r.id, summary = r.summary, vtodoBody = r.vtodo_body,
+                createdAt = r.created_at, attempts = r.attempts.toInt(),
+                nextAttemptAt = r.next_attempt_at, lastError = r.last_error,
+                status = parseCalDavOutboxStatus(r.status),
+            )
+        }
+
+    fun findCalDavOpById(id: String): CalDavOutboxEntry? =
+        db.notebookQueries.findCalDavOpById(id).executeAsOneOrNull()?.let { r ->
+            CalDavOutboxEntry(
+                id = r.id, summary = r.summary, vtodoBody = r.vtodo_body,
+                createdAt = r.created_at, attempts = r.attempts.toInt(),
+                nextAttemptAt = r.next_attempt_at, lastError = r.last_error,
+                status = parseCalDavOutboxStatus(r.status),
+            )
+        }
+
+    /** TEXT column ↔ enum: unknown values defensively coerce to Pending (stays drainable). */
+    private fun parseCalDavOutboxStatus(raw: String): CalDavOutboxStatus = when (raw) {
+        "failed" -> CalDavOutboxStatus.Failed
+        else -> CalDavOutboxStatus.Pending
+    }
+
+    /** Returns (pendingCount, failedCount). Drives the status surface in the UI. */
+    fun countCalDavOutboxByStatus(): Pair<Int, Int> {
+        var pending = 0
+        var failed = 0
+        for (row in db.notebookQueries.countCalDavOutboxByStatus().executeAsList()) {
+            when (row.status) {
+                "pending" -> pending = row.n.toInt()
+                "failed" -> failed = row.n.toInt()
+            }
+        }
+        return pending to failed
+    }
+
+    fun markCalDavOpAttempted(id: String, attempts: Int, nextAttemptAt: Long, lastError: String?) {
+        db.notebookQueries.markCalDavOpAttempted(
+            attempts = attempts.toLong(),
+            next_attempt_at = nextAttemptAt,
+            last_error = lastError,
+            id = id,
+        )
+    }
+
+    fun markCalDavOpDeadLettered(id: String, lastError: String) {
+        db.notebookQueries.markCalDavOpDeadLettered(last_error = lastError, id = id)
+    }
+
+    fun retryCalDavOpFromDeadLetter(id: String, now: Long) {
+        // `now` is unused by the SQL (the query resets next_attempt_at = 0 = drain now)
+        // but is kept on the public surface so the contract reads "as of this clock".
+        @Suppress("UNUSED_PARAMETER") now
+        db.notebookQueries.retryCalDavOpFromDeadLetter(id)
+    }
+
+    fun deleteCalDavOp(id: String) {
+        db.notebookQueries.deleteCalDavOp(id)
+    }
+
     // -- Library search ----------------------------------------------------
     //
     // Library-wide search across four content surfaces: notebook names, folder names, text-box

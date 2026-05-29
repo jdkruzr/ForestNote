@@ -25,13 +25,15 @@ import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.ViwoodsBackend
 import com.forestnote.core.ink.ZBand
 import com.forestnote.core.sync.SyncStatus
-import com.forestnote.app.notes.caldav.CalDavResult
+import com.forestnote.app.notes.caldav.CalDavOutboxDrainer
 import com.forestnote.app.notes.caldav.CalDavTaskSheet
 import com.forestnote.app.notes.caldav.EncryptedPrefsCredentialsBackend
+import com.forestnote.app.notes.caldav.NetworkAvailabilityMonitor
 import com.forestnote.app.notes.caldav.OkHttpCalDavClient
 import com.forestnote.app.notes.caldav.RecognizePillView
 import com.forestnote.app.notes.caldav.SecureCredentialsStore
 import com.forestnote.app.notes.caldav.SettingsCredsView
+import com.forestnote.app.notes.caldav.TryOutcome
 import com.forestnote.app.notes.recognize.MlKitRecognizer
 import com.forestnote.app.notes.recognize.RecognitionModelManager
 import com.forestnote.app.notes.recognize.RecognizedText
@@ -98,6 +100,10 @@ class MainActivity : Activity() {
     // EncryptedSharedPreferences-backed store for sync + CalDAV creds. Built in onCreate so
     // FileLogger is available for the (rare) ESP init failure log line.
     private lateinit var secureCreds: SecureCredentialsStore
+    // Offline queue: persists pending CalDAV PUTs and drives the retry loop.
+    private lateinit var caldavDrainer: CalDavOutboxDrainer
+    // Re-drains queued tasks the moment the device sees the network come back.
+    private lateinit var caldavNetworkMonitor: NetworkAvailabilityMonitor
     // Library search dialog (modal AlertDialog over the Library overlay).
     private val searchDialog = com.forestnote.app.notes.search.SearchDialog()
     // Editor OCR-text viewer (modal AlertDialog over the editor).
@@ -142,6 +148,8 @@ class MainActivity : Activity() {
         )
 
         // OkHttp transport for the CalDAV VTODO PUT. One client per app lifetime (connection pooling).
+        // Threaded into the drainer (built below), NOT NotebookStore — the store owns the durable
+        // outbox; the drainer owns the network side.
         val caldavClient = OkHttpCalDavClient(
             OkHttpClient(),
             log = { fileLogger.log("CalDAV", it) },
@@ -149,11 +157,25 @@ class MainActivity : Activity() {
 
         // Open storage. The store opens the repository on its own background thread,
         // so onCreate never makes a synchronous DB call (AC1.2).
-        store = NotebookStore.create(this, secureCreds, caldavClient)
+        store = NotebookStore.create(this, secureCreds)
         syncController = SyncController(
             store, syncScope,
             log = { fileLogger.log("Sync", it) },
             secureCreds = secureCreds,
+        )
+        // Offline CalDAV queue. The drainer owns the network side of the outbox;
+        // NotebookStore owns the durable side. Resume()/pause()/shutdown() in
+        // lifecycle hooks below; drainNow() is wired to the network-available callback.
+        caldavDrainer = CalDavOutboxDrainer(
+            outboxStore = store.calDavOutboxStore(),
+            client = caldavClient,
+            secureCreds = secureCreds,
+            scope = syncScope,
+            log = { fileLogger.log("CalDAV", it) },
+        )
+        caldavNetworkMonitor = NetworkAvailabilityMonitor(
+            this,
+            log = { fileLogger.log("Net", it) },
         )
         // Apply the persisted Debug Logs toggle, announce startup, and one-shot migrate the
         // sync creds out of Settings into ESP (idempotent; subsequent launches no-op).
@@ -592,39 +614,26 @@ class MainActivity : Activity() {
             prefillSummary = prefill,
             callbacks = CalDavTaskSheet.Callbacks(
                 onSend = { input ->
-                    fileLogger.log("CalDAV", "send uid=${input.uid} sum=\"${input.summary.take(60)}\" due=${input.due}")
-                    store.createCalDavTask(input) { result -> handleCalDavResult(result) }
+                    fileLogger.log("CalDAV", "enqueue uid=${input.uid} sum=\"${input.summary.take(60)}\" due=${input.due}")
+                    // Persist first so a crash mid-PUT still keeps the task. Then race the
+                    // drainer against a short timeout: if it sends in time, toast "Task created";
+                    // otherwise toast "Task queued" and let the drainer's normal cadence finish it.
+                    store.enqueueCalDavTask(input) {
+                        syncScope.launch {
+                            val outcome = caldavDrainer.tryImmediately(
+                                input.uid,
+                                timeoutMs = OPTIMISTIC_SEND_TIMEOUT_MS,
+                            )
+                            val text = if (outcome == TryOutcome.Sent) "Task created" else "Task queued"
+                            android.widget.Toast.makeText(this@MainActivity, text, android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 },
                 onCancel = { fileLogger.log("CalDAV", "task creation cancelled") },
             ),
         )
     }
 
-    /** Translate a [CalDavResult] into a toast (success) or AlertDialog (failure). */
-    private fun handleCalDavResult(result: CalDavResult) {
-        when (result) {
-            CalDavResult.Ok -> {
-                android.widget.Toast.makeText(this, "Task created", android.widget.Toast.LENGTH_SHORT).show()
-                fileLogger.log("CalDAV", "PUT ok")
-            }
-            is CalDavResult.HttpError -> {
-                fileLogger.log("CalDAV", "PUT http error ${result.code}: ${result.message.take(120)}")
-                AlertDialog.Builder(this)
-                    .setTitle("Task creation failed")
-                    .setMessage("HTTP ${result.code}: ${result.message.ifBlank { "(no message)" }}")
-                    .setPositiveButton("OK", null)
-                    .show()
-            }
-            is CalDavResult.TransportError -> {
-                fileLogger.log("CalDAV", "PUT transport error: ${result.cause}")
-                AlertDialog.Builder(this)
-                    .setTitle("Task creation failed")
-                    .setMessage(result.cause.message ?: "Network error")
-                    .setPositiveButton("OK", null)
-                    .show()
-            }
-        }
-    }
 
     /**
      * Show confirmation dialog before clearing the page.
@@ -931,7 +940,7 @@ class MainActivity : Activity() {
     private fun openSettings() {
         if (settingsView.isShowing) return
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
-        settingsView.show(content, store, modelManager, secureCreds) { closeSettings() }
+        settingsView.show(content, store, modelManager, secureCreds, caldavDrainer) { closeSettings() }
     }
 
     /** Dismiss the Settings overlay and return to the editor. */
@@ -1211,10 +1220,25 @@ class MainActivity : Activity() {
         ocrTextDialog.dismiss()
         // Stop the periodic timer and flush pending changes to UltraBridge.
         syncController.pause()
+        // Stop the CalDAV drainer's periodic timer (in-flight PUT is allowed to finish).
+        caldavDrainer.pause()
         if (isEInk) {
             // Release WritingBufferQueue so other apps (WiNote etc.) can use it
             backend.release()
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Per Android docs, register the connectivity callback in onStart and unregister in onStop.
+        // Triggers an immediate CalDAV drain the moment the device sees a default network — what
+        // makes the "user came back into WiFi range" recovery feel instant.
+        caldavNetworkMonitor.start(onAvailable = { caldavDrainer.drainNow() })
+    }
+
+    override fun onStop() {
+        caldavNetworkMonitor.stop()
+        super.onStop()
     }
 
     /**
@@ -1250,11 +1274,15 @@ class MainActivity : Activity() {
         }
         // Enable+join on first run, or sync + restart the timer (no-op if sync is unconfigured).
         syncController.resume()
+        // Try to drain any queued CalDAV tasks + restart the periodic timer. Safe to call before
+        // the user has configured CalDAV — the drainer aborts cleanly when there are no creds.
+        caldavDrainer.resume()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         try {
+            caldavDrainer.shutdown()
             syncScope.cancel()
             recognizer.close()
             backend.release()
@@ -1308,5 +1336,8 @@ class MainActivity : Activity() {
 
         // Base for code-generated pitch RadioButton ids in the page-template dialog.
         const val PITCH_ID_BASE = 0x71_00_01
+
+        // How long the Send-side optimistic try waits before falling back to "Task queued".
+        const val OPTIMISTIC_SEND_TIMEOUT_MS = 500L
     }
 }
