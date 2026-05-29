@@ -932,6 +932,31 @@ class MainActivity : Activity() {
     }
 
     /**
+     * Sync-on-close trigger: when the user returns from a full-screen overlay (Library /
+     * Recycle Bin / Settings) to the editor, fire [SyncController.syncNow] iff
+     * (a) the user hasn't disabled it in Settings and
+     * (b) the outbox actually has unacked rows (no point round-tripping otherwise).
+     *
+     * Why this exists: the in-Activity overlays don't fire `onPause` (which is the only
+     * other ambient sync trigger besides the 30-min timer), so without this a user can
+     * edit a notebook and return to the Library without their changes propagating for up
+     * to 30 minutes. The dirty-gate keeps us from pounding the server when someone just
+     * bounces in and out of the Library to look around.
+     *
+     * Two off-thread hops chained on the main thread (loadSettings → countPendingOps);
+     * both are cheap and the result is fire-and-forget. Sync also has its own mutex —
+     * stacking calls from rapid navigation collapse safely.
+     */
+    private fun syncIfDirty() {
+        store.loadSettings { s ->
+            if (!s.syncOnClose) return@loadSettings
+            store.countPendingOps { count ->
+                if (count > 0L) syncController.syncNow()
+            }
+        }
+    }
+
+    /**
      * Dismiss the Library overlay and return to the editor, GC-refreshing so the overlay leaves no
      * ghost. If the editor was never painted this session (we launched straight into the Library),
      * this is its first reveal — load + paint it now; [loadEditor]'s render GC-refreshes via merge.
@@ -950,6 +975,7 @@ class MainActivity : Activity() {
         } else {
             drawView.gcRefresh()
         }
+        syncIfDirty()
     }
 
     /**
@@ -1005,6 +1031,7 @@ class MainActivity : Activity() {
     private fun closeRecycleBin() {
         recycleBinView.hide()
         if (libraryView.isShowing) libraryView.reload()
+        syncIfDirty()
     }
 
     /**
@@ -1078,6 +1105,9 @@ class MainActivity : Activity() {
         }
         // Credentials/URL may have just been entered — (re)enable sync and restart the timer.
         syncController.resume()
+        // …and explicitly push any unacked outbox state (gated on Settings.syncOnClose);
+        // `resume()` only ensures the timer is running, not that anything fires now.
+        syncIfDirty()
     }
 
     /**
