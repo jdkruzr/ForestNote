@@ -1,6 +1,6 @@
 # Notes App (app:notes)
 
-Last verified: 2026-05-29 (library-qol-1.0)
+Last verified: 2026-05-29 (lasso-textboxes)
 
 ## Purpose
 Main application module that wires together ink rendering, storage, and user interaction into a single-activity note-taking experience optimized for e-ink. Includes a nav bar for moving between pages, plus a full-screen Library overlay for browsing folders and notebooks as a card grid.
@@ -60,7 +60,7 @@ Main application module that wires together ink rendering, storage, and user int
 - `ToolSelectionLogic.kt` - Pure tool selection state machine (pen/erase variants + Lasso + **per-variant pen width level**, default M: `selectPenWidth`/`activePenWidth`/`penWidthFor`/`setPenWidthForVariant`/`allPenWidthLevels`)
 - `PenWidthSettings.kt` - Pure bridge: `Settings.penWidthLevels` (`Map<String,String>`) ↔ `Map<PenVariant,PenWidthLevel>` (decode drops unknown names; consumer defaults to M)
 - `LassoSelectionLogic.kt` - Pure selection geometry (ray-cast pointInPolygon, integer centroid, selectedIds, bounds, translate)
-- `Clipboard.kt` - `Clipboard` interface + `InProcessClipboard` (listener-based; B1 re-backs it with `app_state.clipboard_json`)
+- `Clipboard.kt` - `Clipboard` interface + `InProcessClipboard` + `ClipboardPayload(strokes, textBoxes)` (listener-based; contract widened once at lasso-textboxes from strokes-only to mixed-content; B1 re-backs the widened contract with `app_state.clipboard_json` without further change)
 - `SelectionMenuView.kt` - Floating action pill (PopupWindow) for a lasso selection; non-focusable so drag-to-move touches reach the canvas
 - `SelectionActionLogic.kt` - Pure dialog-text rules. Recognize (F1) is now the *remote-override placeholder* — only called when `selectionRecognitionUrl` is non-empty (routed via `RecognizeFlowLogic.decide`); copy tells the user to clear the field to switch to on-device. To-do (F2) placeholder is no longer reached on the happy path — the real lasso → recognize → CalDAV VTODO flow now ships behind `secureCreds.caldavCreds()` (see Key Decisions and `caldav/*`)
 - `RecognizeFlowLogic.kt` - Pure decision layer for the lasso-pill Recognize tap. `decide(strokeCount, url, modelPresent, langTag) → FallbackToPlaceholder | PromptDownload | ProceedToRecognize`; `describeResult(Result<RecognizedText>) → ResultUi.Show | Retry | Error`. Imperative orchestration in `MainActivity.showRecognizeFlow` stays thin
