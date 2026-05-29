@@ -4,19 +4,6 @@ import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.TextBox
 
 /**
- * A mixed clipboard (strokes + text boxes) for cut/copy/paste (library-and-tools.AC2.4,
- * AC1.6; lasso-textboxes.AC3, AC4).
- *
- * Listener-based rather than coroutine/StateFlow-based to match the codebase's existing
- * async idiom (Executor + Handler + callbacks; no kotlinx-coroutines). The A-phase
- * backing store is in-process ([InProcessClipboard]). The contract widens *once* at
- * lasso-textboxes (strokes-only → mixed-content via [ClipboardPayload]); B1 re-backs
- * the widened contract with `app_state.clipboard_json` (serialized via [StrokeSerializer]
- * + [TextBoxSerializer]) for cross-notebook, app-kill-surviving paste — without further
- * contract change.
- */
-
-/**
  * Mixed clipboard payload — strokes and text boxes in parallel lists.
  *
  * Parallel lists (rather than a sealed `CanvasElement` union) because `Stroke` and
@@ -38,6 +25,18 @@ data class ClipboardPayload(
     }
 }
 
+/**
+ * A mixed clipboard (strokes + text boxes) for cut/copy/paste (library-and-tools.AC2.4,
+ * AC1.6; lasso-textboxes.AC3, AC4).
+ *
+ * Listener-based rather than coroutine/StateFlow-based to match the codebase's existing
+ * async idiom (Executor + Handler + callbacks; no kotlinx-coroutines). The A-phase
+ * backing store is in-process ([InProcessClipboard]). The contract widens *once* at
+ * lasso-textboxes (strokes-only → mixed-content via [ClipboardPayload]); B1 re-backs
+ * the widened contract with `app_state.clipboard_json` (serialized via [StrokeSerializer]
+ * + [TextBoxSerializer]) for cross-notebook, app-kill-surviving paste — without further
+ * contract change.
+ */
 interface Clipboard {
     /** Current clipboard contents (a snapshot; never the live backing lists). */
     fun get(): ClipboardPayload
