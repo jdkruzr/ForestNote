@@ -4,6 +4,7 @@ import com.forestnote.app.notes.LassoSelectionLogic.Point
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.TextBox
+import com.forestnote.core.ink.ZBand
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -328,6 +329,58 @@ class LassoSelectionLogicTest {
     @Test
     fun translateEmptyIsEmpty() {
         assertEquals(emptyList(), LassoSelectionLogic.translate(emptyList(), 1, 1) { "x" })
+    }
+
+    // --- Phase-1 Task 4: translateTextBoxes ---
+
+    @Test
+    fun translateTextBoxesKeepIdsShiftsPositionsInPlace() {
+        val a = TextBox(
+            id = "a", x = 10, y = 20, width = 100, height = 200, text = "A",
+            fontName = "Roboto-Regular.ttf", fontSize = 32, weight = 700,
+            borderWidth = 2, zBand = ZBand.TOP, color = 0xFF112233.toInt()
+        )
+        val b = TextBox(
+            id = "b", x = -5, y = 50, width = 80, height = 40, text = "B",
+            fontName = "NotoSans-Bold.ttf", fontSize = 18
+        )
+        val out = LassoSelectionLogic.translateTextBoxes(listOf(a, b), dx = 5, dy = -3) { it.id }
+        assertEquals(2, out.size)
+        // Ids unchanged, positions shifted, everything else preserved.
+        assertEquals("a", out[0].id)
+        assertEquals(15, out[0].x); assertEquals(17, out[0].y)
+        assertEquals(100, out[0].width); assertEquals(200, out[0].height)
+        assertEquals("A", out[0].text); assertEquals("Roboto-Regular.ttf", out[0].fontName)
+        assertEquals(32, out[0].fontSize); assertEquals(700, out[0].weight)
+        assertEquals(2, out[0].borderWidth); assertEquals(ZBand.TOP, out[0].zBand)
+        assertEquals(0xFF112233.toInt(), out[0].color)
+        assertEquals("b", out[1].id)
+        assertEquals(0, out[1].x); assertEquals(47, out[1].y)
+    }
+
+    @Test
+    fun translateTextBoxesFreshIdsClonesAndShifts() {
+        val a = box(id = "a", x = 0, y = 0, w = 10, h = 10)
+        val b = box(id = "b", x = 100, y = 100, w = 20, h = 20)
+        val out = LassoSelectionLogic.translateTextBoxes(listOf(a, b), dx = 10, dy = 10) {
+            "new-${it.id}"
+        }
+        assertEquals(listOf("new-a", "new-b"), out.map { it.id })
+        // Positions shifted; every other field preserved from the source.
+        assertEquals(10 to 10, out[0].x to out[0].y)
+        assertEquals(110 to 110, out[1].x to out[1].y)
+        assertEquals(a.width to a.height, out[0].width to out[0].height)
+        assertEquals(a.text, out[0].text)
+        assertEquals(a.fontName, out[0].fontName)
+        assertEquals(a.fontSize, out[0].fontSize)
+    }
+
+    @Test
+    fun translateTextBoxesEmptyListReturnsEmpty() {
+        assertEquals(
+            emptyList(),
+            LassoSelectionLogic.translateTextBoxes(emptyList(), 1, 1) { "x" }
+        )
     }
 
     @Test

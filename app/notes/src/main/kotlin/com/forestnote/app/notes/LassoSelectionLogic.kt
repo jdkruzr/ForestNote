@@ -152,6 +152,21 @@ object LassoSelectionLogic {
     }
 
     /**
+     * Translate a list of text boxes by (dx, dy) in virtual units. The [idFor] lambda
+     * receives the source box and returns the new id — pass `{ it.id }` for in-place
+     * move (drag-commit, cut) and `{ Ulid.generate() }` for paste so originals and
+     * copies coexist in the DB. Mirror of [translate] for strokes.
+     */
+    fun translateTextBoxes(
+        boxes: List<TextBox>,
+        dx: Int,
+        dy: Int,
+        idFor: (TextBox) -> String,
+    ): List<TextBox> = boxes.map { b ->
+        b.copy(id = idFor(b), x = b.x + dx, y = b.y + dy)
+    }
+
+    /**
      * Clone [strokes] shifted by ([dx], [dy]); [idFor] supplies each result's id from the
      * source stroke — `{ Ulid.generate() }` for paste (fresh ids), `{ it.id }` for an
      * in-place move (same ids). Colour, widths, pressure and timestamps are preserved.
