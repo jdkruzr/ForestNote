@@ -22,6 +22,7 @@ import com.forestnote.core.ink.BackendDetector
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
 import com.forestnote.core.ink.TextBox
+import com.forestnote.core.ink.Tool
 import com.forestnote.core.ink.ViwoodsBackend
 import com.forestnote.core.ink.ZBand
 import com.forestnote.core.sync.SyncStatus
@@ -485,7 +486,12 @@ class MainActivity : Activity() {
      * it loads off-thread during cold launch), we bail and leave the pill up. The user can retry
      * a moment later.
      */
-    private fun openEditOverlay(box: TextBox, isNewBox: Boolean, focusForEditing: Boolean) {
+    private fun openEditOverlay(
+        box: TextBox,
+        isNewBox: Boolean,
+        focusForEditing: Boolean,
+        onCommitted: (() -> Unit)? = null,
+    ) {
         val catalog = fontCatalog ?: run {
             fileLogger.log("Box", "openEditOverlay deferred — FontCatalog not ready yet")
             return
@@ -504,6 +510,7 @@ class MainActivity : Activity() {
                     drawView.commitOverlayBox(updated, text)
                     textBoxEditOverlay.hide()
                     drawView.gcRefresh()             // single clean refresh post-dismiss
+                    onCommitted?.invoke()
                 },
                 onCancel = { boxId, wasNew ->
                     if (wasNew) drawView.discardPendingNewBox(boxId)
@@ -656,7 +663,17 @@ class MainActivity : Activity() {
             fileLogger.log("Recognize", "prepareRecognizedTextBox returned null (blank text) — nothing to insert")
             return
         }
-        openEditOverlay(box, isNewBox = true, focusForEditing = true)
+        // After the user commits the recognized text box, switch the active tool to Text.
+        // The first thing they want to do with a freshly placed box is move/resize/edit it,
+        // and that requires Tool.Text active (Lasso would re-lasso the box on touch).
+        // Cancelling the overlay leaves the tool on Lasso — they're discarding, not
+        // interacting with a new box.
+        openEditOverlay(
+            box,
+            isNewBox = true,
+            focusForEditing = true,
+            onCommitted = { toolBar.selectTool(Tool.Text) },
+        )
     }
 
     /** Open the modal task sheet (Summary / Due chips / note) prefilled with [prefill]. */
