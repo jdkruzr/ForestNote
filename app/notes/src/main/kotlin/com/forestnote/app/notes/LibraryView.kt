@@ -97,6 +97,14 @@ class LibraryView {
             reload()
         }
 
+        // Title doubles as a clickable "go to root" affordance — pairs with the Up button
+        // (one level up) so a deeply-nested user can jump home in one tap. No-op at root,
+        // but the ripple feedback still reads as "this is clickable" which is fine.
+        view.findViewById<View>(R.id.text_library_title).setOnClickListener {
+            exitSelectMode()
+            currentFolderId = null
+            reload()
+        }
         view.findViewById<View>(R.id.btn_library_settings).setOnClickListener { callbacks.onOpenSettings() }
         view.findViewById<View>(R.id.btn_library_sync).setOnClickListener { callbacks.onSyncNow() }
         view.findViewById<View>(R.id.btn_library_search).setOnClickListener { callbacks.onOpenSearch() }

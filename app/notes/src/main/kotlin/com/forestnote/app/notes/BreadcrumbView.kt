@@ -19,11 +19,31 @@ class BreadcrumbView(
 ) {
     fun render(path: List<FolderMeta>) {
         container.removeAllViews()
-        val segments = BreadcrumbLogic.segments(path)
+        if (path.isEmpty()) {
+            // At root — render a dimmed italic placeholder so the user sees at a glance
+            // that this row is the folder-path breadcrumb area. The "Library" title in
+            // the toolbar row above already names where we are; this just announces the
+            // feature ("folder paths appear here when you open one").
+            container.addView(rootPlaceholder())
+            return
+        }
+        // In a folder: render only the folder segments. The leading "Library" root segment
+        // returned by BreadcrumbLogic.segments is dropped here because the toolbar row's
+        // clickable "Library" title + the Up button already cover "jump to root" and "go
+        // one level up" — showing "Library" twice would be redundant noise.
+        val segments = BreadcrumbLogic.segments(path).dropWhile { it.label == BreadcrumbLogic.ROOT_LABEL }
         segments.forEachIndexed { i, seg ->
             if (i > 0) container.addView(separator())
             container.addView(segmentView(seg))
         }
+    }
+
+    private fun rootPlaceholder(): TextView = TextView(container.context).apply {
+        text = "↳ Library root"
+        gravity = Gravity.CENTER_VERTICAL
+        textSize = BREADCRUMB_TEXT_SP
+        setTypeface(typeface, android.graphics.Typeface.ITALIC)
+        alpha = 0.5f
     }
 
     private fun separator(): TextView = TextView(container.context).apply {
