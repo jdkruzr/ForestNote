@@ -975,6 +975,9 @@ class MainActivity : Activity() {
         } else {
             drawView.gcRefresh()
         }
+        // syncIfDirty kicks the NotebookStore executor off the main thread, so it can't
+        // race the queued gcRefresh — the GC posts to the UI thread, this dispatches to
+        // a background thread; sequence-safe regardless of which branch above ran.
         syncIfDirty()
     }
 
@@ -1103,11 +1106,13 @@ class MainActivity : Activity() {
             fileLogger.enabled = s.debugLogging
             fileLogger.log("App", "settings closed (debugLogging=${s.debugLogging})")
         }
-        // Credentials/URL may have just been entered — (re)enable sync and restart the timer.
+        // Credentials/URL may have just been entered — `resume()` runs a fresh session
+        // immediately (idempotent join-or-runSession) AND restarts the timer, which already
+        // pushes anything pending in the outbox. So no `syncIfDirty()` here: this close
+        // path is the one place the user is explicitly in sync-config land, and a double
+        // round-trip would be wasteful. The standalone overlay closes (Library, Recycle Bin)
+        // still gate behind `syncOnClose`; touching Settings is its own ceremony.
         syncController.resume()
-        // …and explicitly push any unacked outbox state (gated on Settings.syncOnClose);
-        // `resume()` only ensures the timer is running, not that anything fires now.
-        syncIfDirty()
     }
 
     /**
