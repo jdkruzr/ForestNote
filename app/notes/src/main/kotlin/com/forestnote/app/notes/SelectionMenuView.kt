@@ -12,14 +12,15 @@ import android.widget.PopupWindow
 import android.widget.TextView
 
 /**
- * Floating action pill for a lasso selection (library-and-tools.AC2.3): a horizontal
- * row of "N selected" + Cut / Copy / Recognize / To-do / Delete, anchored above the
- * selection's bounding box (or below when there's no room above).
+ * Floating action pill for a lasso selection (library-and-tools.AC2.3; lasso-textboxes.AC5).
+ * A horizontal row of "N selected" + Cut / Copy / [Recognize / To-do] / Delete, anchored
+ * above the selection's bounding box (or below when there's no room above).
  *
  * Built programmatically and styled like [ToolBar]'s dropdown (white bg, 1px border,
- * no elevation/animation) to stay e-ink friendly. Recognize/To-do fire callbacks; the
- * caller (F1/F2) shows a placeholder dialog keyed on the configured endpoint URL — no
- * network call yet (see [SelectionActionLogic]).
+ * no elevation/animation) to stay e-ink friendly. Recognize/To-do are HIDDEN when the
+ * selection has zero strokes (boxes-only) — they target ink and would be no-ops on
+ * boxes. Recognize/To-do fire callbacks; the caller (MainActivity) routes them through
+ * `showRecognizeFlow` with only `payload.strokes`.
  */
 class SelectionMenuView(private val isEInk: Boolean) {
 
@@ -38,8 +39,18 @@ class SelectionMenuView(private val isEInk: Boolean) {
      * Show the pill anchored over [screenBounds] (DrawView-local screen coords) of
      * [anchor]. Positions above the box, falling back to below when too near the top.
      * Cut/Copy/Delete dismiss after firing; Recognize/To-do leave it to the caller.
+     *
+     * Pass [strokeCount] and [boxCount] separately rather than a `ClipboardPayload`: the
+     * view stays free of data dependencies on `Stroke`/`TextBox`. The label shows the
+     * combined count; Recognize/To-do appear only when `strokeCount > 0` (AC5.1).
      */
-    fun show(anchor: View, count: Int, screenBounds: RectF, callbacks: Callbacks) {
+    fun show(
+        anchor: View,
+        strokeCount: Int,
+        boxCount: Int,
+        screenBounds: RectF,
+        callbacks: Callbacks,
+    ) {
         dismiss()
         val ctx = anchor.context
         val density = ctx.resources.displayMetrics.density
@@ -57,8 +68,9 @@ class SelectionMenuView(private val isEInk: Boolean) {
             }
         }
 
+        val totalCount = strokeCount + boxCount
         container.addView(TextView(ctx).apply {
-            text = "$count selected"
+            text = "$totalCount selected"
             textSize = 13f
             setTextColor(Color.BLACK)
             setPadding(0, 0, gap, 0)
@@ -93,8 +105,12 @@ class SelectionMenuView(private val isEInk: Boolean) {
 
         button("Cut", dismissAfter = true) { callbacks.onCut() }
         button("Copy", dismissAfter = true) { callbacks.onCopy() }
-        button("Recognize", dismissAfter = false) { callbacks.onRecognize() }
-        button("To-do", dismissAfter = false) { callbacks.onTodo() }
+        if (strokeCount > 0) {
+            // AC5.1: boxes-only selection hides Recognize/To-do (ML Kit + CalDAV ops are
+            // strokes-native; they would be no-ops on a boxes-only payload).
+            button("Recognize", dismissAfter = false) { callbacks.onRecognize() }
+            button("To-do", dismissAfter = false) { callbacks.onTodo() }
+        }
         button("Delete", dismissAfter = true) { callbacks.onDelete() }
 
         // Measure to decide above/below and to center horizontally over the box.

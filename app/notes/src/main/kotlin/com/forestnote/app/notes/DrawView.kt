@@ -199,6 +199,14 @@ class DrawView @JvmOverloads constructor(
     // ===== Lasso selection state (A6) — kept off the fast-ink writing buffer =====
     private val lassoPoints = mutableListOf<LassoSelectionLogic.Point>()
     private var selectedStrokeIds: Set<String> = emptySet()
+    // Lasso-side text-box selection. Distinct from [selectedBoxId] (per-box text-tool
+    // selection) — lasso is plural and ignores the per-box transform overlay path.
+    private var selectedTextBoxIds: Set<String> = emptySet()
+    // Snapshot of the lasso-selected box ids during a drag-to-move. Static rendering
+    // of these ids is suppressed in [composeStaticBitmap]; [onDraw] paints them live at
+    // the current (dragDx, dragDy) offset. Cleared on drag-commit / clearLassoState.
+    // Distinct from [transformingBoxId] which belongs to the per-box transform overlay.
+    private var transformingBoxIds: Set<String> = emptySet()
     private var lassoClosed = false
 
     // Drag-to-move state (A8.5): touching inside a closed selection drags it live.
@@ -210,36 +218,40 @@ class DrawView @JvmOverloads constructor(
     private var dragBounds: LassoSelectionLogic.Bounds? = null
 
     /**
-     * Fired when the lasso closes over a non-empty selection (strokes + screen bbox)
-     * and when the selection clears (empty list, null bounds). A7's selection menu
-     * wires this to show/dismiss the action pill; in A6 it stays null (no-op).
+     * Fired when the lasso closes over a non-empty selection (strokes + text boxes,
+     * carried as a [ClipboardPayload]) and when the selection clears
+     * ([ClipboardPayload.EMPTY], null bounds). The selection menu wires this to
+     * show/dismiss the action pill. The contract widened at lasso-textboxes Phase 5
+     * — see Clipboard.kt's "widens once" promise.
      */
-    var onSelectionChanged: ((strokes: List<Stroke>, screenBounds: RectF?) -> Unit)? = null
+    var onSelectionChanged: ((payload: ClipboardPayload, screenBounds: RectF?) -> Unit)? = null
 
     private fun clearLassoState() {
         lassoPoints.clear()
         selectedStrokeIds = emptySet()
+        selectedTextBoxIds = emptySet()
+        transformingBoxIds = emptySet()
         lassoClosed = false
         draggingSelection = false
         dragDx = 0
         dragDy = 0
         dragBounds = null
-        onSelectionChanged?.invoke(emptyList(), null)
+        onSelectionChanged?.invoke(ClipboardPayload.EMPTY, null)
         invalidate()
     }
 
-    // ===== Paste-placement mode (A8): tap Paste, then tap the canvas to drop =====
-    private var pendingPaste: List<Stroke>? = null
+    // ===== Paste-placement mode (A8 / lasso-textboxes.AC3.4): tap Paste, then tap the canvas to drop =====
+    private var pendingPaste: ClipboardPayload? = null
     private var onPasteModeEnded: (() -> Unit)? = null
 
     /**
-     * Arm paste placement: the next canvas tap drops [strokes] centred on it (clamped
-     * on-page), with fresh ULIDs. [onEnded] fires when the mode ends (placed OR cancelled)
-     * so the caller can reset the Paste cell caption.
+     * Arm paste placement: the next canvas tap drops [payload] (strokes + text boxes)
+     * centred on it, clamped on-page, with fresh ULIDs (AC3.4). [onEnded] fires when
+     * the mode ends (placed OR cancelled) so the caller can reset the Paste cell caption.
      */
-    fun armPaste(strokes: List<Stroke>, onEnded: () -> Unit) {
-        if (strokes.isEmpty()) return
-        pendingPaste = strokes
+    fun armPaste(payload: ClipboardPayload, onEnded: () -> Unit) {
+        if (payload.isEmpty()) return
+        pendingPaste = payload
         onPasteModeEnded = onEnded
     }
 
@@ -256,21 +268,41 @@ class DrawView @JvmOverloads constructor(
         cb?.invoke()
     }
 
-    /** Drop the pending paste centred on a tapped screen point, clamped fully on-page. */
+    /**
+     * Drop the pending paste centred on a tapped screen point, clamped fully on-page
+     * (AC3.4). The combined-bounds centre anchors the union so relative offsets between
+     * strokes and boxes are preserved. Persists via the Phase-4 batch path so the
+     * OCR-stale + notebook-touch side effects fire exactly once per table — an upgrade
+     * over the pre-Phase-6 per-stroke save loop.
+     */
     private fun placePasteAt(screenX: Float, screenY: Float) {
-        val strokes = pendingPaste ?: return
-        val b = LassoSelectionLogic.bounds(strokes)
-        if (b == null) { endPasteMode(); return }
+        val payload = pendingPaste ?: return
+        val combined = LassoSelectionLogic.combinedBounds(payload.strokes, payload.textBoxes)
+            ?: run { endPasteMode(); return }
+
         val tapVx = transform.toVirtualX(screenX)
         val tapVy = transform.toVirtualY(screenY)
-        val centreX = (b.minX + b.maxX) / 2
-        val centreY = (b.minY + b.maxY) / 2
-        // Offset to centre the selection on the tap, clamped so the bbox stays on-page.
-        val dx = clampOffset(tapVx - centreX, -b.minX, PageTransform.VIRTUAL_SHORT_AXIS - b.maxX)
-        val dy = clampOffset(tapVy - centreY, -b.minY, transform.virtualLongAxis - b.maxY)
-        val pasted = LassoSelectionLogic.translate(strokes, dx, dy) { Ulid.generate() }  // fresh ids
+        val centreX = (combined.minX + combined.maxX) / 2
+        val centreY = (combined.minY + combined.maxY) / 2
+        // Offset to centre the union on the tap, clamped so the combined bbox stays on-page.
+        val dx = clampOffset(tapVx - centreX, -combined.minX, PageTransform.VIRTUAL_SHORT_AXIS - combined.maxX)
+        val dy = clampOffset(tapVy - centreY, -combined.minY, transform.virtualLongAxis - combined.maxY)
+
+        // Fresh ULIDs so the originals and the pasted copies coexist in the DB.
+        val pastedStrokes = LassoSelectionLogic.translate(payload.strokes, dx, dy) { Ulid.generate() }
+        val pastedBoxes = LassoSelectionLogic.translateTextBoxes(payload.textBoxes, dx, dy) { Ulid.generate() }
+
+        if (pastedStrokes.isNotEmpty()) {
+            store?.replaceStrokes(removedIds = emptyList(), added = pastedStrokes)
+            completedStrokes.addAll(pastedStrokes)
+        }
+        if (pastedBoxes.isNotEmpty()) {
+            store?.replaceTextBoxes(removedIds = emptyList(), added = pastedBoxes)
+            textBoxes.addAll(pastedBoxes)
+        }
+
         endPasteMode()
-        addPastedStrokes(pasted)
+        redrawBitmap()
     }
 
     /** Coerce into [lo, hi]; if the content is wider than the page (lo > hi), pin to lo. */
@@ -453,6 +485,7 @@ class DrawView @JvmOverloads constructor(
             pendingNewBox = null              // page change drops any in-flight new box
             transformBox = null
             transformingBoxId = null
+            transformingBoxIds = emptySet()
             boxGesture = BoxGesture.NONE
             clearBoxSelection()
         }
@@ -572,7 +605,7 @@ class DrawView @JvmOverloads constructor(
                 val vy = transform.toVirtualY(event.y)
                 // Touch inside an existing closed selection → drag-to-move it (A8.5),
                 // rather than starting a new lasso.
-                if (lassoClosed && selectedStrokeIds.isNotEmpty() &&
+                if (lassoClosed && (selectedStrokeIds.isNotEmpty() || selectedTextBoxIds.isNotEmpty()) &&
                     LassoSelectionLogic.pointInPolygon(LassoSelectionLogic.Point(vx, vy), lassoPoints)
                 ) {
                     draggingSelection = true
@@ -580,16 +613,29 @@ class DrawView @JvmOverloads constructor(
                     dragStartVy = vy
                     dragDx = 0
                     dragDy = 0
-                    dragBounds = LassoSelectionLogic.bounds(getSelectedStrokes())
-                    onSelectionChanged?.invoke(emptyList(), null) // hide the pill while dragging
+                    // AC2.4 — clamp uses the COMBINED selection bounds so a box-only or
+                    // mixed selection still clamps to page edges correctly.
+                    dragBounds = LassoSelectionLogic.combinedBounds(
+                        getSelectedStrokes(), getSelectedTextBoxes()
+                    )
+                    // Snapshot the lasso-box subset for live overlay paint; the selection
+                    // itself doesn't change during a drag.
+                    transformingBoxIds = selectedTextBoxIds.toSet()
+                    onSelectionChanged?.invoke(ClipboardPayload.EMPTY, null) // hide the pill while dragging
                     return true
                 }
                 // Otherwise start a new lasso (clears any prior selection + dismisses its menu).
-                val hadSelection = selectedStrokeIds.isNotEmpty()
+                val hadSelection = selectedStrokeIds.isNotEmpty() || selectedTextBoxIds.isNotEmpty()
                 lassoPoints.clear()
                 selectedStrokeIds = emptySet()
+                selectedTextBoxIds = emptySet()
+                // Defensive: transformingBoxIds is normally empty here (only set on
+                // drag-start, cleared on commit / clearLassoState), but a future
+                // drag-cancel path that forgets to reset it would leak ids into the
+                // static-bitmap-skip set on the next lasso.
+                transformingBoxIds = emptySet()
                 lassoClosed = false
-                if (hadSelection) onSelectionChanged?.invoke(emptyList(), null)
+                if (hadSelection) onSelectionChanged?.invoke(ClipboardPayload.EMPTY, null)
                 lassoPoints.add(LassoSelectionLogic.Point(vx, vy))
             }
 
@@ -632,21 +678,33 @@ class DrawView @JvmOverloads constructor(
                     commitSelectionMove(dragDx, dragDy)
                     dragDx = 0
                     dragDy = 0
-                    val selected = getSelectedStrokes()
-                    onSelectionChanged?.invoke(selected, selectionScreenBounds(selected))
+                    // Rebuild the pill at the new location with the same selection — the
+                    // payload widened to ClipboardPayload at Phase 5.
+                    val selectedStrokes = getSelectedStrokes()
+                    val selectedBoxes = getSelectedTextBoxes()
+                    val payload = ClipboardPayload(selectedStrokes, selectedBoxes)
+                    val screenBounds = LassoSelectionLogic.combinedBounds(selectedStrokes, selectedBoxes)
+                        ?.let { selectionScreenBoundsOf(it) }
+                    onSelectionChanged?.invoke(payload, screenBounds)
                     invalidate()
                     return true
                 }
                 lassoClosed = true
-                // A fast tap (< 3 points) closes with no selection and no error (AC2.7).
-                selectedStrokeIds = if (lassoPoints.size >= 3) {
-                    LassoSelectionLogic.selectedIds(completedStrokes.toList(), lassoPoints)
+                // A fast tap (< 3 points) closes with no selection and no error (AC2.7 / AC1.4).
+                if (lassoPoints.size >= 3) {
+                    selectedStrokeIds = LassoSelectionLogic.selectedIds(completedStrokes.toList(), lassoPoints)
+                    selectedTextBoxIds = LassoSelectionLogic.selectedTextBoxIds(textBoxes.toList(), lassoPoints)
                 } else {
-                    emptySet()
+                    selectedStrokeIds = emptySet()
+                    selectedTextBoxIds = emptySet()
                 }
-                // Notify the selection menu: show over the selection bbox, or dismiss.
-                val selected = getSelectedStrokes()
-                onSelectionChanged?.invoke(selected, selectionScreenBounds(selected))
+                // Notify the selection menu: show over the combined selection bbox, or dismiss.
+                val selectedStrokes = getSelectedStrokes()
+                val selectedBoxes = getSelectedTextBoxes()
+                val payload = ClipboardPayload(selectedStrokes, selectedBoxes)
+                val screenBounds = LassoSelectionLogic.combinedBounds(selectedStrokes, selectedBoxes)
+                    ?.let { selectionScreenBoundsOf(it) }
+                onSelectionChanged?.invoke(payload, screenBounds)
                 invalidate()
             }
         }
@@ -654,20 +712,55 @@ class DrawView @JvmOverloads constructor(
     }
 
     /**
-     * Commit a drag-to-move: replace the selected strokes with moved copies (same ids) in
-     * one transaction, update the in-memory model, and shift the lasso outline to follow.
+     * Commit a drag-to-move: replace the selected strokes AND boxes with moved copies
+     * (same ids) in parallel batches, update the in-memory model, and shift the lasso
+     * outline to follow.
+     *
+     * The single-threaded [NotebookStore] executor serializes the two writes. They are
+     * NOT atomic across tables — see the design plan's "Failure-mode characterization"
+     * — which matches the existing realistic device behavior on the AiPaper Mini
+     * (foreground-driven, no WorkManager).
+     *
+     * Z-order edge case (accepted): moved boxes are removed then re-appended at the
+     * end of `textBoxes`. Within a band, paint order in `composeStaticBitmap` is
+     * iteration order, so a moved BOTTOM-band box visually re-stacks above any unmoved
+     * BOTTOM-band box that originally followed it. Symmetric for TOP. We trade strict
+     * z-stability for simpler list maintenance; only observable when two same-band
+     * boxes overlap and one is moved.
      */
     private fun commitSelectionMove(dx: Int, dy: Int) {
         if (dx == 0 && dy == 0) return
-        val ids = selectedStrokeIds.toList()
-        val moved = LassoSelectionLogic.translate(getSelectedStrokes(), dx, dy) { it.id } // keep ids
-        store?.replaceStrokes(ids, moved)
-        val idSet = ids.toHashSet()
-        completedStrokes.removeAll { it.id in idSet }
-        completedStrokes.addAll(moved)
+
+        // Strokes (unchanged behavior).
+        val strokeIds = selectedStrokeIds.toList()
+        val movedStrokes = LassoSelectionLogic.translate(getSelectedStrokes(), dx, dy) { it.id }
+        if (strokeIds.isNotEmpty()) store?.replaceStrokes(strokeIds, movedStrokes)
+        val strokeIdSet = strokeIds.toHashSet()
+        completedStrokes.removeAll { it.id in strokeIdSet }
+        completedStrokes.addAll(movedStrokes)
+
+        // Text boxes (parallel batch path landed in Phase 4).
+        val boxIds = selectedTextBoxIds.toList()
+        if (boxIds.isNotEmpty()) {
+            val movedBoxes = LassoSelectionLogic.translateTextBoxes(
+                getSelectedTextBoxes(), dx, dy
+            ) { it.id }
+            store?.replaceTextBoxes(boxIds, movedBoxes)
+            val boxIdSet = boxIds.toHashSet()
+            val kept = textBoxes.filter { it.id !in boxIdSet }
+            textBoxes.clear()
+            textBoxes.addAll(kept)
+            textBoxes.addAll(movedBoxes)
+        }
+
+        // Shift the lasso outline (AC2.2).
         val shifted = lassoPoints.map { LassoSelectionLogic.Point(it.x + dx, it.y + dy) }
         lassoPoints.clear()
         lassoPoints.addAll(shifted)
+
+        // End the drag: the live overlay is gone; static bitmap re-includes the moved
+        // boxes (AC2.3, AC6.2).
+        transformingBoxIds = emptySet()
         redrawBitmap()
     }
 
@@ -680,30 +773,63 @@ class DrawView @JvmOverloads constructor(
         )
     }
 
+    /** Screen-space rect from a virtual [LassoSelectionLogic.Bounds] — used by the
+     *  Phase-5 mixed-payload anchor path so a box-only or mixed selection lights up
+     *  the pill correctly. */
+    private fun selectionScreenBoundsOf(b: LassoSelectionLogic.Bounds): RectF =
+        RectF(
+            transform.toScreenX(b.minX), transform.toScreenY(b.minY),
+            transform.toScreenX(b.maxX), transform.toScreenY(b.maxY),
+        )
+
     // ===== Lasso selection actions (A7) =====
 
     /** The strokes currently selected by the lasso (live lookup against the model). */
     fun getSelectedStrokes(): List<Stroke> =
-        completedStrokes.filter { it.id in selectedStrokeIds }
+        if (selectedStrokeIds.isEmpty()) emptyList()
+        else completedStrokes.filter { it.id in selectedStrokeIds }
 
-    /** Copy the current selection to [clipboard] (leaves the strokes on the page). */
+    /** The text boxes currently selected by the lasso (live lookup against the model). */
+    fun getSelectedTextBoxes(): List<TextBox> =
+        if (selectedTextBoxIds.isEmpty()) emptyList()
+        else textBoxes.filter { it.id in selectedTextBoxIds }
+
+    /** Copy the current selection (strokes + text boxes) to [clipboard] — leaves the
+     *  selection on the page. AC3.1: both lists land in the payload. */
     fun copySelection(clipboard: Clipboard) {
-        clipboard.set(getSelectedStrokes())
+        clipboard.set(
+            ClipboardPayload(
+                strokes = getSelectedStrokes(),
+                textBoxes = getSelectedTextBoxes(),
+            )
+        )
     }
 
-    /** Remove the current selection from the page (persisted off-thread) without stashing. */
+    /** Remove the current selection (strokes AND text boxes) from the page, persisted
+     *  off-thread via the batch ops (AC3.3). Strokes go through [NotebookStore.deleteStrokes];
+     *  boxes go through [NotebookStore.replaceTextBoxes] with `added = emptyList()` so the
+     *  soft-delete + sync-op enqueue + OCR-stale + notebook-touch all fire in one
+     *  transaction per table. */
     fun deleteSelection() {
-        val ids = selectedStrokeIds.toList()
-        if (ids.isEmpty()) return
-        store?.deleteStrokes(ids)
-        val idSet = ids.toHashSet()
-        completedStrokes.removeAll { it.id in idSet }
+        val strokeIds = selectedStrokeIds.toList()
+        val boxIds = selectedTextBoxIds.toList()
+        if (strokeIds.isEmpty() && boxIds.isEmpty()) return
+
+        if (strokeIds.isNotEmpty()) store?.deleteStrokes(strokeIds)
+        if (boxIds.isNotEmpty()) store?.replaceTextBoxes(boxIds, emptyList())
+
+        val strokeIdSet = strokeIds.toHashSet()
+        val boxIdSet = boxIds.toHashSet()
         // Clear selection + dismiss the menu BEFORE redrawing so the highlight loop
-        // never references a removed stroke (the loop iterates completedStrokes anyway).
+        // never references a removed element.
+        completedStrokes.removeAll { it.id in strokeIdSet }
+        textBoxes.removeAll { it.id in boxIdSet }
         selectedStrokeIds = emptySet()
+        selectedTextBoxIds = emptySet()
+        transformingBoxIds = emptySet()
         lassoPoints.clear()
         lassoClosed = false
-        onSelectionChanged?.invoke(emptyList(), null)
+        onSelectionChanged?.invoke(ClipboardPayload.EMPTY, null)
         redrawBitmap()
     }
 
@@ -711,20 +837,6 @@ class DrawView @JvmOverloads constructor(
     fun cutSelection(clipboard: Clipboard) {
         copySelection(clipboard)
         deleteSelection()
-    }
-
-    /**
-     * Insert already-offset, fresh-id strokes onto the page (lasso Paste, AC1.6). Mirrors
-     * the pen-up path: add to the in-memory model + persist each off-thread, then redraw.
-     * Persistence bumps the notebook's modified_at via saveStroke→touchCurrentNotebook.
-     */
-    fun addPastedStrokes(strokes: List<Stroke>) {
-        if (strokes.isEmpty()) return
-        for (s in strokes) {
-            completedStrokes.add(s)
-            store?.save(s)
-        }
-        redrawBitmap()
     }
 
     // ===== Text box placement + editing (Tool.Text) =====
@@ -1379,6 +1491,28 @@ class DrawView @JvmOverloads constructor(
         // Live overlay for a box being moved/resized (its static render is suppressed meanwhile).
         transformBox?.let { drawTextBox(canvas, it) }
 
+        // Lasso-drag live overlay (AC2.1, AC2.3): paint every lasso-selected box at the current
+        // drag offset. Static rendering of these ids is suppressed via [transformingBoxIds] +
+        // [String.isStaticallyDrawn], so they're never painted twice. The translation is done in
+        // screen pixels (matches `drawLassoOverlay`'s `transform.toScreenSize` convention) so we
+        // can reuse [drawTextBox] unchanged. BOTTOM-then-TOP within the transforming subset to
+        // match `composeStaticBitmap`'s z-band order.
+        //
+        // NOTE: during the live drag these boxes paint ABOVE the static bitmap regardless of
+        // their zBand. The static bitmap excludes them entirely, so there's no double-paint;
+        // strict band ordering across moving + non-moving content during the drag would require
+        // per-frame re-composition — not worth the cost for a transient gesture. Matches the
+        // existing per-box transform overlay's discipline.
+        if (transformingBoxIds.isNotEmpty()) {
+            val dxPx = transform.toScreenSize(dragDx.toFloat())
+            val dyPx = transform.toScreenSize(dragDy.toFloat())
+            canvas.save()
+            canvas.translate(dxPx, dyPx)
+            for (box in textBoxes) if (box.zBand == ZBand.BOTTOM && box.id in transformingBoxIds) drawTextBox(canvas, box)
+            for (box in textBoxes) if (box.zBand == ZBand.TOP && box.id in transformingBoxIds) drawTextBox(canvas, box)
+            canvas.restore()
+        }
+
         // Selection outline + corner handles for the selected box (Text tool only). Uses the live
         // rect while transforming, the model rect when idle-selected.
         if (activeTool is Tool.Text) {
@@ -1527,8 +1661,11 @@ class DrawView @JvmOverloads constructor(
     }
 
     /** A box is drawn into the static bitmap unless it's currently being edited or transformed
-     *  (those are shown live by the EditText / the onDraw overlay instead). */
-    private fun String.isStaticallyDrawn(): Boolean = this != transformingBoxId
+     *  by the per-box overlay ([transformingBoxId]) or being dragged as part of a lasso selection
+     *  ([transformingBoxIds] — populated at lasso drag-start, cleared on commit). Both paths
+     *  paint the box live in [onDraw] instead so it follows the gesture. */
+    private fun String.isStaticallyDrawn(): Boolean =
+        this != transformingBoxId && this !in transformingBoxIds
 
     /**
      * Draw one text box onto [canvas]. Text wraps to the box width via a [StaticLayout] and is

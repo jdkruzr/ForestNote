@@ -393,35 +393,42 @@ class MainActivity : Activity() {
         // Lasso selection menu: show the action pill over a closed selection, dismiss
         // it when the selection clears (tool switch / new lasso / cut / delete).
         selectionMenu = SelectionMenuView(isEInk)
-        drawView.onSelectionChanged = { strokes, bounds ->
-            fileLogger.log("Sel", "onSelectionChanged strokes=${strokes.size} bounds=${bounds != null}")
-            if (strokes.isEmpty() || bounds == null) {
+        drawView.onSelectionChanged = { payload, bounds ->
+            // Phase 6: the callback's ClipboardPayload is consumed end-to-end. Cut / Copy /
+            // Delete fan out to parallel batch ops on strokes + boxes; Recognize / To-do
+            // still fire only on payload.strokes (ink-only ops); SelectionMenuView hides
+            // Recognize / To-do on a boxes-only selection via the strokeCount > 0 gate.
+            fileLogger.log(
+                "Sel",
+                "onSelectionChanged strokes=${payload.strokes.size} boxes=${payload.textBoxes.size} bounds=${bounds != null}"
+            )
+            if (payload.isEmpty() || bounds == null) {
                 selectionMenu.dismiss()
             } else {
                 selectionMenu.show(
-                    drawView, strokes.size, bounds,
-                    SelectionMenuView.Callbacks(
+                    anchor = drawView,
+                    strokeCount = payload.strokes.size,
+                    boxCount = payload.textBoxes.size,
+                    screenBounds = bounds,
+                    callbacks = SelectionMenuView.Callbacks(
                         onCut = { drawView.cutSelection(clipboard) },
                         onCopy = { drawView.copySelection(clipboard) },
                         onRecognize = {
-                            // Recognize = "convert handwriting to a text box on the page" (the 219f2dd
-                            // behaviour). Dismiss the selection pill so it doesn't sit on top of the
-                            // text-box overlay while the user edits.
+                            // AC5.2: boxes in the selection are bystanders. Only payload.strokes
+                            // goes to ML Kit; boxes stay on the page untouched.
                             selectionMenu.dismiss()
-                            showRecognizeFlow(strokes.toList(), bounds) { text, bnds ->
+                            showRecognizeFlow(payload.strokes, bounds) { text, bnds ->
                                 insertRecognizedAsTextBox(text, bnds)
                             }
                         },
                         onTodo = {
-                            // To-do = "send handwriting as a CalDAV VTODO". Dismiss the selection pill
-                            // so it doesn't sit on top of the recognize pill or the task sheet. If
-                            // CalDAV isn't configured, fall back to the long-standing placeholder
-                            // dialog so the button isn't dead — it tells the user where to go.
+                            // AC5.2: same bystander treatment for boxes. If CalDAV isn't
+                            // configured, fall back to the long-standing placeholder dialog.
                             selectionMenu.dismiss()
                             if (secureCreds.caldavCreds() == null) {
-                                showSelectionAction { SelectionActionLogic.todo(strokes.size, it.caldavServerUrl) }
+                                showSelectionAction { SelectionActionLogic.todo(payload.strokes.size, it.caldavServerUrl) }
                             } else {
-                                showRecognizeFlow(strokes.toList(), bounds) { text, _ ->
+                                showRecognizeFlow(payload.strokes, bounds) { text, _ ->
                                     openCalDavTaskSheet(text)
                                 }
                             }
@@ -443,7 +450,7 @@ class MainActivity : Activity() {
 
         // Paste cell: enabled live whenever the clipboard is non-empty (AC1.6).
         toolBar.setOnPasteClicked { paste() }
-        clipboard.addListener { strokes -> toolBar.setPasteEnabled(strokes.isNotEmpty()) }
+        clipboard.addListener { payload -> toolBar.setPasteEnabled(!payload.isEmpty()) }
         toolBar.setPasteEnabled(!clipboard.isEmpty())
 
         // Template cell: per-page template override picker (B4).
@@ -468,6 +475,8 @@ class MainActivity : Activity() {
         val src = clipboard.get()
         if (src.isEmpty()) return
         toolBar.setPasteArmed(true)
+        // Phase 6: armPaste takes the full payload; tap-to-place anchors the combined
+        // (strokes + boxes) bounds on the tap point, with fresh ULIDs per element.
         drawView.armPaste(src) { toolBar.setPasteArmed(false) }
     }
 

@@ -779,6 +779,55 @@ class NotebookRepository private constructor(
     }
 
     /**
+     * Apply a batch of text-box moves/pastes/deletes in a single SQLite transaction
+     * (lasso-textboxes Phase 4). Mirror of [applyErase] for strokes.
+     *
+     * - Ids in [removedIds] that are NOT also in [added] are soft-deleted (tombstoned).
+     *   Ids in BOTH are treated as a move/upsert in place — the upsert revives the
+     *   tombstone via the `deleted_at = NULL` clause in `upsertTextBox`. This avoids
+     *   churning two sync ops for one logical move.
+     * - Ids in [added] are upserted (insert-or-update-by-id) — same column writes as
+     *   [saveTextBox], including `z = box.zBand.value` (band int, NOT a per-row
+     *   monotonic counter — intra-band order is the existing created_at convention).
+     * - Each changed id emits one `enqueueOp("text_box", id, now)` so the sync engine
+     *   picks them up (gated by [TEXT_BOX_SYNC_ENABLED]).
+     * - [markPageOcrStale] and [touchCurrentNotebook] run exactly once per batch.
+     */
+    fun applyTextBoxBatch(removedIds: List<String>, added: List<TextBox>) {
+        db.transaction {
+            val now = clock()
+            val addedIds = added.mapTo(HashSet()) { it.id }
+            removedIds.forEach { id ->
+                if (id !in addedIds) {
+                    db.notebookQueries.softDeleteTextBox(now, id)
+                    if (TEXT_BOX_SYNC_ENABLED) enqueueOp("text_box", id, now)
+                }
+            }
+            added.forEach { box ->
+                db.notebookQueries.upsertTextBox(
+                    id = box.id,
+                    page_id = currentPageId,
+                    x = box.x.toLong(),
+                    y = box.y.toLong(),
+                    width = box.width.toLong(),
+                    height = box.height.toLong(),
+                    text = box.text,
+                    font_name = box.fontName,
+                    font_size = box.fontSize.toLong(),
+                    color = box.color.toLong(),
+                    weight = box.weight.toLong(),
+                    border_width = box.borderWidth.toLong(),
+                    z = box.zBand.value.toLong(),
+                    created_at = now,
+                )
+                if (TEXT_BOX_SYNC_ENABLED) enqueueOp("text_box", box.id, now)
+            }
+            markPageOcrStale(currentPageId, now)
+            touchCurrentNotebook()
+        }
+    }
+
+    /**
      * Delete all strokes on the current page. Used by Clear tool.
      */
     fun clearPage() {

@@ -1,6 +1,7 @@
 package com.forestnote.app.notes
 
 import com.forestnote.core.ink.Stroke
+import com.forestnote.core.ink.TextBox
 
 /**
  * Pure selection geometry for the Lasso tool. All coordinates are virtual units
@@ -41,6 +42,15 @@ object LassoSelectionLogic {
         return inside
     }
 
+    /**
+     * Centroid of a text box = the geometric center of its rect, in virtual units.
+     * Used by [selectedTextBoxIds] for centroid-in-polygon selection (mirror of the
+     * per-stroke rule). Integer divide intentionally — matches the int-only contract
+     * of [Point].
+     */
+    fun centroid(box: TextBox): Point =
+        Point(box.x + box.width / 2, box.y + box.height / 2)
+
     /** Integer mean of a stroke's points. Strokes always have >= 1 point; guard defensively. */
     fun centroid(stroke: Stroke): Point {
         val pts = stroke.points
@@ -55,6 +65,23 @@ object LassoSelectionLogic {
     }
 
     /**
+     * Box ids whose centroid lies inside the lasso polygon. Mirrors [selectedIds]
+     * for strokes: centroid-only, ray-cast even-odd, defensive against fewer-than-3
+     * polygon vertices (returns empty set).
+     *
+     * AC1.2: bbox-intersection alone is not enough — a box whose centroid is outside
+     * the polygon is NOT selected, even if its bbox overlaps the polygon.
+     */
+    fun selectedTextBoxIds(boxes: List<TextBox>, polygon: List<Point>): Set<String> {
+        if (polygon.size < 3) return emptySet()
+        val out = LinkedHashSet<String>()
+        for (b in boxes) {
+            if (pointInPolygon(centroid(b), polygon)) out.add(b.id)
+        }
+        return out
+    }
+
+    /**
      * Ids of strokes whose centroid lies inside the closed [polygon]. A degenerate
      * polygon (< 3 vertices) selects nothing.
      */
@@ -63,6 +90,46 @@ object LassoSelectionLogic {
         return strokes.filter { pointInPolygon(centroid(it), polygon) }
             .map { it.id }
             .toSet()
+    }
+
+    /**
+     * Axis-aligned bounding box over a list of text boxes, in virtual units.
+     * Returns null when [boxes] is empty (mirror of [bounds] for strokes).
+     */
+    fun boundsOfBoxes(boxes: List<TextBox>): Bounds? {
+        if (boxes.isEmpty()) return null
+        var minX = Int.MAX_VALUE
+        var minY = Int.MAX_VALUE
+        var maxX = Int.MIN_VALUE
+        var maxY = Int.MIN_VALUE
+        for (b in boxes) {
+            if (b.x < minX) minX = b.x
+            if (b.y < minY) minY = b.y
+            if (b.x + b.width > maxX) maxX = b.x + b.width
+            if (b.y + b.height > maxY) maxY = b.y + b.height
+        }
+        return Bounds(minX, minY, maxX, maxY)
+    }
+
+    /**
+     * Combined axis-aligned bounding box over strokes AND boxes. Used by the lasso
+     * drag-clamp rect and the paste anchor delta (`tap − combinedBounds.center`).
+     * Returns null when both lists are empty.
+     */
+    fun combinedBounds(strokes: List<Stroke>, boxes: List<TextBox>): Bounds? {
+        val s = bounds(strokes)
+        val b = boundsOfBoxes(boxes)
+        return when {
+            s == null && b == null -> null
+            s == null -> b
+            b == null -> s
+            else -> Bounds(
+                minX = minOf(s.minX, b.minX),
+                minY = minOf(s.minY, b.minY),
+                maxX = maxOf(s.maxX, b.maxX),
+                maxY = maxOf(s.maxY, b.maxY),
+            )
+        }
     }
 
     /** Min/max virtual rect over every point of every stroke; null when there are no points. */
@@ -82,6 +149,21 @@ object LassoSelectionLogic {
             }
         }
         return if (any) Bounds(minX, minY, maxX, maxY) else null
+    }
+
+    /**
+     * Translate a list of text boxes by (dx, dy) in virtual units. The [idFor] lambda
+     * receives the source box and returns the new id — pass `{ it.id }` for in-place
+     * move (drag-commit, cut) and `{ Ulid.generate() }` for paste so originals and
+     * copies coexist in the DB. Mirror of [translate] for strokes.
+     */
+    fun translateTextBoxes(
+        boxes: List<TextBox>,
+        dx: Int,
+        dy: Int,
+        idFor: (TextBox) -> String,
+    ): List<TextBox> = boxes.map { b ->
+        b.copy(id = idFor(b), x = b.x + dx, y = b.y + dy)
     }
 
     /**
