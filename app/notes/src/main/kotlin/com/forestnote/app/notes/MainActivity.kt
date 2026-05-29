@@ -30,7 +30,6 @@ import com.forestnote.app.notes.caldav.CalDavTaskSheet
 import com.forestnote.app.notes.caldav.EncryptedPrefsCredentialsBackend
 import com.forestnote.app.notes.caldav.NetworkAvailabilityMonitor
 import com.forestnote.app.notes.caldav.OkHttpCalDavClient
-import com.forestnote.app.notes.caldav.RecognizePillView
 import com.forestnote.app.notes.caldav.SecureCredentialsStore
 import com.forestnote.app.notes.caldav.SettingsCredsView
 import com.forestnote.app.notes.caldav.TryOutcome
@@ -94,7 +93,6 @@ class MainActivity : Activity() {
     // Full-screen Recycle Bin overlay (E3). Opened from the Library header; system back closes it.
     private val recycleBinView = RecycleBinView()
     // Floating "Create task" pill shown after lasso-recognize when CalDAV is configured.
-    private val recognizePill = RecognizePillView()
     // Full-screen "Create CalDAV task" sheet (SUMMARY + DUE chips + note + Send).
     private val caldavTaskSheet = CalDavTaskSheet()
     // EncryptedSharedPreferences-backed store for sync + CalDAV creds. Built in onCreate so
@@ -358,10 +356,27 @@ class MainActivity : Activity() {
                         onCut = { drawView.cutSelection(clipboard) },
                         onCopy = { drawView.copySelection(clipboard) },
                         onRecognize = {
-                            showRecognizeFlow(strokes.toList(), bounds)
+                            // Recognize = "convert handwriting to a text box on the page" (the 219f2dd
+                            // behaviour). Dismiss the selection pill so it doesn't sit on top of the
+                            // text-box overlay while the user edits.
+                            selectionMenu.dismiss()
+                            showRecognizeFlow(strokes.toList(), bounds) { text, bnds ->
+                                insertRecognizedAsTextBox(text, bnds)
+                            }
                         },
                         onTodo = {
-                            showSelectionAction { SelectionActionLogic.todo(strokes.size, it.caldavServerUrl) }
+                            // To-do = "send handwriting as a CalDAV VTODO". Dismiss the selection pill
+                            // so it doesn't sit on top of the recognize pill or the task sheet. If
+                            // CalDAV isn't configured, fall back to the long-standing placeholder
+                            // dialog so the button isn't dead — it tells the user where to go.
+                            selectionMenu.dismiss()
+                            if (secureCreds.caldavCreds() == null) {
+                                showSelectionAction { SelectionActionLogic.todo(strokes.size, it.caldavServerUrl) }
+                            } else {
+                                showRecognizeFlow(strokes.toList(), bounds) { text, _ ->
+                                    openCalDavTaskSheet(text)
+                                }
+                            }
                         },
                         onDelete = { drawView.deleteSelection() }
                     )
@@ -480,7 +495,11 @@ class MainActivity : Activity() {
      * user never sees an empty UI or an unhandled crash. The original strokes are never
      * touched; on Insert, the recognized text becomes a new TextBox at the selection bounds.
      */
-    private fun showRecognizeFlow(strokes: List<com.forestnote.core.ink.Stroke>, screenBounds: android.graphics.RectF?) {
+    private fun showRecognizeFlow(
+        strokes: List<com.forestnote.core.ink.Stroke>,
+        screenBounds: android.graphics.RectF?,
+        onText: (text: String, screenBounds: android.graphics.RectF) -> Unit,
+    ) {
         if (strokes.isEmpty() || screenBounds == null) return
         store.loadSettings { settings ->
             val url = settings.selectionRecognitionUrl
@@ -496,10 +515,10 @@ class MainActivity : Activity() {
                             .show()
                     }
                     is RecognizeFlowLogic.Decision.PromptDownload -> {
-                        promptModelDownload(decision.langTag) { runRecognize(strokes, screenBounds, decision.langTag) }
+                        promptModelDownload(decision.langTag) { runRecognize(strokes, screenBounds, decision.langTag, onText) }
                     }
                     is RecognizeFlowLogic.Decision.ProceedToRecognize -> {
-                        runRecognize(strokes, screenBounds, decision.langTag)
+                        runRecognize(strokes, screenBounds, decision.langTag, onText)
                     }
                 }
             }
@@ -549,13 +568,14 @@ class MainActivity : Activity() {
     private fun runRecognize(
         strokes: List<com.forestnote.core.ink.Stroke>,
         screenBounds: android.graphics.RectF,
-        langTag: String
+        langTag: String,
+        onText: (text: String, screenBounds: android.graphics.RectF) -> Unit,
     ) {
         syncScope.launch {
             val result = recognizer.recognize(strokes, langTag)
             when (val ui = RecognizeFlowLogic.describeResult(result)) {
-                is RecognizeFlowLogic.ResultUi.Show -> showRecognitionResult(ui.text, screenBounds)
-                is RecognizeFlowLogic.ResultUi.Retry -> promptModelDownload(ui.langTag) { runRecognize(strokes, screenBounds, ui.langTag) }
+                is RecognizeFlowLogic.ResultUi.Show -> onText(ui.text, screenBounds)
+                is RecognizeFlowLogic.ResultUi.Retry -> promptModelDownload(ui.langTag) { runRecognize(strokes, screenBounds, ui.langTag, onText) }
                 is RecognizeFlowLogic.ResultUi.Error -> {
                     AlertDialog.Builder(this@MainActivity)
                         .setTitle("Recognition failed")
@@ -578,27 +598,13 @@ class MainActivity : Activity() {
      * persists with the box's height recomputed via `measureTextBoxHeightPx` against the trimmed
      * text. Copy is a header action inside the overlay (`Cancel | title | Copy | Done`).
      */
-    private fun showRecognitionResult(text: String, screenBounds: android.graphics.RectF) {
-        val caldavReady = secureCreds.caldavCreds() != null
-        fileLogger.log("Recognize", "result textLen=${text.length} caldavReady=$caldavReady bounds=$screenBounds")
-        if (!caldavReady) {
-            // Unconfigured fallback: keep the pre-CalDAV behaviour (lasso-recognize → text box)
-            // so users who haven't set up CalDAV yet still get a useful feature.
-            legacyInsertAsTextBox(text, screenBounds)
-            return
-        }
-        val host = findViewById<ViewGroup>(android.R.id.content)
-        recognizePill.show(
-            host = host,
-            recognizedText = text,
-            anchorScreenBounds = screenBounds,
-            onCreateTask = { confirmed -> openCalDavTaskSheet(confirmed) },
-            onDismiss = { fileLogger.log("Recognize", "pill dismissed without action") },
-        )
-    }
-
-    /** The pre-CalDAV path: recognized text becomes a pending text box via [TextBoxEditOverlay]. */
-    private fun legacyInsertAsTextBox(text: String, screenBounds: android.graphics.RectF) {
+    /**
+     * Recognize → text box (the lasso-pill **Recognize** button, 219f2dd flow).
+     * Drops the recognized [text] into a pending [TextBox] at the [screenBounds]
+     * lasso anchor and opens [TextBoxEditOverlay] for refinement.
+     */
+    private fun insertRecognizedAsTextBox(text: String, screenBounds: android.graphics.RectF) {
+        fileLogger.log("Recognize", "textbox textLen=${text.length} bounds=$screenBounds")
         val box = drawView.prepareRecognizedTextBox(screenBounds, text) ?: run {
             fileLogger.log("Recognize", "prepareRecognizedTextBox returned null (blank text) — nothing to insert")
             return
@@ -1046,11 +1052,6 @@ class MainActivity : Activity() {
         // CalDAV task sheet sits above the editor too; Back cancels without sending.
         if (caldavTaskSheet.isShowing) {
             caldavTaskSheet.requestCancel()
-            return
-        }
-        // Recognize pill is a transient confirmation; Back dismisses without action.
-        if (recognizePill.isShowing) {
-            recognizePill.hide()
             return
         }
         if (recycleBinView.isShowing) {
