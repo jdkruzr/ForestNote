@@ -143,6 +143,7 @@ class SettingsView {
         val binRetentionInput = view.findViewById<EditText>(R.id.input_bin_retention_days)
         val debugLogsCheck = view.findViewById<CheckBox>(R.id.check_debug_logs)
         val prefillTimestampCheck = view.findViewById<CheckBox>(R.id.check_prefill_timestamp)
+        val syncOnCloseCheck = view.findViewById<CheckBox>(R.id.check_sync_on_close)
 
         // While populating from loaded values, suppress the change listeners so the
         // programmatic set doesn't immediately write back.
@@ -177,6 +178,7 @@ class SettingsView {
             binRetentionInput.setText(s.recycleBinRetentionDays.toString())
             debugLogsCheck.isChecked = s.debugLogging
             prefillTimestampCheck.isChecked = s.prefillNotebookNameTimestamp
+            syncOnCloseCheck.isChecked = s.syncOnClose
             loading = false
         }
 
@@ -188,6 +190,11 @@ class SettingsView {
         prefillTimestampCheck.setOnCheckedChangeListener { _, checked ->
             if (loading) return@setOnCheckedChangeListener
             store.updateSettings({ it.copy(prefillNotebookNameTimestamp = checked) })
+        }
+
+        syncOnCloseCheck.setOnCheckedChangeListener { _, checked ->
+            if (loading) return@setOnCheckedChangeListener
+            store.updateSettings({ it.copy(syncOnClose = checked) })
         }
 
         rgTemplate.setOnCheckedChangeListener { _, checkedId ->
