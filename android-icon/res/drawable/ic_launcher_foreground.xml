@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   ForestNote launcher icon — foreground layer.
-  108×108dp adaptive-icon canvas. Pine+pen mark fits the inner 72×72dp safe
-  zone (centered, 18dp margin), so it survives any system mask shape.
+  108×108dp adaptive-icon canvas. The pine+pen mark is authored in a 256-unit
+  design space (path coords 34-222 wide × 28-232 tall). We fit it inside the
+  adaptive icon's 66×66dp safe zone (the 21-87 viewport range that survives
+  any mask shape) by scaling 0.32 (≈ 65 × 65) and translating (13, 12) so the
+  bounding box lands at ≈ (24, 21)-(84, 86) — comfortably inside the safe
+  zone, so round/squircle masks no longer crop the tips of the tree.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -10,8 +14,10 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <group
-        android:scaleX="0.421875"
-        android:scaleY="0.421875">
+        android:scaleX="0.32"
+        android:scaleY="0.32"
+        android:translateX="13"
+        android:translateY="12">
         <path
             android:fillColor="#000000"
             android:fillType="evenOdd"
