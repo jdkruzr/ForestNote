@@ -182,6 +182,58 @@ class LassoSelectionLogicTest {
         )
     }
 
+    // --- Phase-1 Task 3: selectedTextBoxIds (centroid-in-polygon) ---
+
+    @Test
+    fun selectedTextBoxIdsAddsBoxWhoseCentroidIsInsidePolygon() {
+        // box(0..100, 0..100) → centroid (50, 50), inside the `square` polygon.
+        assertEquals(
+            setOf("b"),
+            LassoSelectionLogic.selectedTextBoxIds(
+                listOf(box(id = "b", x = 0, y = 0, w = 100, h = 100)),
+                square
+            )
+        )
+    }
+
+    @Test
+    fun selectedTextBoxIdsExcludesBoxWhoseCentroidIsOutsideEvenWhenBboxOverlaps() {
+        // Box at (0..100, 0..100), centroid (50, 50).
+        // Polygon overlaps the box's upper-left corner only — a triangle around (10,10).
+        val b = box(id = "b", x = 0, y = 0, w = 100, h = 100)
+        val tinyOverlap = listOf(Point(-10, -10), Point(20, -10), Point(-10, 20))
+        // The polygon clearly overlaps the box's (0,0)..(20,20) corner, but (50,50)
+        // is far outside it — selection must be empty.
+        assertEquals(
+            emptySet<String>(),
+            LassoSelectionLogic.selectedTextBoxIds(listOf(b), tinyOverlap)
+        )
+    }
+
+    @Test
+    fun selectedTextBoxIdsReturnsEmptyOnDegeneratePolygon() {
+        val b = box(id = "b", x = 0, y = 0, w = 100, h = 100)
+        assertEquals(emptySet(), LassoSelectionLogic.selectedTextBoxIds(listOf(b), emptyList()))
+        assertEquals(
+            emptySet(),
+            LassoSelectionLogic.selectedTextBoxIds(
+                listOf(b),
+                listOf(Point(0, 0), Point(10, 0))
+            )
+        )
+    }
+
+    @Test
+    fun selectedTextBoxIdsMixedExampleScaffold() {
+        // Two strokes (centroids (50,50) and (60,60)) + one box (centroid (70,70)).
+        // The `square` polygon (0..100, 0..100) encloses all three centroids.
+        val s1 = stroke("s1", 50 to 50)
+        val s2 = stroke("s2", 60 to 60)
+        val b = box(id = "b", x = 20, y = 20, w = 100, h = 100) // center (70, 70)
+        assertEquals(setOf("s1", "s2"), LassoSelectionLogic.selectedIds(listOf(s1, s2), square))
+        assertEquals(setOf("b"), LassoSelectionLogic.selectedTextBoxIds(listOf(b), square))
+    }
+
     // --- Phase-1 Task 2: boundsOfBoxes + combinedBounds ---
 
     @Test

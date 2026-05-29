@@ -65,6 +65,23 @@ object LassoSelectionLogic {
     }
 
     /**
+     * Box ids whose centroid lies inside the lasso polygon. Mirrors [selectedIds]
+     * for strokes: centroid-only, ray-cast even-odd, defensive against fewer-than-3
+     * polygon vertices (returns empty set).
+     *
+     * AC1.2: bbox-intersection alone is not enough — a box whose centroid is outside
+     * the polygon is NOT selected, even if its bbox overlaps the polygon.
+     */
+    fun selectedTextBoxIds(boxes: List<TextBox>, polygon: List<Point>): Set<String> {
+        if (polygon.size < 3) return emptySet()
+        val out = LinkedHashSet<String>()
+        for (b in boxes) {
+            if (pointInPolygon(centroid(b), polygon)) out.add(b.id)
+        }
+        return out
+    }
+
+    /**
      * Ids of strokes whose centroid lies inside the closed [polygon]. A degenerate
      * polygon (< 3 vertices) selects nothing.
      */
