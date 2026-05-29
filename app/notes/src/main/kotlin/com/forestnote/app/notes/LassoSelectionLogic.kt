@@ -1,6 +1,7 @@
 package com.forestnote.app.notes
 
 import com.forestnote.core.ink.Stroke
+import com.forestnote.core.ink.TextBox
 
 /**
  * Pure selection geometry for the Lasso tool. All coordinates are virtual units
@@ -40,6 +41,15 @@ object LassoSelectionLogic {
         }
         return inside
     }
+
+    /**
+     * Centroid of a text box = the geometric center of its rect, in virtual units.
+     * Used by [selectedTextBoxIds] for centroid-in-polygon selection (mirror of the
+     * per-stroke rule). Integer divide intentionally — matches the int-only contract
+     * of [Point].
+     */
+    fun centroid(box: TextBox): Point =
+        Point(box.x + box.width / 2, box.y + box.height / 2)
 
     /** Integer mean of a stroke's points. Strokes always have >= 1 point; guard defensively. */
     fun centroid(stroke: Stroke): Point {

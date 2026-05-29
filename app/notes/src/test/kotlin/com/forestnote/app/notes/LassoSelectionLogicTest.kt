@@ -3,6 +3,7 @@ package com.forestnote.app.notes
 import com.forestnote.app.notes.LassoSelectionLogic.Point
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
+import com.forestnote.core.ink.TextBox
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -20,6 +21,18 @@ class LassoSelectionLogicTest {
     private fun stroke(id: String, vararg pts: Pair<Int, Int>) = Stroke(
         id = id,
         points = pts.map { (x, y) -> StrokePoint(x, y, 500, 0L) }
+    )
+
+    private fun box(
+        id: String = "b",
+        x: Int = 0,
+        y: Int = 0,
+        w: Int = 100,
+        h: Int = 100,
+        text: String = "t",
+    ) = TextBox(
+        id = id, x = x, y = y, width = w, height = h, text = text,
+        fontName = "Roboto-Regular.ttf", fontSize = 32
     )
 
     private val square = listOf(Point(0, 0), Point(100, 0), Point(100, 100), Point(0, 100))
@@ -78,6 +91,25 @@ class LassoSelectionLogicTest {
         // xs sum = 0+0+1 = 1, /3 = 0 (integer division); ys sum = 0+1+1 = 2, /3 = 0.
         val s = stroke("a", 0 to 0, 0 to 1, 1 to 1)
         assertEquals(Point(0, 0), LassoSelectionLogic.centroid(s))
+    }
+
+    // --- Phase-1 Task 1: centroid(TextBox) ---
+
+    @Test
+    fun centroidOfBoxReturnsRectCenter() {
+        assertEquals(
+            Point(60, 120),
+            LassoSelectionLogic.centroid(box(x = 10, y = 20, w = 100, h = 200))
+        )
+    }
+
+    @Test
+    fun centroidOfBoxIntegerTruncatesOddDimensions() {
+        // w=3 → 3/2 = 1; h=5 → 5/2 = 2. Integer divide.
+        assertEquals(
+            Point(1, 2),
+            LassoSelectionLogic.centroid(box(x = 0, y = 0, w = 3, h = 5))
+        )
     }
 
     // --- Task 3: selectedIds (incl. concave-U tradeoff + edges) ---
