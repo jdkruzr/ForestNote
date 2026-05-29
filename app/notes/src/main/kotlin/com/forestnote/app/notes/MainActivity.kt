@@ -400,20 +400,22 @@ class MainActivity : Activity() {
             //
             // Phase-5 interim gate: the lasso CAN select boxes (so the pen-up handler builds a mixed
             // payload), but DrawView's cutSelection/copySelection/deleteSelection are still strokes-
-            // only. Showing the pill for a boxes-only selection would expose a half-honest UI (Cut
-            // silently drops boxes; Delete no-ops). Until Phase 6 widens those three methods, hide
-            // the pill when the selection has no strokes. Box-only selections then just leave the
-            // lasso outline visible — exactly the AC6 "lasso outline is the sole indicator" rule.
+            // only — Phase 6 widens them. Showing the pill for a boxes-only OR mixed selection would
+            // expose a half-honest UI (Cut silently drops boxes; Delete no-ops on them; the count
+            // would include items the actions ignore). Until Phase 6 widens those three methods,
+            // only show the pill for a PURE strokes selection; boxes-only and mixed lassos leave
+            // just the outline visible — exactly the AC6 "lasso outline is the sole indicator" rule.
+            // This gate goes away in Phase 6.
             val strokes = payload.strokes
             fileLogger.log(
                 "Sel",
                 "onSelectionChanged strokes=${strokes.size} boxes=${payload.textBoxes.size} bounds=${bounds != null}"
             )
-            if (strokes.isEmpty() || bounds == null) {
+            if (strokes.isEmpty() || payload.textBoxes.isNotEmpty() || bounds == null) {
                 selectionMenu.dismiss()
             } else {
                 selectionMenu.show(
-                    drawView, strokes.size + payload.textBoxes.size, bounds,
+                    drawView, strokes.size, bounds,
                     SelectionMenuView.Callbacks(
                         onCut = { drawView.cutSelection(clipboard) },
                         onCopy = { drawView.copySelection(clipboard) },
