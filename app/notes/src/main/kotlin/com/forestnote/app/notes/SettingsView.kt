@@ -256,6 +256,22 @@ class SettingsView {
 
         wireRecognitionModels(view)
         wireCalDavQueue(view)
+        wireAboutVersion(view)
+    }
+
+    /**
+     * Populate the About row with the live `versionName` from the package manager. Reading
+     * from `packageInfo` (not a hard-coded constant) keeps this in lockstep with the
+     * manifest — bump versionName in build-logic and the Settings row updates on next
+     * install. Defensive: any failure degrades to a generic label rather than crashing.
+     */
+    private fun wireAboutVersion(view: View) {
+        val tv = view.findViewById<TextView>(R.id.text_app_version) ?: return
+        val ctx = view.context
+        val versionName = runCatching {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
+        }.getOrNull().orEmpty()
+        tv.text = if (versionName.isNotBlank()) "ForestNote $versionName" else "ForestNote"
     }
 
     /**

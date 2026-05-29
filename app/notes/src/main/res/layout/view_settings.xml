@@ -301,6 +301,21 @@
                 android:textSize="15sp"
                 android:textColor="@color/black"
                 android:text="Write debug logs to /sdcard/ForestNote" />
+
+            <!-- ===== About =====
+                 Text is set in code from packageManager.getPackageInfo(...).versionName so it
+                 can never drift from the manifest. Sits at the bottom so it doesn't crowd
+                 actionable rows. -->
+            <TextView style="@style/SettingsSection" android:text="About" />
+
+            <TextView
+                android:id="@+id/text_app_version"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="15sp"
+                android:textColor="@color/black"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp" />
         </LinearLayout>
     </ScrollView>
 </LinearLayout>
