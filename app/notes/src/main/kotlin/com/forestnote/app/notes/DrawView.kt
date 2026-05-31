@@ -20,6 +20,8 @@ import android.view.View
 import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.ink.DisplayMode
 import com.forestnote.core.ink.InkBackend
+import com.forestnote.core.ink.InkPhase
+import com.forestnote.core.ink.InkSample
 import com.forestnote.core.ink.PageTransform
 import com.forestnote.core.ink.PenParams
 import com.forestnote.core.ink.PenVariant
@@ -28,6 +30,7 @@ import com.forestnote.core.ink.PressureCurve
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeBuilder
 import com.forestnote.core.ink.StrokePoint
+import com.forestnote.core.ink.StrokeSink
 import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.Tool
 import com.forestnote.core.ink.Ulid
@@ -98,6 +101,14 @@ class DrawView @JvmOverloads constructor(
     }
     private val completedStrokes = mutableListOf<Stroke>()
     private var currentStroke: StrokeBuilder? = null
+
+    /**
+     * The pen-tool ingest path, behind the device-agnostic [StrokeSink] seam (core:ink).
+     * The MotionEvent adapter ([handleDraw]) drives it today; a future input-owning backend
+     * (Boox/Onyx, Phase 2) will drive the very same sink from its firmware raw-input
+     * callback, reusing this exact accumulate → render → persist pipeline.
+     */
+    private val strokeSink = DrawViewStrokeSink()
 
     // ===== Text boxes (z-ordered text elements) =====
     // Authoritative in-memory model for the active page, rendered into the static bitmap in two
@@ -1184,143 +1195,181 @@ class DrawView @JvmOverloads constructor(
     }
 
     /**
-     * Handle drawing with the pen tool.
-     * Processes touch events in virtual coordinates, renders to screen.
+     * Handle drawing with the pen tool — now a thin MotionEvent→[InkSample] adapter over
+     * [strokeSink]. It owns only the event-shape concerns (action dispatch, historical-point
+     * batching, resolving the active [PenParams]); all stroke accumulation, bitmap rendering
+     * and persistence live in [DrawViewStrokeSink]. A whole ACTION_MOVE batch is fed point by
+     * point and then [DrawViewStrokeSink.flush]ed once, so the backend still sees exactly one
+     * `renderSegment`/`invalidate` per event (no extra overlay churn on the fast-ink path).
      */
     private fun handleDraw(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                ensureBitmap()
-                provideBitmapIfNeeded()
-
-                // Start new stroke in virtual space
-                val vx = transform.toVirtualX(event.x)
-                val vy = transform.toVirtualY(event.y)
-                val mp = transform.toMillipressure(event.pressure)
-
-                // Resolve per-variant colour/width at the active width level, configure the live paint.
                 val params = PenParams.of(activePenVariant, activePenWidthLevel)
-                configureStrokePaintFor(params.color)
-                currentStroke = StrokeBuilder(params.color, params.wMin, params.wMax).also {
-                    it.addPoint(StrokePoint(vx, vy, mp, System.currentTimeMillis()))
-                }
-
-                // Track screen coordinates for next line draw
-                prevScreenX = event.x
-                prevScreenY = event.y
+                strokeSink.begin(Tool.Pen, params)
+                strokeSink.accept(sampleOf(event.x, event.y, event.pressure), InkPhase.DOWN)
             }
 
             MotionEvent.ACTION_MOVE -> {
-                val stroke = currentStroke ?: return true
-                val canvas = writingCanvas ?: return true
-
-                var minX = event.x
-                var minY = event.y
-                var maxX = minX
-                var maxY = minY
-
-                // Process historical points (batched by the system between ACTION_MOVE events)
+                // Historical points are sub-frame samples the system batched into this event.
                 for (i in 0 until event.historySize) {
-                    val hx = event.getHistoricalX(i)
-                    val hy = event.getHistoricalY(i)
-                    val hp = event.getHistoricalPressure(i)
-
-                    // Convert to virtual coordinates for storage
-                    val vx = transform.toVirtualX(hx)
-                    val vy = transform.toVirtualY(hy)
-                    val mp = transform.toMillipressure(hp)
-                    stroke.addPoint(StrokePoint(vx, vy, mp, System.currentTimeMillis()))
-
-                    // Draw to bitmap in screen coordinates
-                    val screenWidth = PressureCurve.width(mp, stroke.penWidthMin, stroke.penWidthMax)
-                    val screenW = transform.toScreenSize(screenWidth)
-                    strokePaint.strokeWidth = screenW
-                    canvas.drawLine(prevScreenX, prevScreenY, hx, hy, strokePaint)
-
-                    // Track dirty rect bounds (screen coordinates)
-                    minX = min(minX, min(prevScreenX, hx))
-                    minY = min(minY, min(prevScreenY, hy))
-                    maxX = max(maxX, max(prevScreenX, hx))
-                    maxY = max(maxY, max(prevScreenY, hy))
-
-                    prevScreenX = hx
-                    prevScreenY = hy
+                    strokeSink.accept(
+                        sampleOf(event.getHistoricalX(i), event.getHistoricalY(i), event.getHistoricalPressure(i)),
+                        InkPhase.MOVE
+                    )
                 }
-
-                // Process current point
-                val cx = event.x
-                val cy = event.y
-                val vx = transform.toVirtualX(cx)
-                val vy = transform.toVirtualY(cy)
-                val mp = transform.toMillipressure(event.pressure)
-                stroke.addPoint(StrokePoint(vx, vy, mp, System.currentTimeMillis()))
-
-                val screenWidth = PressureCurve.width(mp, stroke.penWidthMin, stroke.penWidthMax)
-                val screenW = transform.toScreenSize(screenWidth)
-                strokePaint.strokeWidth = screenW
-                canvas.drawLine(prevScreenX, prevScreenY, cx, cy, strokePaint)
-
-                minX = min(minX, min(prevScreenX, cx))
-                minY = min(minY, min(prevScreenY, cy))
-                maxX = max(maxX, max(prevScreenX, cx))
-                maxY = max(maxY, max(prevScreenY, cy))
-
-                prevScreenX = cx
-                prevScreenY = cy
-
-                // Push dirty rect to backend (screen coordinates with view offset)
-                val pad = transform.toScreenSize(stroke.penWidthMax.toFloat()).toInt() + 2
-                val loc = IntArray(2)
-                getLocationOnScreen(loc)
-                backend?.renderSegment(Rect(
-                    (minX.toInt() - pad + loc[0]).coerceAtLeast(0),
-                    (minY.toInt() - pad + loc[1]).coerceAtLeast(0),
-                    (maxX.toInt() + pad + loc[0]).coerceAtMost(Int.MAX_VALUE),
-                    (maxY.toInt() + pad + loc[1]).coerceAtMost(Int.MAX_VALUE)
-                ))
-
-                // Invalidate ONLY the segment's dirty rect (view-local coords), not the whole
-                // view. onDraw's bitmap blit is then clipped to this region by the framework, so
-                // e-ink refreshes a small area under the pen instead of the full screen every move
-                // — the dominant per-move cost. (minX..maxY are already view-local screen px.)
-                invalidate(
-                    (minX.toInt() - pad).coerceAtLeast(0),
-                    (minY.toInt() - pad).coerceAtLeast(0),
-                    (maxX.toInt() + pad).coerceAtMost(width),
-                    (maxY.toInt() + pad).coerceAtMost(height)
-                )
+                strokeSink.accept(sampleOf(event.x, event.y, event.pressure), InkPhase.MOVE)
+                // One coalesced display push for the whole batch (matches the pre-refactor cadence).
+                strokeSink.flush()
             }
 
             MotionEvent.ACTION_UP -> {
-                val stroke = currentStroke ?: return true
-
-                // Final point
-                val vx = transform.toVirtualX(event.x)
-                val vy = transform.toVirtualY(event.y)
-                val mp = transform.toMillipressure(event.pressure)
-                stroke.addPoint(StrokePoint(vx, vy, mp, System.currentTimeMillis()))
-
-                // Complete stroke
-                val completed = stroke.toStroke()
-                completedStrokes.add(completed)
-                currentStroke = null
-
-                // Signal backend end-of-stroke
-                backend?.endStroke()
-
-                // Auto-save to repository
-                if (!stroke.isEmpty()) {
-                    // Fire-and-forget: the store persists off-thread and logs its own
-                    // failures. The stroke already carries its ULID — no copy-back.
-                    store?.save(completed)
-                    onStrokeSaved?.invoke(completed)
-                }
-
-                // Redraw on e-ink for quality output (postDelayed prevents excessive redraws)
-                postDelayed({ invalidate() }, 900)
+                strokeSink.accept(sampleOf(event.x, event.y, event.pressure), InkPhase.UP)
             }
         }
         return true
+    }
+
+    /** Map a captured screen point to a device-agnostic [InkSample] via the active transform. */
+    private fun sampleOf(screenX: Float, screenY: Float, pressure: Float): InkSample =
+        InkSample.from(screenX, screenY, pressure, System.currentTimeMillis(), transform)
+
+    /**
+     * The pen-tool ingest pipeline, extracted behind the [StrokeSink] seam (core:ink) so a
+     * future input-owning backend (Boox/Onyx, Phase 2) can drive the exact same stroke
+     * accumulation → bitmap render → persistence path that the MotionEvent feeder uses.
+     *
+     * As an inner class it touches DrawView's offscreen bitmap, stroke list, backend,
+     * transform and store directly — this is a pure relocation of the old `handleDraw` body,
+     * the same work reachable from either feeder.
+     *
+     * Coordinate note: segments are drawn from each sample's virtual coords mapped back to
+     * screen via [transform], not from the raw MotionEvent floats. Stored points are already
+     * virtual-rounded, so this is behavior-neutral — the only difference is a sub-0.1px
+     * endpoint shift that's invisible on the panel (validated on-device on the Viwoods Mini).
+     */
+    private inner class DrawViewStrokeSink : StrokeSink {
+        // The sink's own previous screen point. Kept off DrawView.prevScreenX/Y, which the
+        // erase path owns — the two gestures never overlap, but separate state reads clearer.
+        private var prevX = 0f
+        private var prevY = 0f
+
+        // Coalesced view-local dirty bounds for the in-flight ACTION_MOVE batch; pushed +
+        // reset by [flush]. [hasDirty] false = nothing drawn since the last flush.
+        private var dMinX = 0f
+        private var dMinY = 0f
+        private var dMaxX = 0f
+        private var dMaxY = 0f
+        private var hasDirty = false
+
+        override fun begin(tool: Tool, penParams: PenParams) {
+            ensureBitmap()
+            provideBitmapIfNeeded()
+            // Resolve colour/xfermode (highlighter composites DST_OVER) for the live paint.
+            configureStrokePaintFor(penParams.color)
+            currentStroke = StrokeBuilder(penParams.color, penParams.wMin, penParams.wMax)
+            hasDirty = false
+        }
+
+        override fun accept(sample: InkSample, phase: InkPhase) {
+            when (phase) {
+                InkPhase.DOWN -> {
+                    currentStroke?.addPoint(sample.toPoint())
+                    // Seed the segment origin in screen space for the first MOVE.
+                    prevX = transform.toScreenX(sample.vx)
+                    prevY = transform.toScreenY(sample.vy)
+                }
+
+                InkPhase.MOVE -> {
+                    val stroke = currentStroke ?: return
+                    val canvas = writingCanvas ?: return
+                    stroke.addPoint(sample.toPoint())
+
+                    val cx = transform.toScreenX(sample.vx)
+                    val cy = transform.toScreenY(sample.vy)
+                    val screenW = transform.toScreenSize(
+                        PressureCurve.width(sample.millipressure, stroke.penWidthMin, stroke.penWidthMax)
+                    )
+                    strokePaint.strokeWidth = screenW
+                    canvas.drawLine(prevX, prevY, cx, cy, strokePaint)
+                    extendDirty(prevX, prevY, cx, cy)
+                    prevX = cx
+                    prevY = cy
+                }
+
+                InkPhase.UP -> {
+                    // Matches the pre-refactor UP: append the final point to the model but draw
+                    // NO segment to it (the 900ms repaint blits the bitmap as-is), then finalize.
+                    val stroke = currentStroke ?: return
+                    stroke.addPoint(sample.toPoint())
+
+                    val completed = stroke.toStroke()
+                    completedStrokes.add(completed)
+                    currentStroke = null
+
+                    backend?.endStroke()
+
+                    if (!stroke.isEmpty()) {
+                        // Fire-and-forget: the store persists off-thread and logs its own
+                        // failures. The stroke already carries its ULID — no copy-back.
+                        store?.save(completed)
+                        onStrokeSaved?.invoke(completed)
+                    }
+
+                    // Redraw on e-ink for quality output (postDelayed prevents excessive redraws).
+                    postDelayed({ invalidate() }, 900)
+                }
+            }
+        }
+
+        override fun cancel() {
+            currentStroke = null
+            hasDirty = false
+        }
+
+        /**
+         * Push the coalesced dirty region from the just-ingested MOVE batch to the backend
+         * overlay and the View, then reset it. One call per ACTION_MOVE preserves the old
+         * single-`renderSegment`-per-event cadence; a no-op when nothing was drawn.
+         */
+        fun flush() {
+            if (!hasDirty) return
+            // Pad by the stroke's max half-width (+2) so round caps/joins aren't clipped.
+            val pad = currentStroke?.let { transform.toScreenSize(it.penWidthMax.toFloat()).toInt() + 2 } ?: 2
+            val loc = IntArray(2)
+            getLocationOnScreen(loc)
+            backend?.renderSegment(Rect(
+                (dMinX.toInt() - pad + loc[0]).coerceAtLeast(0),
+                (dMinY.toInt() - pad + loc[1]).coerceAtLeast(0),
+                (dMaxX.toInt() + pad + loc[0]).coerceAtMost(Int.MAX_VALUE),
+                (dMaxY.toInt() + pad + loc[1]).coerceAtMost(Int.MAX_VALUE)
+            ))
+            // Invalidate ONLY the batch's dirty rect (view-local coords), not the whole view, so
+            // onDraw's bitmap blit is framework-clipped to a small area under the pen — the
+            // dominant per-move e-ink cost otherwise.
+            invalidate(
+                (dMinX.toInt() - pad).coerceAtLeast(0),
+                (dMinY.toInt() - pad).coerceAtLeast(0),
+                (dMaxX.toInt() + pad).coerceAtMost(width),
+                (dMaxY.toInt() + pad).coerceAtMost(height)
+            )
+            hasDirty = false
+        }
+
+        private fun extendDirty(x0: Float, y0: Float, x1: Float, y1: Float) {
+            val loX = min(x0, x1); val loY = min(y0, y1)
+            val hiX = max(x0, x1); val hiY = max(y0, y1)
+            if (!hasDirty) {
+                dMinX = loX; dMinY = loY; dMaxX = hiX; dMaxY = hiY
+                hasDirty = true
+            } else {
+                dMinX = min(dMinX, loX); dMinY = min(dMinY, loY)
+                dMaxX = max(dMaxX, hiX); dMaxY = max(dMaxY, hiY)
+            }
+        }
+
+        private fun InkSample.toPoint(): StrokePoint =
+            StrokePoint(vx, vy, millipressure, timestampMs)
     }
 
     /**
