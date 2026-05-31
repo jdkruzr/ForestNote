@@ -30,6 +30,9 @@ class VTodoBuilderTest {
 
         val body = VTodoBuilder.build(input)
 
+        // Every VTODO FN emits now carries STATUS (always NEEDS-ACTION — the tablet
+        // only ever creates tasks) and LAST-MODIFIED (defaults to DTSTAMP; load-bearing
+        // for UltraBridge's last-writer-wins sync).
         val expected =
             "BEGIN:VCALENDAR\r\n" +
                 "VERSION:2.0\r\n" +
@@ -37,7 +40,9 @@ class VTodoBuilderTest {
                 "BEGIN:VTODO\r\n" +
                 "UID:abc-123\r\n" +
                 "DTSTAMP:20260528T153000Z\r\n" +
+                "LAST-MODIFIED:20260528T153000Z\r\n" +
                 "SUMMARY:buy milk\r\n" +
+                "STATUS:NEEDS-ACTION\r\n" +
                 "END:VTODO\r\n" +
                 "END:VCALENDAR\r\n"
         assertEquals(expected, body)
@@ -169,4 +174,183 @@ class VTodoBuilderTest {
             "expected UTC instant DUE; got:\n$body",
         )
     }
+
+    // --- Feature 2: provenance, links, status, comment ---
+
+    @Test
+    fun `fully enriched VTODO emits every Feature 2 property in the contract order`() {
+        val input = VTodoInput(
+            uid = "task-9",
+            dtstampUtc = Instant.parse("2026-05-30T09:00:00Z"),
+            summary = "follow up with Dana",
+            lastModifiedUtc = Instant.parse("2026-05-30T09:00:05Z"),
+            url = "https://ub.example.org/files/forestnote?notebook=NB1&page=PG1",
+            provenance = VTodoProvenance(
+                notebookId = "NB1",
+                pageId = "PG1",
+                notebookName = "Work Journal",
+                source = "lasso",
+                nativeUrl = "forestnote://notebook/NB1/page/PG1",
+            ),
+        )
+
+        val body = VTodoBuilder.build(input)
+
+        val expected =
+            "BEGIN:VCALENDAR\r\n" +
+                "VERSION:2.0\r\n" +
+                "PRODID:-//ForestNote//EN\r\n" +
+                "BEGIN:VTODO\r\n" +
+                "UID:task-9\r\n" +
+                "DTSTAMP:20260530T090000Z\r\n" +
+                "LAST-MODIFIED:20260530T090005Z\r\n" +
+                "SUMMARY:follow up with Dana\r\n" +
+                "STATUS:NEEDS-ACTION\r\n" +
+                "URL:https://ub.example.org/files/forestnote?notebook=NB1&page=PG1\r\n" +
+                "X-FORESTNOTE-NOTEBOOK-ID:NB1\r\n" +
+                "X-FORESTNOTE-PAGE-ID:PG1\r\n" +
+                "X-FORESTNOTE-NOTEBOOK-NAME:Work Journal\r\n" +
+                "X-FORESTNOTE-SOURCE:lasso\r\n" +
+                "X-FORESTNOTE-NATIVE-URL:forestnote://notebook/NB1/page/PG1\r\n" +
+                "END:VTODO\r\n" +
+                "END:VCALENDAR\r\n"
+        assertEquals(expected, body)
+    }
+
+    @Test
+    fun `custom STATUS is emitted on the wire`() {
+        val input = VTodoInput(
+            uid = "u-status",
+            dtstampUtc = Instant.parse("2026-05-30T09:00:00Z"),
+            summary = "done thing",
+            status = VTodoStatus.Completed,
+        )
+
+        val body = VTodoBuilder.build(input)
+
+        assertTrue(body.contains("STATUS:COMPLETED\r\n"), "expected COMPLETED status; got:\n$body")
+    }
+
+    @Test
+    fun `LAST-MODIFIED defaults to DTSTAMP when not supplied`() {
+        val input = VTodoInput(
+            uid = "u-lm",
+            dtstampUtc = Instant.parse("2026-05-30T09:00:00Z"),
+            summary = "x",
+        )
+
+        val body = VTodoBuilder.build(input)
+
+        assertTrue(
+            body.contains("LAST-MODIFIED:20260530T090000Z\r\n"),
+            "expected LAST-MODIFIED to mirror DTSTAMP; got:\n$body",
+        )
+    }
+
+    @Test
+    fun `null or blank provenance fields are omitted entirely (UltraBridge wants NULL, not empty)`() {
+        val input = VTodoInput(
+            uid = "u-partial",
+            dtstampUtc = Instant.parse("2026-05-30T09:00:00Z"),
+            summary = "partial",
+            provenance = VTodoProvenance(
+                notebookId = "NB2",
+                pageId = "   ", // blank → omit
+                notebookName = null, // null → omit
+                source = "lasso",
+                nativeUrl = null,
+            ),
+        )
+
+        val body = VTodoBuilder.build(input)
+
+        assertTrue(body.contains("X-FORESTNOTE-NOTEBOOK-ID:NB2\r\n"), "expected notebook id; got:\n$body")
+        assertTrue(body.contains("X-FORESTNOTE-SOURCE:lasso\r\n"), "expected source; got:\n$body")
+        assertTrue(!body.contains("X-FORESTNOTE-PAGE-ID"), "blank page id must be omitted; got:\n$body")
+        assertTrue(!body.contains("X-FORESTNOTE-NOTEBOOK-NAME"), "null name must be omitted; got:\n$body")
+        assertTrue(!body.contains("X-FORESTNOTE-NATIVE-URL"), "null native url must be omitted; got:\n$body")
+    }
+
+    @Test
+    fun `null provenance emits no X-FORESTNOTE properties at all`() {
+        val input = VTodoInput(
+            uid = "u-none",
+            dtstampUtc = Instant.parse("2026-05-30T09:00:00Z"),
+            summary = "no provenance",
+        )
+
+        val body = VTodoBuilder.build(input)
+
+        assertTrue(!body.contains("X-FORESTNOTE"), "expected no X-FORESTNOTE props; got:\n$body")
+        assertTrue(!body.contains("URL:"), "expected no URL; got:\n$body")
+        assertTrue(!body.contains("ATTACH"), "expected no ATTACH; got:\n$body")
+    }
+
+    @Test
+    fun `recognized text emits an inline-binary text-plain ATTACH with FILENAME and FMTTYPE`() {
+        val recognized = "buy milk, eggs; and bread"
+        val input = VTodoInput(
+            uid = "u-attach",
+            dtstampUtc = Instant.parse("2026-05-30T09:00:00Z"),
+            summary = "shopping",
+            recognizedText = recognized,
+        )
+
+        val body = VTodoBuilder.build(input)
+        val attachLine = unfold(body).split("\r\n").first { it.startsWith("ATTACH") }
+
+        // UltraBridge keys inline-attachment de-bloat on ENCODING=BASE64 (or VALUE=BINARY)
+        // and reads the human hint from FILENAME first; FMTTYPE surfaces in MCP get_task.
+        assertTrue(attachLine.contains("FMTTYPE=text/plain"), "got: $attachLine")
+        assertTrue(attachLine.contains("FILENAME=recognized-text.txt"), "got: $attachLine")
+        assertTrue(attachLine.contains("ENCODING=BASE64"), "got: $attachLine")
+        assertTrue(attachLine.contains("VALUE=BINARY"), "got: $attachLine")
+        val decoded = String(java.util.Base64.getDecoder().decode(attachLine.substringAfter(":")), Charsets.UTF_8)
+        assertEquals(recognized, decoded)
+    }
+
+    @Test
+    fun `recognized text rides as base64 ATTACH (not TEXT-escaped) while notebook name stays escaped`() {
+        val recognized = "line one;\ntwo, three"
+        val input = VTodoInput(
+            uid = "u-esc",
+            dtstampUtc = Instant.parse("2026-05-30T09:00:00Z"),
+            summary = "x",
+            recognizedText = recognized,
+            provenance = VTodoProvenance(notebookName = "Proj; A, B"),
+        )
+
+        val body = VTodoBuilder.build(input)
+
+        // ATTACH is inline base64 binary — the payload is NOT TEXT-escaped; the raw bytes
+        // (including ';' ',' and the newline) round-trip through base64 verbatim.
+        val attachValue = unfold(body).split("\r\n").first { it.startsWith("ATTACH") }.substringAfter(":")
+        val decoded = String(java.util.Base64.getDecoder().decode(attachValue), Charsets.UTF_8)
+        assertEquals(recognized, decoded)
+
+        // X-FORESTNOTE-* values are still TEXT-escaped (UltraBridge un-escapes via .Text()).
+        assertTrue(
+            body.contains("X-FORESTNOTE-NOTEBOOK-NAME:Proj\\; A\\, B\r\n"),
+            "expected escaped notebook name; got:\n$body",
+        )
+    }
+
+    @Test
+    fun `blank url and blank recognized text are omitted`() {
+        val input = VTodoInput(
+            uid = "u-blank",
+            dtstampUtc = Instant.parse("2026-05-30T09:00:00Z"),
+            summary = "x",
+            url = "   ",
+            recognizedText = "",
+        )
+
+        val body = VTodoBuilder.build(input)
+
+        assertTrue(!body.contains("URL:"), "blank url must be omitted; got:\n$body")
+        assertTrue(!body.contains("ATTACH"), "blank recognized text must omit ATTACH; got:\n$body")
+    }
+
+    /** RFC 5545 §3.1 unfold: drop CRLF + the single leading space on continuation lines. */
+    private fun unfold(body: String): String = body.replace("\r\n ", "")
 }

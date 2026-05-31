@@ -2,6 +2,7 @@ package com.forestnote.app.notes
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
@@ -29,11 +30,13 @@ import com.forestnote.core.sync.SyncStatus
 import com.forestnote.app.notes.caldav.CalDavOutboxDrainer
 import com.forestnote.app.notes.caldav.CalDavTaskSheet
 import com.forestnote.app.notes.caldav.EncryptedPrefsCredentialsBackend
+import com.forestnote.app.notes.caldav.ForestNoteLink
 import com.forestnote.app.notes.caldav.NetworkAvailabilityMonitor
 import com.forestnote.app.notes.caldav.OkHttpCalDavClient
 import com.forestnote.app.notes.caldav.SecureCredentialsStore
 import com.forestnote.app.notes.caldav.SettingsCredsView
 import com.forestnote.app.notes.caldav.TryOutcome
+import com.forestnote.app.notes.caldav.VTodoProvenance
 import com.forestnote.app.notes.recognize.MlKitRecognizer
 import com.forestnote.app.notes.recognize.RecognitionModelManager
 import com.forestnote.app.notes.recognize.RecognizedText
@@ -124,6 +127,11 @@ class MainActivity : Activity() {
     // Cache of the current notebook's pages + active id, refreshed off the store.
     private var pageIds: List<String> = emptyList()
     private var activePageId: String = ""
+    // Cache of the active notebook's id + display name, refreshed alongside the page list
+    // in refreshPageIndicator. Used to stamp X-FORESTNOTE-* provenance onto lasso → To-do
+    // CalDAV tasks (Feature 2) without an extra synchronous store hop at send time.
+    private var activeNotebookId: String = ""
+    private var activeNotebookName: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -265,7 +273,11 @@ class MainActivity : Activity() {
         // async settings → listNotebooks load lets the empty editor get one paint cycle
         // before openLibrary() runs. The authoritative `store.loadSettings` block below
         // confirms the choice and writes the cache; if it disagrees we reverse course.
-        if (cachedStartLibrary) {
+        // A forestnote:// deep link (cold launch) overrides the normal start-view decision:
+        // we route straight to the linked page below, so don't run the anti-flash Library
+        // cover that would otherwise need dismissing.
+        val deepLinkTarget = parseForestNoteIntent(intent)
+        if (cachedStartLibrary && deepLinkTarget == null) {
             findViewById<View>(R.id.navbar).visibility = View.INVISIBLE
             drawView.visibility = View.INVISIBLE
             openLibrary()
@@ -293,7 +305,11 @@ class MainActivity : Activity() {
             launchPrefs.edit().putString(KEY_START_VIEW, settings.startView.name).apply()
             store.listNotebooks { notebooks, activeId ->
                 val startOnLibrary = settings.startView == StartView.LIBRARY
-                if (LaunchLogic.shouldOpenLibraryOnLaunch(activeId, notebooks.size, startOnLibrary)) {
+                if (deepLinkTarget != null) {
+                    // Cold launch from a forestnote:// link: open the linked page directly,
+                    // overriding the start-view preference.
+                    routeToDeepLink(deepLinkTarget)
+                } else if (LaunchLogic.shouldOpenLibraryOnLaunch(activeId, notebooks.size, startOnLibrary)) {
                     openLibrary() // no-op if the anti-flash cover already opened it
                 } else {
                     // Cache disagreed with reality (user toggled the setting since last launch,
@@ -688,29 +704,57 @@ class MainActivity : Activity() {
     /** Open the modal task sheet (Summary / Due chips / note) prefilled with [prefill]. */
     private fun openCalDavTaskSheet(prefill: String) {
         val host = findViewById<ViewGroup>(android.R.id.content)
-        caldavTaskSheet.show(
-            host = host,
-            prefillSummary = prefill,
-            callbacks = CalDavTaskSheet.Callbacks(
-                onSend = { input ->
-                    fileLogger.log("CalDAV", "enqueue uid=${input.uid} sum=\"${input.summary.take(60)}\" due=${input.due}")
-                    // Persist first so a crash mid-PUT still keeps the task. Then race the
-                    // drainer against a short timeout: if it sends in time, toast "Task created";
-                    // otherwise toast "Task queued" and let the drainer's normal cadence finish it.
-                    store.enqueueCalDavTask(input) {
-                        syncScope.launch {
-                            val outcome = caldavDrainer.tryImmediately(
-                                input.uid,
-                                timeoutMs = OPTIMISTIC_SEND_TIMEOUT_MS,
-                            )
-                            val text = if (outcome == TryOutcome.Sent) "Task created" else "Task queued"
-                            android.widget.Toast.makeText(this@MainActivity, text, android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                },
-                onCancel = { fileLogger.log("CalDAV", "task creation cancelled") },
-            ),
-        )
+        // Snapshot the source page/notebook at gesture time (Feature 2 provenance).
+        val nbId = activeNotebookId
+        val pgId = activePageId
+        val nbName = activeNotebookName
+        val haveIds = nbId.isNotBlank() && pgId.isNotBlank()
+        // Resolve the https web link off the persisted sync base (null when blank), then
+        // show the sheet. One off-thread settings hop before the sheet appears.
+        store.loadSettings { settings ->
+            val provenance = VTodoProvenance(
+                notebookId = nbId.ifBlank { null },
+                pageId = pgId.ifBlank { null },
+                notebookName = nbName.ifBlank { null },
+                source = TASK_SOURCE_LASSO,
+                nativeUrl = if (haveIds) ForestNoteLink.native(nbId, pgId) else null,
+            )
+            val webUrl = if (haveIds) ForestNoteLink.web(settings.syncServerUrl, nbId, pgId) else null
+            caldavTaskSheet.show(
+                host = host,
+                prefillSummary = prefill,
+                context = CalDavTaskSheet.TaskContext(
+                    recognizedText = prefill,
+                    provenance = provenance,
+                    webUrl = webUrl,
+                ),
+                    callbacks = CalDavTaskSheet.Callbacks(
+                        onSend = { input ->
+                            // The lasso job is done: clear the selection and return to the pen so
+                            // the next stroke draws instead of re-lassoing. Switching the tool
+                            // (Lasso → Pen) runs DrawView.activeTool's setter, which clears the
+                            // lasso polygon + selection in one chokepoint. (Cancel leaves the
+                            // selection intact so the user can retry.)
+                            toolBar.selectTool(Tool.Pen)
+                            fileLogger.log("CalDAV", "enqueue uid=${input.uid} sum=\"${input.summary.take(60)}\" due=${input.due}")
+                            // Persist first so a crash mid-PUT still keeps the task. Then race the
+                            // drainer against a short timeout: if it sends in time, toast "Task created";
+                            // otherwise toast "Task queued" and let the drainer's normal cadence finish it.
+                            store.enqueueCalDavTask(input) {
+                                syncScope.launch {
+                                    val outcome = caldavDrainer.tryImmediately(
+                                        input.uid,
+                                        timeoutMs = OPTIMISTIC_SEND_TIMEOUT_MS,
+                                    )
+                                    val text = if (outcome == TryOutcome.Sent) "Task created" else "Task queued"
+                                    android.widget.Toast.makeText(this@MainActivity, text, android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        onCancel = { fileLogger.log("CalDAV", "task creation cancelled") },
+                    ),
+                )
+            }
     }
 
 
@@ -733,6 +777,14 @@ class MainActivity : Activity() {
 
     /** Reload the current notebook's page list + active id; update the indicator. */
     private fun refreshPageIndicator() {
+        // Refresh the active notebook id + name cache (for Feature 2 task provenance).
+        // Every navigation path funnels through refreshPageIndicator, so this is the
+        // single chokepoint that keeps the cache current across launch/restore, page
+        // switches, notebook switches, and Library opens.
+        store.listNotebooks { notebooks, activeId ->
+            activeNotebookId = activeId
+            activeNotebookName = notebooks.firstOrNull { it.id == activeId }?.name.orEmpty()
+        }
         store.listPages { pages, activeId ->
             pageIds = pages.map { it.id }
             activePageId = activeId
@@ -771,6 +823,31 @@ class MainActivity : Activity() {
             refreshPageIndicator() // its listPages callback chains the OCR refresh too
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
+    }
+
+    /**
+     * Warm-path deep link: the app is already running (singleTask) and the system
+     * delivers a `forestnote://` link here. Route to the linked page, dismissing any
+     * full-screen overlay first so the editor is actually visible. Foreign/malformed
+     * links no-op (the app just stays where it was).
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent) // keep getIntent() coherent for any later reads
+        parseForestNoteIntent(intent)?.let { routeToDeepLink(it) }
+    }
+
+    /** Parse a `forestnote://notebook/{id}/page/{id}` launch/view intent. Null if absent/foreign. */
+    private fun parseForestNoteIntent(intent: Intent?): ForestNoteLink.Target? =
+        intent?.data?.toString()?.let { ForestNoteLink.parse(it) }
+
+    /** Dismiss any covering overlay, then open the linked notebook+page in the editor. */
+    private fun routeToDeepLink(target: ForestNoteLink.Target) {
+        fileLogger.log("DeepLink", "route notebook=${target.notebookId} page=${target.pageId}")
+        if (libraryView.isShowing) libraryView.hide()
+        if (settingsView.isShowing) settingsView.hide()
+        if (recycleBinView.isShowing) recycleBinView.hide()
+        goToNotebookPage(target.notebookId, target.pageId)
     }
 
     /** Reload whatever page the repo currently considers active (after a delete). */
@@ -1517,6 +1594,10 @@ class MainActivity : Activity() {
 
         // How long the Send-side optimistic try waits before falling back to "Task queued".
         const val OPTIMISTIC_SEND_TIMEOUT_MS = 500L
+
+        // X-FORESTNOTE-SOURCE value for tasks created from a lasso → To-do gesture.
+        // Frozen contract with UltraBridge (filterable as ?source=lasso).
+        const val TASK_SOURCE_LASSO = "lasso"
 
         // Synchronous launch-preference cache. Mirrors Settings.startView only — the
         // authoritative blob is too slow to consult before setContentView, so we read
