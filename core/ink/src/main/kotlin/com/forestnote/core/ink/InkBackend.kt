@@ -15,6 +15,17 @@ interface InkBackend {
     /** True if this backend can operate on the current device. */
     fun isAvailable(): Boolean
 
+    /**
+     * True if this backend OWNS the input path (it sources stylus points itself via a
+     * firmware raw-input callback) rather than merely accelerating display of points that
+     * arrive through Android's MotionEvent dispatch.
+     *
+     * Viwoods/Generic accelerate display only → false (the default). The Boox/Onyx backend
+     * (Phase 2) returns true; the host then routes ingest through its `attachInput` instead
+     * of `DrawView.onTouchEvent`. Defaulted so existing backends need no edit.
+     */
+    fun ownsInput(): Boolean = false
+
     /** One-time setup. Called once at app start. */
     fun init(context: Context): Boolean
 
