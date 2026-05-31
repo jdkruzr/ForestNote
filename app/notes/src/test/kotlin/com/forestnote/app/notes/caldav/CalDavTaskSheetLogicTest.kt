@@ -83,4 +83,22 @@ class CalDavTaskSheetLogicTest {
     fun `pill leaves short recognized text untouched`() {
         assertEquals("buy milk", CalDavTaskSheetLogic.pillLabel("buy milk", maxLen = 40))
     }
+
+    // --- recognizedTextToAttach() (Feature 2 opt-in) -----------------------------
+
+    @Test
+    fun `recognized text is attached only when the user opts in`() {
+        assertEquals(
+            "buy milk for the week",
+            CalDavTaskSheetLogic.recognizedTextToAttach("buy milk for the week", attach = true),
+        )
+        assertNull(CalDavTaskSheetLogic.recognizedTextToAttach("buy milk for the week", attach = false))
+    }
+
+    @Test
+    fun `recognized text is trimmed and blank text yields null even when attached`() {
+        assertEquals("hi", CalDavTaskSheetLogic.recognizedTextToAttach("  hi  ", attach = true))
+        assertNull(CalDavTaskSheetLogic.recognizedTextToAttach("   ", attach = true))
+        assertNull(CalDavTaskSheetLogic.recognizedTextToAttach("", attach = true))
+    }
 }

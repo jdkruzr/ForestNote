@@ -55,4 +55,13 @@ object CalDavTaskSheetLogic {
      */
     fun pillLabel(text: String, maxLen: Int): String =
         if (text.length <= maxLen) text else text.take(maxLen - 1) + "…"
+
+    /**
+     * The recognized-text value to attach (Feature 2). Returns the full original
+     * recognized text only when the user opted in via the "Attach full recognized text"
+     * checkbox; null otherwise (or when the text is blank). VTodoBuilder carries a
+     * non-null value as an inline `text/plain` ATTACH and omits a null/blank one.
+     */
+    fun recognizedTextToAttach(recognizedText: String, attach: Boolean): String? =
+        if (attach) recognizedText.trim().ifBlank { null } else null
 }

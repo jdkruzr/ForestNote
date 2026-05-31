@@ -224,6 +224,19 @@
                  NOT in the Settings JSON blob (which previously held only the URL). -->
             <TextView style="@style/SettingsSection" android:text="Calendar (CalDAV tasks)" />
 
+            <!-- Feature 2: the to-do → source-page back-links (the forestnote:// native URL
+                 and the https web link) only resolve end-to-end when the CalDAV server is
+                 UltraBridge. Other servers still store + sync the task fine; the links just
+                 won't open the originating note page. -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/gray_dark"
+                android:textSize="12sp"
+                android:paddingTop="2dp"
+                android:paddingBottom="4dp"
+                android:text="Note: to-do → note links open the source page only when this is an UltraBridge server. Other CalDAV servers still store the task, but the back-links won't resolve." />
+
             <TextView style="@style/SettingsLabel" android:text="Collection URL" />
             <EditText
                 android:id="@+id/input_caldav_url"

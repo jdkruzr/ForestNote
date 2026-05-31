@@ -148,6 +148,19 @@
                 android:gravity="top|start"
                 android:textColor="@color/black"
                 android:textSize="16sp" />
+
+            <!-- Feature 2: when checked, the full original recognized handwriting is
+                 carried as an inline text/plain VTODO ATTACH (third-party task apps surface
+                 attachments; preserved even if the user trims SUMMARY). Default off; gone
+                 entirely when the sheet wasn't opened from a recognition. -->
+            <CheckBox
+                android:id="@+id/check_caldav_attach_recognized"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Attach full recognized text"
+                android:textColor="@color/black"
+                android:textSize="16sp" />
         </LinearLayout>
     </ScrollView>
 </LinearLayout>

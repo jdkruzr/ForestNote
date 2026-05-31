@@ -5,6 +5,7 @@ import android.app.DatePickerDialog
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.TextView
 import com.forestnote.app.notes.R
@@ -34,6 +35,19 @@ class CalDavTaskSheet {
         val onCancel: () -> Unit,
     )
 
+    /**
+     * Feature 2 provenance context for a task born from a lasso → To-do gesture.
+     * [recognizedText] is the original recognized handwriting (offered as the opt-in
+     * inline `text/plain` ATTACH); [provenance] is the `X-FORESTNOTE-*` block; [webUrl] is the standard
+     * iCal `URL` (https link to the source page, already null-gated on sync base).
+     * When null, the sheet emits no provenance and hides the "attach recognized text" row.
+     */
+    data class TaskContext(
+        val recognizedText: String,
+        val provenance: VTodoProvenance?,
+        val webUrl: String?,
+    )
+
     private var root: View? = null
     private var host: ViewGroup? = null
     private var dueChoice: DueChoice = DueChoice.None
@@ -41,6 +55,8 @@ class CalDavTaskSheet {
     private var summaryInput: EditText? = null
     private var noteInput: EditText? = null
     private var dueSummaryText: TextView? = null
+    private var attachRecognizedCheck: CheckBox? = null
+    private var taskContext: TaskContext? = null
     private val chipViews = mutableMapOf<DueChoice, TextView>()
 
     val isShowing: Boolean get() = root != null
@@ -52,11 +68,13 @@ class CalDavTaskSheet {
     fun show(
         host: ViewGroup,
         prefillSummary: String,
+        context: TaskContext? = null,
         zone: ZoneId = ZoneId.systemDefault(),
         callbacks: Callbacks,
     ) {
         if (isShowing) return
         this.host = host
+        this.taskContext = context
         val view = LayoutInflater.from(host.context)
             .inflate(R.layout.view_caldav_task_sheet, host, false)
         host.addView(view)
@@ -65,6 +83,11 @@ class CalDavTaskSheet {
         val summary = view.findViewById<EditText>(R.id.input_caldav_summary).also { summaryInput = it }
         val note = view.findViewById<EditText>(R.id.input_caldav_note).also { noteInput = it }
         dueSummaryText = view.findViewById(R.id.text_due_summary)
+        // The "Attach full recognized text" row only makes sense when we have recognized
+        // text to attach (i.e. opened from a lasso → To-do gesture). Hidden otherwise.
+        attachRecognizedCheck = view.findViewById<CheckBox>(R.id.check_caldav_attach_recognized).also {
+            it.visibility = if (!context?.recognizedText.isNullOrBlank()) View.VISIBLE else View.GONE
+        }
 
         summary.setText(prefillSummary)
         summary.setSelection(prefillSummary.length)
@@ -118,6 +141,8 @@ class CalDavTaskSheet {
         summaryInput = null
         noteInput = null
         dueSummaryText = null
+        attachRecognizedCheck = null
+        taskContext = null
         chipViews.clear()
         root?.let { host?.removeView(it) }
         root = null
@@ -173,12 +198,19 @@ class CalDavTaskSheet {
         val today = LocalDate.now(zone)
         val due = CalDavTaskSheetLogic.resolveDue(dueChoice, zone, today, pickedDate)
         val note = noteInput?.text?.toString()?.trim()?.ifBlank { null }
+        // Capture the provenance context + checkbox before hide() nulls them out.
+        val ctx = taskContext
+        val attachRecognized = attachRecognizedCheck?.isChecked == true
         val input = VTodoInput(
             uid = UUID.randomUUID().toString(),
             dtstampUtc = Instant.now(),
             summary = decision.trimmed,
             due = due,
             description = note,
+            // LAST-MODIFIED defaults to DTSTAMP in the builder; STATUS defaults NEEDS-ACTION.
+            url = ctx?.webUrl,
+            recognizedText = ctx?.let { CalDavTaskSheetLogic.recognizedTextToAttach(it.recognizedText, attachRecognized) },
+            provenance = ctx?.provenance,
         )
         hide()
         callbacks.onSend(input)

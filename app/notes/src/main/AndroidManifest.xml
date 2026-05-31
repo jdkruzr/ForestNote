@@ -13,13 +13,26 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ForestNote">
 
+        <!-- singleTask keeps a single MainActivity instance: a forestnote:// deep link
+             routes into the already-running app via onNewIntent rather than spawning a
+             second Activity (which would open a second NotebookStore and break the
+             single-writer DB invariant). -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Feature 2: forestnote://notebook/{id}/page/{id} deep links (emitted as
+                 X-FORESTNOTE-NATIVE-URL on CalDAV tasks) open the source page on-device. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="forestnote" />
             </intent-filter>
         </activity>
 
