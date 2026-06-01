@@ -61,6 +61,15 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     /** Active pen params; the firmware live-ink style + the sink's stored stroke both read this. */
     private var pen: PenParams = PenParams.of(PenVariant.FOUNTAIN, PenWidthLevel.M)
 
+    /**
+     * The active tool. The firmware owns the stylus ONLY for [Tool.Pen]; for every other tool we
+     * release raw drawing so the stylus reverts to ordinary MotionEvents (no stray firmware ink, no
+     * phantom pen strokes). Read on the firmware callback thread; written from the UI thread via
+     * [setActiveTool] — @Volatile for the cross-thread publish.
+     */
+    @Volatile
+    private var activeTool: Tool = Tool.Pen
+
     /** Device max stylus pressure — varies per unit (4095 vs 4096), so always queried, never hardcoded. */
     private var maxPressure = 4095f
     private var colorDevice = false
@@ -148,6 +157,34 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         pen = penParams
         applyPen()
     }
+
+    override fun setActiveTool(tool: Tool) {
+        activeTool = tool
+        // Firmware owns the stylus ONLY for Pen. For lasso/erase/text we release raw drawing — the
+        // SAME master switch the popup-suspend uses (setInputSuspended) — which (a) stops the
+        // firmware drawing any ink and delivering raw callbacks (so no phantom pen strokes get
+        // persisted), and (b) hands the stylus back to ordinary Android dispatch, so DrawView's
+        // existing MotionEvent handlers run and the panel refreshes through the normal EPD pipeline
+        // (enablePost). Switching back to Pen re-grabs the firmware path. Defensive: a toggle
+        // failure logs and leaves the previous state rather than crashing.
+        try {
+            val isPen = tool is Tool.Pen
+            // TWO independent firmware switches, both must follow the tool:
+            //  - setRawDrawingEnabled = the master (capture + callbacks). Off for non-pen so the
+            //    stylus reverts to ordinary MotionEvents and no phantom strokes are ingested.
+            //  - isRawDrawingRenderEnabled = the firmware's direct-to-panel ink passthrough. It is
+            //    INDEPENDENT of the master (on-device proof: with the master off, render=true still
+            //    drew live ink under the Text tool while no raw callback fired). Pin it off for
+            //    non-pen tools or the firmware paints stray ink the app never asked for.
+            touchHelper?.setRawDrawingEnabled(isPen)
+            touchHelper?.isRawDrawingRenderEnabled = isPen
+        } catch (t: Throwable) {
+            Log.w(TAG, "setActiveTool($tool) raw-drawing toggle failed", t)
+        }
+    }
+
+    /** The firmware render passthrough should be live only while Pen is the active tool. */
+    private fun renderEnabledForActiveTool(): Boolean = activeTool is Tool.Pen
 
     override fun attachInput(host: View, sink: StrokeSink, toolbarExcludeRects: List<Rect>) {
         val surface = host as? SurfaceView ?: run {
@@ -310,7 +347,9 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             }
         }
 
-        // Erasing + hover are Phase 3 (tool mapping). No-ops for the pen-only MVP.
+        // Erasing + hover: still no-ops. Step 1 routes erase through normal MotionEvent dispatch
+        // (raw drawing released for the eraser tool), so the firmware erase channel isn't engaged
+        // yet — a later step may adopt it (e.g. the pen's flip-end hardware eraser).
         override fun onBeginRawErasing(b: Boolean, point: TouchPoint?) {}
         override fun onRawErasingTouchPointMoveReceived(point: TouchPoint?) {}
         override fun onEndRawErasing(b: Boolean, point: TouchPoint?) {}
@@ -325,6 +364,10 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
      * rest MOVE; a single-point tap emits DOWN then UP so it still finalizes.
      */
     private fun ingestStroke(points: List<TouchPoint>) {
+        // Only the Pen persists firmware strokes. Releasing raw drawing for other tools normally
+        // stops these callbacks outright, but guard here too — a stroke that began as Pen and whose
+        // tool flipped mid-gesture must not land as ink.
+        if (activeTool !is Tool.Pen) return
         if (points.isEmpty()) return
         val samples = points.mapNotNull { sampleOf(it) }
         if (samples.isEmpty()) return
@@ -384,7 +427,10 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
                 blitFullCanvas(surface, bmp)
                 EpdController.refreshScreenRegion(surface, 0, canvasTopOffset, w, h, mode)
                 Thread.sleep(settleMs)
-                th.isRawDrawingRenderEnabled = true
+                // Restore render to the state the ACTIVE TOOL wants — NOT unconditionally true. A
+                // blanket true re-lit the firmware ink passthrough under non-pen tools (the Text
+                // stray-ink bug). Pen → on; lasso/erase/text → stays off.
+                th.isRawDrawingRenderEnabled = renderEnabledForActiveTool()
             } catch (t: Throwable) {
                 Log.w(TAG, "reconcileRepaint failed", t)
             }
@@ -421,7 +467,10 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
 
     override fun onResumeReacquire() {
         try {
-            touchHelper?.setRawDrawingEnabled(true)
+            // Re-grab the firmware path only if Pen is active; resuming on a non-pen tool keeps the
+            // stylus on normal dispatch (matching [setActiveTool]). Both switches track the tool.
+            touchHelper?.setRawDrawingEnabled(activeTool is Tool.Pen)
+            touchHelper?.isRawDrawingRenderEnabled = renderEnabledForActiveTool()
         } catch (t: Throwable) {
             Log.w(TAG, "onResumeReacquire failed", t)
         }

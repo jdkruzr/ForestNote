@@ -632,6 +632,12 @@ class DrawView @JvmOverloads constructor(
     }
 
     private fun handleStylus(event: MotionEvent): Boolean {
+        // On an input-owning backend (Boox/Onyx) the firmware is the SOLE Pen path: it renders the
+        // live ink and feeds the stroke into the same sink for persistence. This MotionEvent is a
+        // duplicate copy of that stylus motion, so swallow it — otherwise the pen draws/persists
+        // twice. Non-pen tools fall through: for them the backend releases raw drawing, so these
+        // handlers are the real (and only) input path. No-op gate on Viwoods/Generic.
+        if (backend?.ownsInput() == true && activeTool is Tool.Pen) return true
         return when (activeTool) {
             is Tool.Pen -> handleDraw(event)
             is Tool.StrokeEraser, is Tool.PixelEraser -> handleErase(event)

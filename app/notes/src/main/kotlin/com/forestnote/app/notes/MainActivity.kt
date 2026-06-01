@@ -406,6 +406,10 @@ class MainActivity : Activity() {
             // dropped just because they tapped a tool cell.
             textBoxEditOverlay.commitIfShowing()
             drawView.activeTool = tool
+            // Tell an input-owning backend (Boox) the tool so it routes the stylus: firmware owns Pen,
+            // normal MotionEvent dispatch owns lasso/erase/text. Must precede the reconcile below so
+            // the panel repaints in the new tool's render state. No-op on Viwoods/Generic.
+            backend.setActiveTool(tool)
             // Input-owning backends (Boox): while firmware raw-render is enabled it globally suppresses
             // normal EPD UI posting, so the toolbar's new selected-state redraw never reaches the panel.
             // A panel reconcile (the firmware-render off→on toggle) blinks the layer and repaints the

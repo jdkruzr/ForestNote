@@ -118,6 +118,15 @@ interface InkBackend {
     fun updatePen(penParams: PenParams) {}
 
     /**
+     * Tell an input-owning backend which [tool] is now active so it can route the stylus. The firmware
+     * owns the stylus ONLY for [Tool.Pen] (its whole reason to exist is low-latency live ink); for
+     * lasso/erase/text the backend hands the pen back to ordinary Android dispatch so those tools'
+     * existing MotionEvent handlers — and the normal panel-refresh pipeline — drive them. No-op on
+     * Viwoods/Generic, which never owned the stylus.
+     */
+    fun setActiveTool(tool: Tool) {}
+
+    /**
      * Re-acquire the device ink resource on resume (replaces the old `as ViwoodsBackend` cast).
      * Viwoods re-acquires its WritingBufferQueue; Boox re-enables raw drawing.
      */
