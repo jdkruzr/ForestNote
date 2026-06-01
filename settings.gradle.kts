@@ -16,6 +16,16 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Onyx/Boox Pen SDK (onyxsdk-pen/-device/-base) for the BooxInkBackend. Onyx publishes
+        // only over cleartext HTTP, hence isAllowInsecureProtocol; scoped to the boox.com host.
+        maven {
+            url = uri("http://repo.boox.com/repository/maven-public/")
+            isAllowInsecureProtocol = true
+        }
+        maven {
+            url = uri("http://repo.boox.com/repository/proxy-public/")
+            isAllowInsecureProtocol = true
+        }
     }
 }
 

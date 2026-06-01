@@ -3,6 +3,7 @@ package com.forestnote.core.ink
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.view.View
 
 /**
  * Rendering backend contract. Implementations handle the device-specific
@@ -85,4 +86,50 @@ interface InkBackend {
 
     /** Release all resources. Called when the backend is no longer needed. */
     fun release()
+
+    // ===== Input-owning backends (Boox/Onyx) — all defaulted no-ops =====
+    // These exist so a backend that returns true from [ownsInput] can take over the stylus
+    // ingest + display-reconcile path. Viwoods/Generic inherit the no-op bodies, so adding
+    // them is a pure interface bump with zero behavior change for the existing backends.
+
+    /**
+     * Bind the firmware raw-input source to [host] (a sibling SurfaceView) and feed every
+     * stylus point into [sink] — the same [StrokeSink] the MotionEvent path drives, so stroke
+     * accumulation/render/persistence is shared. [toolbarExcludeRects] are regions (e.g. a
+     * toolbar over the canvas) where the pen must NOT draw so its taps reach normal UI.
+     */
+    fun attachInput(host: View, sink: StrokeSink, toolbarExcludeRects: List<Rect>) {}
+
+    /** Tear down the raw-input binding established by [attachInput]. */
+    fun detachInput() {}
+
+    /**
+     * Temporarily suspend ([suspended] = true) / resume input ownership while over-canvas UI is
+     * shown (a settings popup, menu, dialog). On Boox this releases the firmware's grip on the
+     * capacitive digitizer so the UI renders and receives touches normally; resuming re-enables raw
+     * drawing. No-op on Viwoods/Generic (they don't own input). Mirrors notable's suspend-on-menu.
+     */
+    fun setInputSuspended(suspended: Boolean) {}
+
+    /** Provide the active [PageTransform] so the backend can map firmware view-px → virtual. */
+    fun setTransform(transform: PageTransform) {}
+
+    /** Update the firmware live-ink style (colour/width) from the active pen params. */
+    fun updatePen(penParams: PenParams) {}
+
+    /**
+     * Re-acquire the device ink resource on resume (replaces the old `as ViwoodsBackend` cast).
+     * Viwoods re-acquires its WritingBufferQueue; Boox re-enables raw drawing.
+     */
+    fun onResumeReacquire() {}
+
+    /**
+     * Composite [bitmap] (the app's offscreen page) onto the panel for an input-owning backend,
+     * whose live ink is firmware-drawn and so must be reconciled from the app bitmap after any
+     * non-append change (erase, page switch, load/restore). [viewLocation] is the host view's
+     * on-screen offset; [dirtyRect] is an optional hint (Boox currently always repaints the full
+     * canvas — suspending firmware render wipes its ink layer globally, so a partial blit can't
+     * reconcile). No-op on Viwoods/Generic, which push to the panel through their own paths.
+     */
+    fun reconcileRepaint(bitmap: Bitmap, viewLocation: IntArray, dirtyRect: Rect?) {}
 }

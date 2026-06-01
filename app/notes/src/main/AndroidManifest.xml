@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- UltraBridge sync (Phase 4/5) talks to the server over HTTPS. -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -11,7 +12,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="ForestNote"
         android:supportsRtl="true"
-        android:theme="@style/Theme.ForestNote">
+        android:theme="@style/Theme.ForestNote"
+        tools:replace="android:allowBackup,android:label"><!-- onyxsdk-pen's AAR manifest declares its own allowBackup/label; keep ours -->
 
         <!-- singleTask keeps a single MainActivity instance: a forestnote:// deep link
              routes into the already-running app via onNewIntent rather than spawning a

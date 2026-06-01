@@ -4,7 +4,9 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Rect
 import android.os.Bundle
+import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
@@ -22,9 +24,9 @@ import com.forestnote.core.format.StartView
 import com.forestnote.core.ink.BackendDetector
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
+import com.forestnote.core.ink.PenParams
 import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.Tool
-import com.forestnote.core.ink.ViwoodsBackend
 import com.forestnote.core.ink.ZBand
 import com.forestnote.core.sync.SyncStatus
 import com.forestnote.app.notes.caldav.CalDavOutboxDrainer
@@ -245,6 +247,49 @@ class MainActivity : Activity() {
             }
         }
 
+        // Input-owning backend (Boox/Onyx): the firmware sources stylus input via TouchHelper and
+        // renders live ink itself, so we host a sibling SurfaceView over the canvas for it to bind
+        // to and to reconcile the page bitmap onto. DrawView stays the bitmap/model owner and goes
+        // input-inert for the stylus, driving the SAME StrokeSink from the firmware callback. The
+        // surface spans only the canvas (inside canvas_container, below the navbar), so the pen can
+        // still tap toolbar cells through normal dispatch — no exclude rect needed. No-op on
+        // Viwoods/Generic (ownsInput() == false).
+        if (backend.ownsInput()) {
+            // CANVAS-ONLY surface topology (Onyx). The firmware owns panel refresh only WITHIN the
+            // SurfaceView bound to TouchHelper, so we bind it to a surface covering ONLY the canvas
+            // (added behind DrawView inside canvas_container, which already sits below the navbar). The
+            // navbar is a sibling view OUTSIDE the firmware-owned region, so it refreshes through the
+            // normal e-ink pipeline — no exclude rect, no global render-suspend, no flash on toolbar
+            // taps. This is the standard Onyx sub-region-drawing pattern.
+            //
+            // (History: we briefly went full-screen-surface + navbar-exclude on a "firmware captures
+            // the digitizer globally" theory. On-device instrumentation 2026-05-31 DISPROVED it — taps
+            // always reach the toolbar buttons; the real failure was display refresh: a full-screen
+            // firmware surface owns the WHOLE panel, so the navbar couldn't repaint without a global
+            // freeze-toggle. Binding only the canvas fixes that at the root. See memory
+            // boox-toolbar-coexistence.)
+            val canvasContainer = findViewById<FrameLayout>(R.id.canvas_container)
+            // DrawView goes transparent so the surface behind it (showing the reconciled page bitmap)
+            // is visible; the navbar keeps its own opaque @color/white and is untouched.
+            drawView.setBackgroundColor(Color.TRANSPARENT)
+            val onyxSurface = SurfaceView(this)
+            canvasContainer.addView(
+                onyxSurface,
+                0, // behind DrawView
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            backend.setTransform(pageTransform)
+            backend.updatePen(PenParams.of(drawView.activePenVariant, drawView.activePenWidthLevel))
+            // No exclude rect: the navbar is outside the surface entirely, so the firmware can neither
+            // draw ink there nor own its refresh. The surface is co-extensive with DrawView (both fill
+            // canvas_container), so firmware surface-local coords == DrawView-local coords and the page
+            // offset collapses to 0 (the backend derives canvasTopOffset from the empty exclude list).
+            backend.attachInput(onyxSurface, drawView.inputStrokeSink(), emptyList())
+        }
+
         // Wire the page navigation bar (prev / indicator / next).
         pageIndicator = findViewById(R.id.page_indicator)
         val btnPrev: ImageButton = findViewById(R.id.btn_prev_page)
@@ -352,21 +397,38 @@ class MainActivity : Activity() {
         }
 
         // Create and wire ToolBar
-        toolBar = ToolBar(toolBarRoot, isEInk) { tool ->
+        // settingsPopupsEnabled = false on an input-owning backend (Boox/Onyx): the legacy View
+        // PopupWindow never dismisses there (its outside-touch dismiss needs an Android touch the
+        // firmware swallows; opening it also re-enables raw drawing via surfaceChanged), so it lingers
+        // invisibly eating every tap. A Boox-friendly chooser (full-screen modal) is a Phase-3 item.
+        toolBar = ToolBar(toolBarRoot, isEInk, settingsPopupsEnabled = !backend.ownsInput()) { tool ->
             // Switching tools commits any in-flight overlay edit first — the user's typing isn't
             // dropped just because they tapped a tool cell.
             textBoxEditOverlay.commitIfShowing()
             drawView.activeTool = tool
+            // Input-owning backends (Boox): while firmware raw-render is enabled it globally suppresses
+            // normal EPD UI posting, so the toolbar's new selected-state redraw never reaches the panel.
+            // A panel reconcile (the firmware-render off→on toggle) blinks the layer and repaints the
+            // whole panel incl. the navbar — the only mechanism that works (it's what notable does too).
+            // No-op on Viwoods/Generic.
+            if (backend.ownsInput()) drawView.refreshPanelForUi()
         }
+        // Infra kept for Phase-3 over-canvas UI (dialogs/chooser): suspend raw drawing while shown so
+        // it renders + takes touches (the notable approach). No popups open on Boox today, so this is
+        // dormant there; no-op on Viwoods/Generic.
+        toolBar.onPopupVisibilityChanged = { open -> backend.setInputSuspended(open) }
         // Propagate pen-variant choice to the canvas (affects width/colour/compositing).
         // Switching variant brings that variant's remembered width level forward (A10).
         toolBar.setOnPenVariantSelected { variant ->
             drawView.activePenVariant = variant
             drawView.activePenWidthLevel = toolBar.activePenWidthLevel()
+            // Keep an input-owning backend's firmware live-ink style in sync (no-op elsewhere).
+            backend.updatePen(PenParams.of(variant, drawView.activePenWidthLevel))
         }
         // Pen width choice (A10): apply to the canvas and persist the per-variant map.
         toolBar.setOnPenWidthSelected { level ->
             drawView.activePenWidthLevel = level
+            backend.updatePen(PenParams.of(drawView.activePenVariant, level))
             store.updateSettings({ it.copy(penWidthLevels = PenWidthSettings.encode(toolBar.currentPenWidthLevels())) })
         }
 
@@ -1509,7 +1571,12 @@ class MainActivity : Activity() {
         super.onWindowFocusChanged(hasFocus)
         val regained = hasFocus && !wasFocused
         wasFocused = hasFocus
-        if (!regained || !isEInk) return
+        // On an input-owning backend (Boox/Onyx) this gcRefresh is actively harmful: gcRefresh runs a
+        // full reconcile (a ~360 ms firmware freeze that darkens the panel and eats the next tap), and
+        // `regained` flips every time one of OUR OWN popups/dialogs closes — so simple interactions
+        // turn into "darken + have to tap twice." Boox reconciles at real content changes instead; the
+        // Viwoods-era return-from-system-overlay ghosting cleanup isn't needed here.
+        if (!regained || !isEInk || backend.ownsInput()) return
         // [[viwoods-writing-overlay]]: gcRefresh composites ABOVE the View pipeline, so only run it
         // when the editor is the topmost View — bail if any of our overlays / dialogs / inline edit
         // are up. Stray AlertDialogs are covered implicitly: an open AlertDialog holds window focus
@@ -1522,9 +1589,10 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (isEInk) {
-            // Re-acquire the WritingBufferQueue
-            val viwoodsBackend = backend as ViwoodsBackend
-            viwoodsBackend.reacquire()
+            // Re-acquire the device ink resource (Viwoods: WritingBufferQueue; Boox: raw drawing).
+            // onResumeReacquire is on the InkBackend interface now, retiring the old
+            // `backend as ViwoodsBackend` cast that would have crashed on the Boox backend.
+            backend.onResumeReacquire()
             drawView.resetBitmap()
         }
         // Enable+join on first run, or sync + restart the timer (no-op if sync is unconfigured).

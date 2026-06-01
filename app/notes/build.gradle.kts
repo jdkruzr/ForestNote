@@ -7,12 +7,27 @@ android {
 
     defaultConfig {
         applicationId = "com.forestnote"
+
+        // The Onyx Pen SDK (pulled in transitively via :core:ink) ships native libs for every ABI,
+        // inflating the APK to ~66 MB. Every target e-ink tablet (Boox + Viwoods) is arm64 — restrict
+        // to arm64-v8a to keep the APK lean. Widen here if a non-arm64 target ever appears.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     testOptions {
         // JVM unit tests touch android.util.Log (e.g. NotebookStore's drain-timeout
         // warning). Return defaults instead of throwing "not mocked".
         unitTests.isReturnDefaultValues = true
+    }
+
+    // Three Onyx native artifacts (onyxsdk-pen, onyxsdk-pennative, mmkv) each bundle their own
+    // libc++_shared.so — take the first and move on (matches the proven `notable` packaging).
+    packaging {
+        jniLibs {
+            pickFirsts += "**/libc++_shared.so"
+        }
     }
 }
 

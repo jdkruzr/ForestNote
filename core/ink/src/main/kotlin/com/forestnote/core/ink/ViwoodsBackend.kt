@@ -80,6 +80,12 @@ class ViwoodsBackend : InkBackend {
     }
 
     /**
+     * Interface hook called on resume — delegates to [reacquire]. Replaces the old
+     * `backend as ViwoodsBackend` cast in MainActivity.onResume (the off-interface gotcha).
+     */
+    override fun onResumeReacquire() = reacquire()
+
+    /**
      * Re-acquire the WritingBufferQueue after it was released (e.g., onResume).
      * Must be called after release() to restore fast ink.
      */

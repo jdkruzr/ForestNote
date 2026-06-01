@@ -27,8 +27,18 @@ import com.forestnote.core.ink.Tool
 class ToolBar(
     private val root: View,
     private val isEInk: Boolean,
+    private val settingsPopupsEnabled: Boolean = true,
     private val onToolSelected: (Tool) -> Unit
 ) {
+    /**
+     * Fired when a settings PopupWindow opens (true) / dismisses (false). On an input-owning
+     * backend (Boox/Onyx) the host wires this to suspend raw drawing while the popup is up — the
+     * firmware otherwise captures the capacitive grid, so an `isOutsideTouchable` PopupWindow never
+     * gets its dismiss touch and, unrendered in SCRIBBLE mode, sits invisibly eating taps. Suspending
+     * raw drawing releases the grid so the popup renders + takes touches normally (the `notable`
+     * approach). No-op default → Viwoods/Generic behave exactly as before.
+     */
+    var onPopupVisibilityChanged: ((Boolean) -> Unit)? = null
     private var activeClearCallback: (() -> Unit)? = null
     private var penVariantCallback: ((PenVariant) -> Unit)? = null
     private var penWidthCallback: ((PenWidthLevel) -> Unit)? = null
@@ -76,6 +86,18 @@ class ToolBar(
     private var openPopup: PopupWindow? = null
 
     /**
+     * Show [popup] under [anchor] as the tracked open popup, bracketing it with
+     * [onPopupVisibilityChanged] so an input-owning host can suspend raw drawing while it's up
+     * (see [onPopupVisibilityChanged] — the firmware otherwise leaves it invisible + untouchable).
+     */
+    private fun showTrackedPopup(popup: PopupWindow, anchor: View) {
+        openPopup = popup
+        onPopupVisibilityChanged?.invoke(true)
+        popup.setOnDismissListener { onPopupVisibilityChanged?.invoke(false) }
+        popup.showAsDropDown(anchor)
+    }
+
+    /**
      * Programmatic tool selection (e.g. lasso-recognize Insert hands the user into
      * the Text tool so the new text box's selection/handles/pill work). Goes through
      * the same `ToolSelectionLogic` path as a tap, so the `onToolSelected` callback
@@ -103,7 +125,7 @@ class ToolBar(
         btnFountain.setOnClickListener {
             val wasActive = isCellActive(btnFountain, logic.getActiveTool())
             logic.selectPenGroup()
-            if (wasActive) showPenSettingsPopup(btnFountain)
+            if (wasActive && settingsPopupsEnabled) showPenSettingsPopup(btnFountain)
         }
         // Lasso is a single top-level tool (no variant dropdown).
         btnLasso.setOnClickListener { logic.selectTool(Tool.Lasso) }
@@ -111,12 +133,12 @@ class ToolBar(
         btnText.setOnClickListener {
             val wasActive = isCellActive(btnText, logic.getActiveTool())
             logic.selectTool(Tool.Text)
-            if (wasActive) showTextSettingsPopup(btnText)
+            if (wasActive && settingsPopupsEnabled) showTextSettingsPopup(btnText)
         }
         btnErase.setOnClickListener {
             val wasActive = isCellActive(btnErase, logic.getActiveTool())
             logic.selectEraseGroup()
-            if (wasActive) showEraseVariantDropdown(btnErase)
+            if (wasActive && settingsPopupsEnabled) showEraseVariantDropdown(btnErase)
         }
         btnClear.setOnClickListener { logic.triggerClear() }
         // Paste is an action cell, gated on a non-empty clipboard (greyed when empty).
@@ -359,8 +381,7 @@ class ToolBar(
         }
         populate()
 
-        openPopup = popup
-        popup.showAsDropDown(anchor)
+        showTrackedPopup(popup, anchor)
     }
 
     /**
@@ -475,8 +496,7 @@ class ToolBar(
             container.addView(row)
         }
 
-        openPopup = popup
-        popup.showAsDropDown(anchor)
+        showTrackedPopup(popup, anchor)
     }
 
     /**
@@ -555,8 +575,7 @@ class ToolBar(
         }
         populate()
 
-        openPopup = popup
-        popup.showAsDropDown(anchor)
+        showTrackedPopup(popup, anchor)
     }
 
     /**

@@ -414,11 +414,43 @@ class DrawView @JvmOverloads constructor(
         ensureBitmap()
         // Re-lay the full static composite for the new scale (template even with no ink).
         composeStaticBitmap()
+        reconcileIfOwned()
     }
 
     fun setBackend(backend: InkBackend) {
         this.backend = backend
     }
+
+    /**
+     * The pen-ingest sink, exposed so an input-owning backend (Boox/Onyx) can drive the exact
+     * same stroke accumulation → bitmap render → persistence path from its firmware raw-input
+     * callback. The MotionEvent path uses the concrete inner [strokeSink] directly (for [flush]).
+     */
+    fun inputStrokeSink(): StrokeSink = strokeSink
+
+    /**
+     * Push the current offscreen bitmap to an input-owning backend's panel. On Boox the live ink
+     * is firmware-drawn, so after any non-append change (erase, page switch, load/restore) the
+     * firmware layer must be reconciled from our bitmap. No-op on Viwoods/Generic — their
+     * [InkBackend.reconcileRepaint] default does nothing — so calling this is behavior-neutral
+     * for the existing backends (they push to the panel through pushBackgroundBitmap/resetOverlay).
+     */
+    private fun reconcileIfOwned() {
+        val bmp = writingBitmap ?: return
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        backend?.reconcileRepaint(bmp, loc, null)
+    }
+
+    /**
+     * Force a panel reconcile from the CURRENT bitmap — used to make over-canvas UI changes visible
+     * on an input-owning backend (Boox). While firmware raw-render is enabled it globally suppresses
+     * normal EPD UI posting, so a toolbar/selection change reaches the framebuffer but never the
+     * panel; the reconcile's `isRawDrawingRenderEnabled` off→on toggle blinks the firmware layer and
+     * repaints the whole panel (toolbar + lasso overlay + canvas) — sourced from the live bitmap so
+     * firmware strokes aren't wiped. No-op on Viwoods/Generic (reconcileRepaint is a no-op there).
+     */
+    fun refreshPanelForUi() = reconcileIfOwned()
 
     fun setStore(store: NotebookStore) {
         this.store = store
@@ -453,6 +485,7 @@ class DrawView @JvmOverloads constructor(
         ensureBitmap()
         composeStaticBitmap()
         invalidate()
+        reconcileIfOwned()
     }
 
     /**
@@ -471,6 +504,7 @@ class DrawView @JvmOverloads constructor(
         ensureBitmap()
         composeStaticBitmap()
         invalidate()
+        reconcileIfOwned()
     }
 
     /**
@@ -509,6 +543,7 @@ class DrawView @JvmOverloads constructor(
         }
         bitmapProvided = true
         invalidate()
+        reconcileIfOwned()
     }
 
     /**
@@ -538,6 +573,7 @@ class DrawView @JvmOverloads constructor(
         backend?.setDisplayMode(DisplayMode.FAST)
         bitmapProvided = true
         invalidate()
+        reconcileIfOwned()
     }
 
     // ========== Bitmap Management ==========
@@ -1511,6 +1547,7 @@ class DrawView @JvmOverloads constructor(
         }
         bitmapProvided = true  // we just re-provided it
         invalidate()
+        reconcileIfOwned()
     }
 
     // ========== Standard Canvas Rendering ==========
@@ -1526,8 +1563,14 @@ class DrawView @JvmOverloads constructor(
      */
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        // Blit the offscreen bitmap containing all accumulated strokes
-        writingBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
+        // Blit the offscreen bitmap containing all accumulated strokes — UNLESS an input-owning
+        // backend (Boox/Onyx) is the sole display surface for the page. There, the firmware draws
+        // live ink and the backend reconciles the page bitmap onto its own SurfaceView; blitting
+        // here too would double-render the page (a ~window-inset-shifted ghost copy). Overlays
+        // below (lasso/text selection) still draw — they're not in the reconciled bitmap.
+        if (backend?.ownsInput() != true) {
+            writingBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
+        }
 
         // Lasso overlay (A6): selection highlight + dashed polygon, in screen coords.
         if (activeTool is Tool.Lasso) {
