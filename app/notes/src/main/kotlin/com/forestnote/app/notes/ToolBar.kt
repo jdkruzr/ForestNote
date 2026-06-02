@@ -28,6 +28,7 @@ class ToolBar(
     private val root: View,
     private val isEInk: Boolean,
     private val settingsPopupsEnabled: Boolean = true,
+    private val firmwareOwnsInput: Boolean = false,
     private val onToolSelected: (Tool) -> Unit
 ) {
     /**
@@ -39,6 +40,19 @@ class ToolBar(
      * approach). No-op default → Viwoods/Generic behave exactly as before.
      */
     var onPopupVisibilityChanged: ((Boolean) -> Unit)? = null
+
+    /**
+     * Fired for a popup shown in firmware-coexist mode (the pen settings popup on an input-owning
+     * backend): the popup's on-screen bounds when it opens, null when it dismisses. The host carves
+     * that rect out of firmware capture so the popup's buttons work while the firmware stays live —
+     * which is what lets the popup dismiss the instant the user starts drawing (draw-to-dismiss).
+     */
+    var onCoexistPopupBounds: ((android.graphics.Rect?) -> Unit)? = null
+
+    /** Dismiss the currently-open settings popup, if any (the host calls this on firmware pen-down). */
+    fun dismissActivePopup() {
+        openPopup?.dismiss()
+    }
     private var activeClearCallback: (() -> Unit)? = null
     private var penVariantCallback: ((PenVariant) -> Unit)? = null
     private var penWidthCallback: ((PenWidthLevel) -> Unit)? = null
@@ -90,11 +104,35 @@ class ToolBar(
      * [onPopupVisibilityChanged] so an input-owning host can suspend raw drawing while it's up
      * (see [onPopupVisibilityChanged] — the firmware otherwise leaves it invisible + untouchable).
      */
-    private fun showTrackedPopup(popup: PopupWindow, anchor: View) {
+    private fun showTrackedPopup(popup: PopupWindow, anchor: View, coexist: Boolean = false) {
         openPopup = popup
-        onPopupVisibilityChanged?.invoke(true)
-        popup.setOnDismissListener { onPopupVisibilityChanged?.invoke(false) }
-        popup.showAsDropDown(anchor)
+        if (coexist) {
+            // Firmware-coexist mode (pen popup on an input-owning backend): DON'T suspend the firmware
+            // — keep it live so the user can draw to dismiss. Instead, hand the host the popup's bounds
+            // to exclude from firmware capture, and report null on dismiss so it clears the exclude +
+            // the firmware reverts to full-canvas capture.
+            popup.setOnDismissListener {
+                openPopup = null
+                onCoexistPopupBounds?.invoke(null)
+            }
+            popup.showAsDropDown(anchor)
+            // Bounds are only known after layout — post and read the content view's screen rect.
+            popup.contentView.post {
+                val loc = IntArray(2)
+                popup.contentView.getLocationOnScreen(loc)
+                onCoexistPopupBounds?.invoke(
+                    android.graphics.Rect(
+                        loc[0], loc[1],
+                        loc[0] + popup.contentView.width,
+                        loc[1] + popup.contentView.height,
+                    )
+                )
+            }
+        } else {
+            onPopupVisibilityChanged?.invoke(true)
+            popup.setOnDismissListener { onPopupVisibilityChanged?.invoke(false) }
+            popup.showAsDropDown(anchor)
+        }
     }
 
     /**
@@ -521,7 +559,10 @@ class ToolBar(
             container,
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
-            true // focusable: tap-outside dismisses
+            // Non-focusable in firmware-coexist mode: a focusable popup steals window focus and the
+            // firmware then can't deliver the pen-down we rely on to draw-to-dismiss. Non-focusable
+            // still receives taps on its own buttons (which sit in the host's firmware-exclude rect).
+            !firmwareOwnsInput // focusable: tap-outside dismisses (suspend-mode popups)
         )
         popup.isOutsideTouchable = true
         if (isEInk) popup.elevation = 0f
@@ -575,7 +616,9 @@ class ToolBar(
         }
         populate()
 
-        showTrackedPopup(popup, anchor)
+        // On an input-owning backend the pen popup coexists with live firmware (draw-to-dismiss);
+        // elsewhere it uses the suspend-mode path.
+        showTrackedPopup(popup, anchor, coexist = firmwareOwnsInput)
     }
 
     /**

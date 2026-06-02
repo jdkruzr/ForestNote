@@ -397,30 +397,43 @@ class MainActivity : Activity() {
         }
 
         // Create and wire ToolBar
-        // settingsPopupsEnabled = false on an input-owning backend (Boox/Onyx): the legacy View
-        // PopupWindow never dismisses there (its outside-touch dismiss needs an Android touch the
-        // firmware swallows; opening it also re-enables raw drawing via surfaceChanged), so it lingers
-        // invisibly eating every tap. A Boox-friendly chooser (full-screen modal) is a Phase-3 item.
-        toolBar = ToolBar(toolBarRoot, isEInk, settingsPopupsEnabled = !backend.ownsInput()) { tool ->
+        // settingsPopupsEnabled stays true even on an input-owning backend (Boox/Onyx): the chooser
+        // PopupWindows now work there because opening one suspends the firmware via
+        // onPopupVisibilityChanged → setInputSuspended, which (post the two-switch fix) drops BOTH the
+        // master capture AND the render passthrough — so the popup paints + takes touches through the
+        // normal pipeline and dismisses on outside-touch. (Was disabled when setInputSuspended only
+        // dropped the master, leaving render passthrough re-inking + holding the panel firmware-composited.)
+        toolBar = ToolBar(toolBarRoot, isEInk, settingsPopupsEnabled = true, firmwareOwnsInput = backend.ownsInput()) { tool ->
+            // A pen-VARIANT pick re-selects the already-active Pen tool (ToolSelectionLogic
+            // .selectPenVariant → selectTool(Pen)), so this fires even when nothing changed; gate the
+            // expensive Boox reconcile on an ACTUAL tool change so a variant pick from the open popup
+            // doesn't repaint the canvas underneath it.
+            val toolChanged = drawView.activeTool != tool
             // Switching tools commits any in-flight overlay edit first — the user's typing isn't
             // dropped just because they tapped a tool cell.
             textBoxEditOverlay.commitIfShowing()
             drawView.activeTool = tool
             // Tell an input-owning backend (Boox) the tool so it routes the stylus: firmware owns Pen,
-            // normal MotionEvent dispatch owns lasso/erase/text. Must precede the reconcile below so
-            // the panel repaints in the new tool's render state. No-op on Viwoods/Generic.
+            // normal MotionEvent dispatch owns lasso/erase/text. Idempotent + cheap; safe to call even
+            // when the tool didn't change. No-op on Viwoods/Generic.
             backend.setActiveTool(tool)
             // Input-owning backends (Boox): while firmware raw-render is enabled it globally suppresses
             // normal EPD UI posting, so the toolbar's new selected-state redraw never reaches the panel.
             // A panel reconcile (the firmware-render off→on toggle) blinks the layer and repaints the
             // whole panel incl. the navbar — the only mechanism that works (it's what notable does too).
-            // No-op on Viwoods/Generic.
-            if (backend.ownsInput()) drawView.refreshPanelForUi()
+            // Only needed on a real tool change. No-op on Viwoods/Generic.
+            if (backend.ownsInput() && toolChanged) drawView.refreshPanelForUi()
         }
         // Infra kept for Phase-3 over-canvas UI (dialogs/chooser): suspend raw drawing while shown so
         // it renders + takes touches (the notable approach). No popups open on Boox today, so this is
         // dormant there; no-op on Viwoods/Generic.
         toolBar.onPopupVisibilityChanged = { open -> backend.setInputSuspended(open) }
+        // Draw-to-dismiss for the pen settings popup on an input-owning backend (Boox): the popup
+        // coexists with live firmware — its bounds are excluded from firmware capture so its buttons
+        // work, and a firmware pen-down dismisses it so starting to draw closes the menu. Both
+        // no-op on Viwoods/Generic.
+        toolBar.onCoexistPopupBounds = { rect -> backend.setOverlayExcludeScreenRect(rect) }
+        backend.setOnFirmwarePenDown { toolBar.dismissActivePopup() }
         // Propagate pen-variant choice to the canvas (affects width/colour/compositing).
         // Switching variant brings that variant's remembered width level forward (A10).
         toolBar.setOnPenVariantSelected { variant ->

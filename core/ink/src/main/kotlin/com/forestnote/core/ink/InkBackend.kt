@@ -127,6 +127,22 @@ interface InkBackend {
     fun setActiveTool(tool: Tool) {}
 
     /**
+     * Carve [screenRect] (an over-canvas chooser/popup, in screen px) out of the firmware's capture
+     * area so taps on it reach the popup instead of being drawn as ink, WITHOUT suspending the
+     * firmware — letting the pen still draw (and fire [setOnFirmwarePenDown]) everywhere else. Pass
+     * null to clear. This is what makes a settings popup coexist with live firmware ink (the
+     * draw-to-dismiss model). No-op on Viwoods/Generic.
+     */
+    fun setOverlayExcludeScreenRect(screenRect: Rect?) {}
+
+    /**
+     * Register a [callback] invoked (on the UI thread) when the firmware reports a pen-down — used by
+     * the host to dismiss an open over-canvas popup the instant the user starts drawing. Pass null to
+     * clear. No-op on Viwoods/Generic.
+     */
+    fun setOnFirmwarePenDown(callback: (() -> Unit)?) {}
+
+    /**
      * Re-acquire the device ink resource on resume (replaces the old `as ViwoodsBackend` cast).
      * Viwoods re-acquires its WritingBufferQueue; Boox re-enables raw drawing.
      */

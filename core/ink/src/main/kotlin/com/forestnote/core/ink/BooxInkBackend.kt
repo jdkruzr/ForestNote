@@ -50,6 +50,26 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     private var excludeRects: List<Rect> = emptyList()
 
     /**
+     * A transient firmware exclude rect for an over-canvas popup (surface-local), set via
+     * [setOverlayExcludeScreenRect]. While present, the firmware doesn't capture taps inside it (so the
+     * popup's buttons work) but stays live everywhere else (so the pen still draws + the draw-to-dismiss
+     * pen-down still fires). @Volatile — written from the UI thread, read on the firmware thread.
+     */
+    @Volatile
+    private var overlayExcludeRect: Rect? = null
+
+    /** True between firmware pen-down and pen-up. Re-latching exclude rects mid-stroke doesn't take. */
+    @Volatile
+    private var strokeInProgress = false
+
+    /** Set when an exclude-rect change is deferred to stroke-end (cleared by the dismissing pen-down). */
+    @Volatile
+    private var excludeReapplyPending = false
+
+    /** Fired (on the UI thread) on firmware pen-down so the host can dismiss an open over-canvas popup. */
+    private var onPenDown: (() -> Unit)? = null
+
+    /**
      * The y-offset (px) between the full-screen capture surface's origin and the canvas/page
      * origin — i.e. the navbar+divider strip height. The surface spans the whole window so the
      * navbar can be excluded as a robust IN-BOUNDS positive top strip (the notable pattern), but
@@ -69,6 +89,10 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
      */
     @Volatile
     private var activeTool: Tool = Tool.Pen
+
+    /** True while an over-canvas popup/menu/dialog is suspending firmware input ([setInputSuspended]). */
+    @Volatile
+    private var inputSuspended = false
 
     /** Device max stylus pressure — varies per unit (4095 vs 4096), so always queried, never hardcoded. */
     private var maxPressure = 4095f
@@ -158,33 +182,102 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         applyPen()
     }
 
-    override fun setActiveTool(tool: Tool) {
-        activeTool = tool
-        // Firmware owns the stylus ONLY for Pen. For lasso/erase/text we release raw drawing — the
-        // SAME master switch the popup-suspend uses (setInputSuspended) — which (a) stops the
-        // firmware drawing any ink and delivering raw callbacks (so no phantom pen strokes get
-        // persisted), and (b) hands the stylus back to ordinary Android dispatch, so DrawView's
-        // existing MotionEvent handlers run and the panel refreshes through the normal EPD pipeline
-        // (enablePost). Switching back to Pen re-grabs the firmware path. Defensive: a toggle
-        // failure logs and leaves the previous state rather than crashing.
-        try {
-            val isPen = tool is Tool.Pen
-            // TWO independent firmware switches, both must follow the tool:
-            //  - setRawDrawingEnabled = the master (capture + callbacks). Off for non-pen so the
-            //    stylus reverts to ordinary MotionEvents and no phantom strokes are ingested.
-            //  - isRawDrawingRenderEnabled = the firmware's direct-to-panel ink passthrough. It is
-            //    INDEPENDENT of the master (on-device proof: with the master off, render=true still
-            //    drew live ink under the Text tool while no raw callback fired). Pin it off for
-            //    non-pen tools or the firmware paints stray ink the app never asked for.
-            touchHelper?.setRawDrawingEnabled(isPen)
-            touchHelper?.isRawDrawingRenderEnabled = isPen
-        } catch (t: Throwable) {
-            Log.w(TAG, "setActiveTool($tool) raw-drawing toggle failed", t)
+    override fun setOnFirmwarePenDown(callback: (() -> Unit)?) {
+        onPenDown = callback
+    }
+
+    override fun setOverlayExcludeScreenRect(screenRect: Rect?) {
+        val surface = surfaceView
+        overlayExcludeRect = if (screenRect == null || surface == null) {
+            null
+        } else {
+            // screen px → surface-local, clamped to the surface bounds (the popup hangs down from the
+            // navbar, so its top can sit above the surface origin → clamp to 0).
+            val sloc = IntArray(2)
+            surface.getLocationOnScreen(sloc)
+            Rect(
+                (screenRect.left - sloc[0]).coerceAtLeast(0),
+                (screenRect.top - sloc[1]).coerceAtLeast(0),
+                (screenRect.right - sloc[0]).coerceAtMost(surface.width),
+                (screenRect.bottom - sloc[1]).coerceAtMost(surface.height),
+            ).takeIf { it.width() > 0 && it.height() > 0 }
+        }
+        // Clearing the rect (popup dismissed) is usually triggered BY the dismissing pen-down, i.e.
+        // mid-stroke — and a re-latch while the firmware stroke is live doesn't take (the popup's old
+        // region stays a dead zone). Defer the re-apply to stroke-end in that case; apply immediately
+        // when there's no stroke in flight (popup set, or dismissed via a tool switch).
+        if (overlayExcludeRect == null && strokeInProgress) {
+            excludeReapplyPending = true
+        } else {
+            reapplyExcludeRects()
         }
     }
 
-    /** The firmware render passthrough should be live only while Pen is the active tool. */
-    private fun renderEnabledForActiveTool(): Boolean = activeTool is Tool.Pen
+    /**
+     * The firmware exclude set = the static toolbar rects plus any transient popup [overlayExcludeRect].
+     * NEVER empty: on-device, `setExcludeRect(emptyList)` is a NO-OP (the SDK applies a non-empty list
+     * but ignores an empty one), so a previously-excluded popup rect would stay excluded forever — a
+     * permanent dead zone. When there's nothing real to exclude we pass a 1px throwaway rect so the
+     * non-empty list actually replaces the stale one. A single dead pixel at the origin is invisible.
+     */
+    private fun currentExcludeRects(): MutableList<Rect> {
+        val rects = (excludeRects + listOfNotNull(overlayExcludeRect)).toMutableList()
+        if (rects.isEmpty()) rects.add(NO_OP_EXCLUDE)
+        return rects
+    }
+
+    /**
+     * Re-push the firmware limit + exclude rects (needed after [overlayExcludeRect] changes). Applying
+     * exclude rects requires toggling raw drawing off first (the SDK latches them at enable); then
+     * [applyFirmwareEnableState] restores the firmware to the active tool's state (live for Pen).
+     */
+    private fun reapplyExcludeRects() {
+        val surface = surfaceView ?: return
+        val th = touchHelper ?: return
+        try {
+            val limit = Rect(0, canvasTopOffset, surface.width, surface.height)
+            th.setRawDrawingEnabled(false)
+            th.setLimitRect(mutableListOf(limit)).setExcludeRect(currentExcludeRects())
+            applyFirmwareEnableState()
+        } catch (t: Throwable) {
+            Log.w(TAG, "reapplyExcludeRects failed", t)
+        }
+    }
+
+    override fun setActiveTool(tool: Tool) {
+        activeTool = tool
+        // Firmware is live (capture + render) ONLY for Pen; every other tool hands the stylus back to
+        // ordinary Android dispatch so DrawView's existing handlers run and the panel refreshes
+        // through the normal pipeline. See [applyFirmwareEnableState].
+        applyFirmwareEnableState()
+    }
+
+    /**
+     * The firmware ink engine is live only when Pen is the active tool AND no over-canvas UI is
+     * suspending input. The SDK exposes this as TWO independent switches — the master capture
+     * ([TouchHelper.setRawDrawingEnabled]) and the direct-to-panel render passthrough
+     * ([TouchHelper.isRawDrawingRenderEnabled]); on-device proof shows they really are independent
+     * (master off + render on still draws live ink), so BOTH must be driven. Our policy keeps them in
+     * lockstep on this single condition.
+     */
+    private fun firmwareShouldBeLive(): Boolean = !inputSuspended && activeTool is Tool.Pen
+
+    /**
+     * Re-assert both firmware switches to [firmwareShouldBeLive] — the SINGLE source of truth for the
+     * firmware enable state. Call after ANY change that could perturb it (tool switch, suspend/resume,
+     * pen-style config, surface re-setup): some SDK setters (e.g. `setStroke*`) silently re-enable the
+     * engine, and without re-asserting they leave the firmware on under a popup or non-pen tool —
+     * exactly the "pen chooser re-grabs the stylus after the first pick" bug. Idempotent + defensive.
+     */
+    private fun applyFirmwareEnableState() {
+        val live = firmwareShouldBeLive()
+        try {
+            touchHelper?.setRawDrawingEnabled(live)
+            touchHelper?.isRawDrawingRenderEnabled = live
+        } catch (t: Throwable) {
+            Log.w(TAG, "applyFirmwareEnableState($live) failed", t)
+        }
+    }
 
     override fun attachInput(host: View, sink: StrokeSink, toolbarExcludeRects: List<Rect>) {
         val surface = host as? SurfaceView ?: run {
@@ -204,14 +297,11 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     }
 
     override fun setInputSuspended(suspended: Boolean) {
-        // Releasing raw drawing frees the capacitive grid so an over-canvas popup/menu renders and
-        // takes touches; re-enabling restores firmware ink. (Per Phase-0, disabling render wipes the
-        // firmware ink layer — fine here, the SurfaceView still shows the reconciled page bitmap.)
-        try {
-            touchHelper?.setRawDrawingEnabled(!suspended)
-        } catch (t: Throwable) {
-            Log.w(TAG, "setInputSuspended($suspended) failed", t)
-        }
+        // An over-canvas popup/menu needs the firmware fully out of the way to render + take touches.
+        // Record the state; [applyFirmwareEnableState] drops both switches while suspended and restores
+        // the active tool's state on dismiss.
+        inputSuspended = suspended
+        applyFirmwareEnableState()
     }
 
     override fun detachInput() {
@@ -254,7 +344,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             th.setRawDrawingEnabled(false)
             th.closeRawDrawing()
             th.setStrokeWidth(liveStrokeWidthPx())
-            th.setLimitRect(mutableListOf(limit)).setExcludeRect(excludeRects).openRawDrawing()
+            th.setLimitRect(mutableListOf(limit)).setExcludeRect(currentExcludeRects()).openRawDrawing()
             applyPen()
             // Do NOT pin SCHEME_SCRIBBLE + setEpdTurbo globally: the spike did, but with no UI to
             // refresh it never noticed that pinning the whole panel into firmware-scribble mode
@@ -271,6 +361,10 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             // in onSurfaceInit; it's the missing piece behind "the toolbar/overlay only updates on a
             // page change."
             EpdController.enablePost(1)
+            // openRawDrawing always left the engine ON; reconcile it to the actual tool/suspend state
+            // so a surface re-setup that fires while a non-pen tool or a popup is active doesn't
+            // silently re-grab the stylus.
+            applyFirmwareEnableState()
             val sloc = IntArray(2); surface.getLocationOnScreen(sloc)
             val swin = IntArray(2); surface.getLocationInWindow(swin)
             Log.i(TAG, "raw drawing enabled limit=$limit exclude=$excludeRects canvasTopOffset=$canvasTopOffset " +
@@ -292,7 +386,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         try {
             val limit = Rect(0, canvasTopOffset, surface.width, surface.height)
             th.setRawDrawingEnabled(false)
-            th.setLimitRect(mutableListOf(limit)).setExcludeRect(excludeRects)
+            th.setLimitRect(mutableListOf(limit)).setExcludeRect(currentExcludeRects())
             th.setRawDrawingEnabled(true)
         } catch (t: Throwable) {
             Log.w(TAG, "reassertExclude failed", t)
@@ -312,6 +406,10 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         } catch (t: Throwable) {
             Log.w(TAG, "applyPen failed", t)
         }
+        // The setStroke* calls above can silently re-enable the firmware engine, so re-assert the
+        // intended state — otherwise a pen-style change made from the open settings popup re-grabs the
+        // stylus and the popup can no longer be dismissed by an outside tap (it draws instead).
+        applyFirmwareEnableState()
     }
 
     // ===== Firmware raw-input → StrokeSink =====
@@ -325,6 +423,10 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         // stroke from the LIST (one UI-thread post), accumulating per-move only as a fallback for
         // firmware that drops the LIST. begin/move/end stay light so the firmware releases cleanly.
         override fun onBeginRawDrawing(b: Boolean, point: TouchPoint?) {
+            strokeInProgress = true
+            // Draw-to-dismiss: a firmware pen-down means the user started drawing, so close any open
+            // over-canvas popup. UI op → hop to the UI thread. Cheap no-op when nothing's open.
+            surfaceView?.post { onPenDown?.invoke() }
             pendingPoints.clear()
             listFired = false
             point?.let { pendingPoints.add(TouchPoint(it)) }
@@ -344,6 +446,13 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             if (!listFired) {
                 point?.let { pendingPoints.add(TouchPoint(it)) }
                 ingestStroke(pendingPoints.toList())
+            }
+            strokeInProgress = false
+            // Apply any exclude-rect clear that was deferred because it arrived mid-stroke (the popup
+            // was dismissed BY this stroke's pen-down) — now safe to re-latch the firmware capture region.
+            if (excludeReapplyPending) {
+                excludeReapplyPending = false
+                surfaceView?.post { reapplyExcludeRects() }
             }
         }
 
@@ -427,10 +536,10 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
                 blitFullCanvas(surface, bmp)
                 EpdController.refreshScreenRegion(surface, 0, canvasTopOffset, w, h, mode)
                 Thread.sleep(settleMs)
-                // Restore render to the state the ACTIVE TOOL wants — NOT unconditionally true. A
-                // blanket true re-lit the firmware ink passthrough under non-pen tools (the Text
-                // stray-ink bug). Pen → on; lasso/erase/text → stays off.
-                th.isRawDrawingRenderEnabled = renderEnabledForActiveTool()
+                // Restore render to the state the ACTIVE TOOL + suspension want — NOT unconditionally
+                // true. A blanket true re-lit the firmware ink passthrough under non-pen tools (the
+                // Text stray-ink bug). Pen & not-suspended → on; otherwise → stays off.
+                th.isRawDrawingRenderEnabled = firmwareShouldBeLive()
             } catch (t: Throwable) {
                 Log.w(TAG, "reconcileRepaint failed", t)
             }
@@ -466,14 +575,8 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     // ===== Lifecycle =====
 
     override fun onResumeReacquire() {
-        try {
-            // Re-grab the firmware path only if Pen is active; resuming on a non-pen tool keeps the
-            // stylus on normal dispatch (matching [setActiveTool]). Both switches track the tool.
-            touchHelper?.setRawDrawingEnabled(activeTool is Tool.Pen)
-            touchHelper?.isRawDrawingRenderEnabled = renderEnabledForActiveTool()
-        } catch (t: Throwable) {
-            Log.w(TAG, "onResumeReacquire failed", t)
-        }
+        // Restore the firmware to whatever the active tool + suspension state want.
+        applyFirmwareEnableState()
     }
 
     override fun release() {
@@ -497,5 +600,8 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
 
     private companion object {
         const val TAG = "BooxInkBackend"
+
+        /** Sentinel exclude rect (1px at the origin) used to "clear" excludes — see [currentExcludeRects]. */
+        private val NO_OP_EXCLUDE = Rect(0, 0, 1, 1)
     }
 }
