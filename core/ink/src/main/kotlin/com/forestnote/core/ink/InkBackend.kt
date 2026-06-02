@@ -157,4 +157,12 @@ interface InkBackend {
      * reconcile). No-op on Viwoods/Generic, which push to the panel through their own paths.
      */
     fun reconcileRepaint(bitmap: Bitmap, viewLocation: IntArray, dirtyRect: Rect?) {}
+
+    /**
+     * Ask an input-owning backend to make its NEXT [reconcileRepaint] a ghost-clearing (GC) refresh
+     * instead of the low-flash default — used when returning to the editor from a dismissed dialog,
+     * whose high-contrast text the default mono refresh leaves ghosted. One-shot. No-op on
+     * Viwoods/Generic (they clear ghosting through their own gcRefresh path).
+     */
+    fun cleanNextReconcile() {}
 }

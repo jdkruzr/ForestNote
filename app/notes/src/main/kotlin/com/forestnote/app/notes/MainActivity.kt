@@ -1065,6 +1065,11 @@ class MainActivity : Activity() {
     private fun openLibrary() {
         if (libraryView.isShowing) return
         textBoxEditOverlay.commitIfShowing() // don't strand an open editor behind the Library overlay
+        // Boox: a full-screen overlay must drop firmware render BEFORE it draws, or live firmware
+        // render suppresses normal EPD posting and the overlay opens INVISIBLY on top of the editor —
+        // eating all touches while only firmware drawing works ("frozen except drawing"). Mirrors the
+        // toolbar-popup suspend path. closeLibrary() resumes. No-op on Viwoods/Generic.
+        if (backend.ownsInput()) backend.setInputSuspended(true)
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
         libraryView.show(content, store, LibraryView.Callbacks(
             onOpenNotebook = { card -> libraryView.hide(); goToNotebook(card.id) },
@@ -1119,6 +1124,9 @@ class MainActivity : Activity() {
      */
     private fun closeLibrary() {
         libraryView.hide()
+        // Boox: resume firmware input ownership now the overlay is gone (paired with openLibrary's
+        // suspend); the editor repaint below brings the canvas back. No-op on Viwoods/Generic.
+        if (backend.ownsInput()) backend.setInputSuspended(false)
         revealEditorChrome()
         if (!editorLoaded) {
             // First reveal of the editor this session, OR a deferred reload after a
@@ -1588,6 +1596,27 @@ class MainActivity : Activity() {
         super.onWindowFocusChanged(hasFocus)
         val regained = hasFocus && !wasFocused
         wasFocused = hasFocus
+        // Boox: ANY AlertDialog / system window steals focus from this Activity's window. While firmware
+        // render is live it suppresses normal EPD posting, so such a window opens INVISIBLY over the
+        // editor and eats touches ("frozen except drawing"). One choke point for every dialog: drop
+        // firmware render on focus loss, restore on regain — but ONLY if no full-screen content-overlay
+        // is still up. Content overlays (Library/Settings/RecycleBin/TextEdit/CalDav sheet) DON'T steal
+        // window focus, so they aren't caught here; they manage their own suspend (openLibrary etc.) and
+        // resuming under them would re-wedge. Returning from a dialog-over-Library thus stays suspended.
+        if (backend.ownsInput()) {
+            if (!hasFocus) {
+                backend.setInputSuspended(true)
+            } else if (regained && !anyEditorObscuringOverlayShowing()) {
+                backend.setInputSuspended(false)
+                // The dismissed dialog leaves an e-ink ghost (firmware render compositing back over the
+                // panel doesn't clear the framebuffer the dialog drew into). Reconcile the editor from
+                // its bitmap to repaint the canvas clean — as a GC refresh, since the dialog's
+                // high-contrast text ghosts through the default low-flash mono mode. Posted so it runs
+                // after the window settles.
+                backend.cleanNextReconcile()
+                drawView.post { drawView.refreshPanelForUi() }
+            }
+        }
         // On an input-owning backend (Boox/Onyx) this gcRefresh is actively harmful: gcRefresh runs a
         // full reconcile (a ~360 ms firmware freeze that darkens the panel and eats the next tap), and
         // `regained` flips every time one of OUR OWN popups/dialogs closes — so simple interactions
@@ -1602,6 +1631,16 @@ class MainActivity : Activity() {
             ocrTextDialog.isShowing || textBoxEditOverlay.isShowing) return
         drawView.post { drawView.gcRefresh() }
     }
+
+    /**
+     * True when a full-screen content-overlay (same window — does NOT steal window focus) is up and
+     * therefore needs firmware render to STAY suspended. Used by [onWindowFocusChanged] to avoid
+     * resuming firmware (and re-wedging the overlay) when a dialog that was stacked over one of these
+     * closes.
+     */
+    private fun anyEditorObscuringOverlayShowing(): Boolean =
+        libraryView.isShowing || settingsView.isShowing || recycleBinView.isShowing ||
+            textBoxEditOverlay.isShowing || caldavTaskSheet.isShowing
 
     override fun onResume() {
         super.onResume()

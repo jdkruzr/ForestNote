@@ -120,6 +120,14 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     private val reconcilePending = AtomicBoolean(false)
 
     /**
+     * One-shot: make the next reconcile a ghost-clearing GC refresh instead of the low-flash default.
+     * Set by [cleanNextReconcile] (dialog dismiss leaves high-contrast text the default mono mode
+     * ghosts); consumed + cleared by the next [reconcileRepaint].
+     */
+    @Volatile
+    private var cleanNextReconcile = false
+
+    /**
      * The most recent page bitmap handed to [reconcileRepaint], re-blitted once the surface
      * becomes ready. This makes the initial paint order-independent: whether DrawView's first
      * layout (which calls reconcileRepaint) happens before or after the surface is created, the
@@ -519,8 +527,14 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         // up — don't pile on another expensive freeze.
         if (!reconcilePending.compareAndSet(false, true)) return
         // Panel-class-dependent (Phase-0 finding): REGAL is flash-free on colour Kaleido panels;
-        // ANIMATION_MONO is the cleanest on mono. The 300/500 ms settle matches the spike.
-        val mode = if (colorDevice) UpdateMode.REGAL else UpdateMode.ANIMATION_MONO
+        // ANIMATION_MONO is the cleanest on mono. The 300/500 ms settle matches the spike. A one-shot
+        // [cleanNextReconcile] forces GC (full ghost-clear) for the post-dialog repaint.
+        val mode = when {
+            cleanNextReconcile -> UpdateMode.GC
+            colorDevice -> UpdateMode.REGAL
+            else -> UpdateMode.ANIMATION_MONO
+        }
+        cleanNextReconcile = false
         val settleMs = if (colorDevice) 500L else 300L
         reconcileExecutor.execute {
             // Clear the gate FIRST so triggers arriving during this pass queue a fresh follow-up.
@@ -573,6 +587,10 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     }
 
     // ===== Lifecycle =====
+
+    override fun cleanNextReconcile() {
+        cleanNextReconcile = true
+    }
 
     override fun onResumeReacquire() {
         // Restore the firmware to whatever the active tool + suspension state want.
