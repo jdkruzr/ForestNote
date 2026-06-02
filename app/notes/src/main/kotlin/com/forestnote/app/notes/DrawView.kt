@@ -190,6 +190,8 @@ class DrawView @JvmOverloads constructor(
     private var backend: InkBackend? = null
     private var store: NotebookStore? = null
     private var transform = PageTransform()
+    /** Most recent explicit eraser choice; the hardware eraser honors it even while another tool is active. */
+    private var lastEraserVariant: Tool = Tool.StrokeEraser
     var activeTool: Tool = Tool.Pen
         // Switching away from the lasso clears any in-progress polygon + selection
         // (AC2.6). Kept here (single chokepoint) so every caller is covered.
@@ -199,6 +201,8 @@ class DrawView @JvmOverloads constructor(
                 cancelPaste() // a tool switch abandons a pending paste
                 clearBoxSelection() // and clears any text-box selection + its menu
             }
+            // Remember the last eraser variant so the hardware eraser can honor it later.
+            if (value is Tool.StrokeEraser || value is Tool.PixelEraser) lastEraserVariant = value
             field = value
         }
     /** Active pen variant; set by MainActivity when a variant is picked. */
@@ -1230,9 +1234,10 @@ class DrawView @JvmOverloads constructor(
     }
 
     private fun handleEraser(event: MotionEvent): Boolean {
-        // Hardware eraser (TOOL_TYPE_ERASER) always triggers erase.
-        // If activeTool is Pen, default to StrokeEraser. Otherwise use activeTool.
-        val tool = if (activeTool is Tool.Pen) Tool.StrokeEraser else activeTool
+        // Hardware eraser (TOOL_TYPE_ERASER) always triggers erase. When an eraser variant
+        // is already the active tool, use it; otherwise honor the last-picked variant
+        // (defaults to StrokeEraser) so a Pixel preference survives flipping to the pen.
+        val tool = if (activeTool is Tool.StrokeEraser || activeTool is Tool.PixelEraser) activeTool else lastEraserVariant
         return handleErase(event, tool)
     }
 
@@ -1430,15 +1435,16 @@ class DrawView @JvmOverloads constructor(
      * Implements AC1.4, AC1.5, AC1.7.
      *
      * @param event Motion event from touch input
-     * @param tool Eraser tool (StrokeEraser = wide, PixelEraser = narrow)
+     * @param tool Eraser tool (StrokeEraser = wipe whole strokes, PixelEraser = rub out pixels)
      */
     private fun handleErase(event: MotionEvent, tool: Tool = activeTool): Boolean {
         val canvas = writingCanvas ?: return true
 
-        // Eraser width in screen pixels — StrokeEraser is wider for coarser erase
+        // Eraser width in screen pixels. Both variants use a wide 40f tip; they differ in
+        // behavior (StrokeEraser wipes whole strokes, PixelEraser rubs out pixels), not size.
         val eraserWidth = when (tool) {
             is Tool.StrokeEraser -> 40f
-            is Tool.PixelEraser -> 16f
+            is Tool.PixelEraser -> 40f
             else -> 24f
         }
         eraserPaint.strokeWidth = eraserWidth
