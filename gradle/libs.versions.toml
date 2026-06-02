@@ -17,6 +17,7 @@ mockito = "5.2.1"
 mlkit-digital-ink = "18.1.0"
 okhttp = "4.12.0"
 androidx-security-crypto = "1.1.0-alpha06"
+androidx-sqlite = "2.4.0"
 rhizome = "0.8.0"
 
 [libraries]
@@ -36,6 +37,10 @@ material = { module = "com.google.android.material:material", version.ref = "mat
 androidx-ink-brush = { module = "androidx.ink:ink-brush", version.ref = "androidx-ink" }
 androidx-ink-geometry = { module = "androidx.ink:ink-geometry", version.ref = "androidx-ink" }
 androidx-ink-strokes = { module = "androidx.ink:ink-strokes", version.ref = "androidx-ink" }
+
+# androidx.sqlite — SupportSQLiteOpenHelper + FrameworkSQLiteOpenHelperFactory, so core:format can build
+# ONE shared SupportSQLiteOpenHelper for both the SQLDelight driver and the RhizomeSync handle (Phase 8).
+androidx-sqlite-framework = { module = "androidx.sqlite:sqlite-framework", version.ref = "androidx-sqlite" }
 
 # SQLDelight
 sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }

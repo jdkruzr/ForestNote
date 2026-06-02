@@ -1,9 +1,14 @@
 package com.forestnote.core.format
 
 import android.content.Context
+import androidx.sqlite.db.SupportSQLiteOpenHelper
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.forestnote.core.ink.Stroke
+import io.rhizome.sqlite.SqliteHandle
+import io.rhizome.sqlite.SqliteStorageAdapter
 import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.Ulid
@@ -94,10 +99,26 @@ class NotebookRepository private constructor(
     private val driver: SqlDriver,
     private val db: NotebookDatabase,
     /** Wall-clock source (injectable for deterministic tests; matches Ulid.generate(now=…)). */
-    private val clock: () -> Long
+    private val clock: () -> Long,
+    /**
+     * RhizomeSync's [SqliteHandle], bound to the SAME SQLite connection that backs [db] (prod: the
+     * shared [SupportSQLiteOpenHelper]; tests: the [JdbcSqliteDriver]'s shared connection). Used only
+     * to build [syncStore]; never touched directly.
+     */
+    syncHandle: SqliteHandle
 ) {
     private var currentNotebookId: String = ""
     private var currentPageId: String = ""
+
+    /**
+     * The registry-driven RhizomeSync store (Phase 8 cutover). Its `init` creates the `rhizome_*`
+     * bookkeeping tables over [syncHandle], coexisting with the legacy `sync_state`/`outbox`/
+     * `sync_row_meta` tables until the C5 device migration retires them. Thread-confined to the
+     * NotebookStore writer, exactly like every other DB access here. The legacy capture/apply
+     * surface below still drives sync until C3/C4 route through this adapter.
+     */
+    internal val syncStore: SqliteStorageAdapter =
+        SqliteStorageAdapter(syncHandle, ForestNoteRegistry.registry, clock)
 
     companion object {
         private const val DEFAULT_FILENAME = "default.forestnote"
@@ -134,24 +155,27 @@ class NotebookRepository private constructor(
          * If the file is corrupted, deletes it and starts fresh.
          */
         fun open(context: Context, now: () -> Long = { System.currentTimeMillis() }): NotebookRepository {
-            return try {
-                val driver = AndroidSqliteDriver(
-                    schema = NotebookDatabase.Schema,
-                    context = context,
-                    name = DEFAULT_FILENAME
+            // Build the SQLDelight Android driver and the RhizomeSync handle over ONE shared
+            // SupportSQLiteOpenHelper, so the adapter's `rhizome_*` tables and SQLDelight's data tables
+            // live on the same connection (and the same write transaction — see Phase 8 C3).
+            fun build(): NotebookRepository {
+                val helper = FrameworkSQLiteOpenHelperFactory().create(
+                    SupportSQLiteOpenHelper.Configuration.builder(context)
+                        .name(DEFAULT_FILENAME)
+                        .callback(AndroidSqliteDriver.Callback(NotebookDatabase.Schema))
+                        .build()
                 )
+                val driver = AndroidSqliteDriver(helper)
                 val db = NotebookDatabase(driver)
-                NotebookRepository(driver, db, now).also { it.bootstrap() }
+                val syncHandle = SupportSqliteHandle(helper.writableDatabase)
+                return NotebookRepository(driver, db, now, syncHandle).also { it.bootstrap() }
+            }
+            return try {
+                build()
             } catch (e: Throwable) {
                 // Corrupted database — delete and recreate.
                 context.deleteDatabase(DEFAULT_FILENAME)
-                val driver = AndroidSqliteDriver(
-                    schema = NotebookDatabase.Schema,
-                    context = context,
-                    name = DEFAULT_FILENAME
-                )
-                val db = NotebookDatabase(driver)
-                NotebookRepository(driver, db, now).also { it.bootstrap() }
+                build()
             }
         }
 
@@ -164,7 +188,7 @@ class NotebookRepository private constructor(
         ): NotebookRepository {
             NotebookDatabase.Schema.create(driver)
             val db = NotebookDatabase(driver)
-            return NotebookRepository(driver, db, now).also { it.bootstrap() }
+            return NotebookRepository(driver, db, now, jdbcHandleFor(driver)).also { it.bootstrap() }
         }
 
         /**
@@ -176,8 +200,21 @@ class NotebookRepository private constructor(
             now: () -> Long = { System.currentTimeMillis() }
         ): NotebookRepository {
             val db = NotebookDatabase(driver)
-            return NotebookRepository(driver, db, now).also { it.bootstrap() }
+            return NotebookRepository(driver, db, now, jdbcHandleFor(driver)).also { it.bootstrap() }
         }
+
+        /**
+         * Test-only: bind a [JdbcSqliteHandle] to the SQLDelight JDBC driver's shared
+         * `java.sql.Connection`, so the RhizomeSync adapter reads/writes the same in-memory/file DB
+         * the rest of the repository does. Production never reaches this — [open] uses the Android
+         * driver + [SupportSqliteHandle]; the `as JdbcSqliteDriver` cast is satisfied by the
+         * test-only (compileOnly in main) `sqldelight-sqlite-driver`.
+         */
+        private fun jdbcHandleFor(driver: SqlDriver): SqliteHandle =
+            // connectionAndClose().first is the driver's live connection (the single shared one for an
+            // in-memory/file URL); .second is its close callback, a no-op for SQLite's single-connection
+            // manager, so binding the handle to .first shares exactly the connection SQLDelight uses.
+            JdbcSqliteHandle((driver as JdbcSqliteDriver).connectionAndClose().first)
     }
 
     /**
