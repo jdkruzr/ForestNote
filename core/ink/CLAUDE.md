@@ -1,25 +1,28 @@
 # Ink Domain (core:ink)
 
-Last verified: 2026-05-27
+Last verified: 2026-06-02 (boox-ink-backend)
 
 ## Purpose
-Abstracts device-specific e-ink rendering behind a common interface and provides the stroke data model, coordinate system, and geometry operations used by all other modules.
+Abstracts device-specific e-ink rendering behind a common interface and provides the stroke data model, coordinate system, and geometry operations used by all other modules. A backend is normally a *display accelerator* (MotionEvents flow in via `DrawView`; the backend just pushes dirty bitmap rects to a fast overlay), but the interface also lets a backend *own input*: the Onyx/Boox backend drives the firmware raw-drawing pipeline (`TouchHelper`/`RawInputCallback`), which bypasses Android touch dispatch and renders live ink directly to the panel. The shared ingest seam (`StrokeSink`) lets either feeder reuse the same accumulation/render/persistence path.
 
 ## Contracts
-- **Exposes**: `InkBackend` interface, `BackendDetector.detect()`, `Stroke`/`StrokeBuilder`/`StrokePoint` types, `TextBox`/`ZBand` types (text-box element: virtual-coord geometry + font/size/colour/weight/border + z-band; ULID id), `Tool` sealed class (`Pen`/`StrokeEraser`/`PixelEraser`/`Lasso`/`Text`), `PenVariant` enum, `PenWidthLevel` enum (`XS/S/M/L/XL`) + `PenWidthScale.pair(level)` (level→`(min,max)` virtual pair; `M`=`(7,35)` v1 default), `PenParams.of(variant, level)` (per-variant color/width/behind), `PageTransform` (virtual↔screen + `ppi`/`pitchPx(mm)` for physical mm→px), `PressureCurve`, `StrokeGeometry`, `Ulid`
-- **Guarantees**: `BackendDetector.detect()` always returns a working backend (GenericBackend fallback). All stroke/point data uses virtual coordinates. PageTransform is the sole virtual-to-screen converter.
-- **Expects**: Android Context for backend init. View dimensions for PageTransform.update().
+- **Exposes**: `InkBackend` interface, `BackendDetector.detect()`, `Stroke`/`StrokeBuilder`/`StrokePoint` types, `TextBox`/`ZBand` types (text-box element: virtual-coord geometry + font/size/colour/weight/border + z-band; ULID id), `Tool` sealed class (`Pen`/`StrokeEraser`/`PixelEraser`/`Lasso`/`Text`), `PenVariant` enum, `PenWidthLevel` enum (`XS/S/M/L/XL`) + `PenWidthScale.pair(level)` (level→`(min,max)` virtual pair; `M`=`(7,35)` v1 default), `PenParams.of(variant, level)` (per-variant color/width/behind), `PageTransform` (virtual↔screen + `ppi`/`pitchPx(mm)` for physical mm→px), `PressureCurve`, `StrokeGeometry`, `Ulid`, and the **ingest seam** `StrokeSink` interface + `InkSample` (one ingested point, already virtual+millipressure) + `InkPhase` enum (`DOWN`/`MOVE`/`UP`)
+- **Guarantees**: `BackendDetector.detect()` always returns a working backend (GenericBackend fallback). All stroke/point data uses virtual coordinates. PageTransform is the sole virtual-to-screen converter. Backends that don't own input (`ownsInput() == false`: Viwoods/Generic) are behavior-identical to before the input-ownership seam existed — every input-owning method is a defaulted no-op.
+- **Expects**: Android Context for backend init. View dimensions for PageTransform.update(). An input-owning backend additionally expects a host `SurfaceView` + a `StrokeSink` + the active `PageTransform` (via `attachInput`/`setTransform`).
 
 ## Dependencies
-- **Uses**: Android framework, Viwoods ENote APIs (via reflection), Jetpack Ink geometry
+- **Uses**: Android framework, Viwoods ENote APIs (via reflection), Jetpack Ink geometry, **Onyx/Boox Pen SDK** (`onyxsdk-pen:1.5.4`, `onyxsdk-device:1.3.5`, `onyxsdk-base:1.8.5` — `TouchHelper`/`RawInputCallback`/`EpdController`, used only by `BooxInkBackend`, runtime-gated to Onyx; repo is cleartext HTTP, see `settings.gradle.kts`) + `hiddenapibypass:6.1` (mandatory on minSdk 30: the Onyx SDK reflects hidden APIs — `HiddenApiBypass.addHiddenApiExemptions("")` runs before any SDK call)
 - **Used by**: `core:format` (Stroke/StrokePoint types), `app:notes` (everything)
-- **Boundary**: Must not depend on `core:format` or `app:notes`
+- **Boundary**: Must not depend on `core:format` or `app:notes`. The `StrokeSink` *implementation* (`DrawViewStrokeSink`) lives in `app:notes` (it touches the bitmap + `NotebookStore`); only the contract + value types live here, so `InkBackend.attachInput(host, sink, …)` type-checks without crossing the boundary.
 
 ## Key Decisions
 - Reflection bridge for Viwoods APIs: device SDK is undocumented, reflection isolates from API changes and allows compilation on any machine
 - Virtual coordinate space (short axis = 10,000): strokes are resolution-independent across device orientations and screen sizes
 - Millipressure (0-1000 int): avoids float precision issues in storage and serialization
 - Logarithmic pressure curve: `width = min + range * ln(3p+1) / ln(4)`, matches Viwoods first-party feel
+- **Input-ownership seam (Boox port):** `InkBackend` gained a set of **defaulted no-op** methods so Viwoods/Generic need zero behavior change while an input-owning backend can drive the whole pipeline: `ownsInput()`, `attachInput(host, sink, excludeRects)`/`detachInput()`, `setTransform`, `updatePen`, `setActiveTool`, `setInputSuspended`, `setOverlayExcludeScreenRect`, `setOnFirmwarePenDown`, `onResumeReacquire` (retires the old `as ViwoodsBackend` cast in `onResume`), `reconcileRepaint`, `cleanNextReconcile`. Both feeders (MotionEvent and firmware raw-input) terminate in the same `StrokeSink`, so stored stroke DATA is identical across platforms (only the on-panel raster differs) — the hard cross-device compatibility constraint.
+- **Onyx has TWO INDEPENDENT firmware switches** (the non-obvious crux, proven on-device): `TouchHelper.setRawDrawingEnabled(bool)` = the MASTER (stylus capture + raw callbacks) and `TouchHelper.isRawDrawingRenderEnabled` (property) = the firmware's direct-to-panel ink PASSTHROUGH. They are NOT coupled — master OFF + passthrough ON still draws live ink with no callback. `BooxInkBackend.applyFirmwareEnableState()` is the single source of truth: it drives BOTH to `firmwareShouldBeLive()` (= `!inputSuspended && activeTool is Pen`). Treat capture and render as separate axes; never force render `true` blindly.
+- **Canvas-only firmware surface + freeze-toggle reconcile:** the firmware draws live ink itself (so `renderSegment` is a no-op on Boox); the app bitmap is the source of truth and is reconciled onto the panel after any non-append change via `reconcileRepaint` — suspend render → blit the WHOLE canvas (a partial blit blanks the rest) → `EpdController.refreshScreenRegion` → settle (300 ms mono / 500 ms colour) → restore render to `firmwareShouldBeLive()`. Refresh mode is panel-class-dependent: REGAL on colour, ANIMATION_MONO on mono; `cleanNextReconcile()` forces a one-shot GC (ghost-clear) for the post-dialog repaint. Reconciles coalesce (an `AtomicBoolean` gate) so a flurry collapses to one pass on the latest bitmap.
 
 ## Invariants
 - StrokePoint coordinates are always in virtual space, never screen pixels
@@ -30,10 +33,12 @@ Abstracts device-specific e-ink rendering behind a common interface and provides
 - `StrokeGeometry.reconcileErase` mints fragment ids via an injected `newId: () -> String = Ulid::generate` factory, keeping it pure and deterministically testable
 
 ## Key Files
-- `InkBackend.kt` - Backend interface (init, startStroke, renderSegment, endStroke, release)
+- `InkBackend.kt` - Backend interface. Display-accelerator surface (init, startStroke, renderSegment, endStroke, pushBackgroundBitmap, resetOverlay, release) PLUS the defaulted input-ownership surface (ownsInput, attachInput/detachInput, setTransform, updatePen, setActiveTool, setInputSuspended, setOverlayExcludeScreenRect, setOnFirmwarePenDown, onResumeReacquire, reconcileRepaint, cleanNextReconcile)
+- `StrokeSink.kt` / `InkSample.kt` / `InkPhase.kt` - Device-agnostic ingest seam fed by EITHER the MotionEvent feeder (Viwoods/Generic) or the firmware raw-input feeder (Boox). `StrokeSink.begin/accept(sample, phase)/cancel`; `InkSample.from(x, y, pressure01, ts, transform)` converts to virtual+millipressure; `InkPhase` = DOWN/MOVE/UP. Impl `DrawViewStrokeSink` lives in `app:notes`
 - `ViwoodsBackend.kt` - AiPaper fast ink via ENoteBridge reflection
+- `BooxInkBackend.kt` - Onyx/Boox firmware raw drawing (`ownsInput()=true`): `TouchHelper`+`RawInputCallback` → `StrokeSink`; firmware-thread→UI hop via `surface.post`; ingests from the per-move callback as a fallback when the batch (`onRawDrawing…ListReceived`) drops; the two-firmware-switch `applyFirmwareEnableState`; canvas-only surface + coalesced freeze-toggle `reconcileRepaint`. Defensive throughout (developer-hostile device + hidden-API reflection)
 - `GenericBackend.kt` - Fallback using standard View.invalidate()
-- `BackendDetector.kt` - Runtime backend selection (Viwoods > Generic)
+- `BackendDetector.kt` - Runtime backend selection, priority Viwoods (`ENoteSetting`) > Boox (`MANUFACTURER==ONYX` + `TouchHelper` present) > Generic. Gates are mutually exclusive; Generic is the guaranteed fallback if a backend's `init()` throws. (No manual override Setting — auto-detect only.)
 - `Stroke.kt` - Immutable Stroke (ULID id) + mutable StrokeBuilder
 - `TextBox.kt` - Immutable TextBox (ULID id; virtual-coord x/y/width/height + fontName/fontSize/color/weight/borderWidth) + `ZBand` enum (BOTTOM=below ink, TOP=above everything; stored as the `z` int)
 - `Ulid.kt` - Dependency-free, time-sortable ULID generator (stroke/page identity)
@@ -43,4 +48,6 @@ Abstracts device-specific e-ink rendering behind a common interface and provides
 ## Gotchas
 - ENoteBridge uses reflection; any method call can throw. Always wrap in try/catch.
 - WritingBufferQueue is a shared device resource: release() in onPause, reacquire() in onResume
-- ViwoodsBackend.reacquire() is not on the InkBackend interface; caller must cast
+- Re-acquire on resume now goes through `InkBackend.onResumeReacquire()` (Viwoods re-acquires its WritingBufferQueue; Boox re-enables raw drawing) — the old "`ViwoodsBackend.reacquire()` is off-interface, caller must cast" gotcha is RETIRED (the cast would have crashed on the Boox backend)
+- **Onyx SDK quirks (all measured on-device, worked around in `BooxInkBackend`):** (1) `TouchHelper.setExcludeRect(emptyList)` is a NO-OP — it applies a non-empty list but ignores an empty one, so "clearing" an exclude leaves a permanent dead zone; `currentExcludeRects()` never returns empty (substitutes a 1px sentinel). (2) Re-latching the exclude set MID-STROKE doesn't take → defer the clear to `onEndRawDrawing` (gate on `strokeInProgress`). (3) `setStroke*` config calls SILENTLY RE-ENABLE the firmware engine → re-assert `applyFirmwareEnableState()` after any pen-style change. (4) `getMaxTouchPressure()` varies per unit (4095 vs 4096) → always query, never hardcode. (5) the batch callback `onRawDrawingTouchPointListReceived` is unreliable on some firmware (fired 4/11 on Note Air5 C) → accumulate from the per-move callback as a fallback. (6) suspending `isRawDrawingRenderEnabled` wipes the firmware ink layer GLOBALLY → every reconcile is a full-canvas repaint.
+- Onyx callbacks may arrive on a firmware thread (or `main` on some units); `BooxInkBackend` hops to the UI thread via `surface.post` so the single-threaded `StrokeSink` is never touched off-thread. Keep `onEndRawDrawing` LIGHT — heavy work there blocks the firmware's touch release and stalls the next interaction.
