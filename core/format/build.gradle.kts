@@ -23,6 +23,10 @@ dependencies {
     implementation(libs.findLibrary("sqldelight-android-driver").get())
     implementation(libs.findLibrary("sqldelight-runtime").get())
     implementation(libs.findLibrary("kotlinx-serialization-json").get())
+    // RhizomeSync: Registry declaration (rhizome-core) + the registry-driven SQLite sync adapter
+    // (rhizome-sqlite) that replaces the hand-rolled SyncWire/SyncMerge/outbox capture.
+    implementation(libs.findLibrary("rhizome-core").get())
+    implementation(libs.findLibrary("rhizome-sqlite").get())
 
     testImplementation(libs.findLibrary("sqldelight-sqlite-driver").get())
 }

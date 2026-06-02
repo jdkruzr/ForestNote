@@ -17,6 +17,7 @@ mockito = "5.2.1"
 mlkit-digital-ink = "18.1.0"
 okhttp = "4.12.0"
 androidx-security-crypto = "1.1.0-alpha06"
+rhizome = "0.8.0"
 
 [libraries]
 # Gradle plugins (for build-logic dependencies)
@@ -70,6 +71,14 @@ okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.
 # EncryptedSharedPreferences for credential storage (sync + caldav).
 # Deprecated upstream in favor of DataStore+Tink for new projects, but acceptable for a single-user tablet.
 androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "androidx-security-crypto" }
+
+# RhizomeSync — the extracted schema-driven sync library (pure-JVM, JVM-11 bytecode). core:sync uses
+# rhizome-core (Registry/SyncEngine/SyncConfig) + rhizome-http (HttpUrlTransport); core:format uses
+# rhizome-core (Registry) + rhizome-sqlite (SqliteStorageAdapter). Consumed from mavenLocal until the
+# v0.8.0 tag is published.
+rhizome-core = { module = "io.rhizome:rhizome-core", version.ref = "rhizome" }
+rhizome-sqlite = { module = "io.rhizome:rhizome-sqlite", version.ref = "rhizome" }
+rhizome-http = { module = "io.rhizome:rhizome-http", version.ref = "rhizome" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
