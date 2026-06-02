@@ -1,8 +1,8 @@
 # ForestNote
 
-Last verified: 2026-05-28 (caldav-outbox)
+Last verified: 2026-06-02 (boox-ink-backend)
 
-E-ink note-taking app for the Viwoods AiPaper Mini tablet. Uses reverse-engineered fast ink APIs for low-latency stylus rendering with a fallback path for generic Android devices.
+E-ink note-taking app for low-latency stylus handwriting. Two firmware-latency ink paths behind one `InkBackend` seam: the **Viwoods AiPaper Mini** via reverse-engineered fast-ink APIs (display accelerator — MotionEvents → fast overlay), and **Boox/Onyx** devices via the published Onyx Pen SDK (`TouchHelper`/`RawInputCallback` — the backend OWNS input, firmware renders live ink). A generic `View.invalidate()` fallback covers any other Android device. Backend is auto-detected at launch; stored stroke DATA is identical across platforms (only the on-panel raster differs).
 
 ## Tech Stack
 - Language: Kotlin (Android)
@@ -10,6 +10,7 @@ E-ink note-taking app for the Viwoods AiPaper Mini tablet. Uses reverse-engineer
 - Build: Gradle with convention plugins in `build-logic/`
 - Storage: SQLDelight 2.0.2 (SQLite)
 - Geometry: Jetpack Ink API 1.0.0 (brush/geometry/strokes)
+- Boox/Onyx ink: Onyx Pen SDK (`onyxsdk-pen:1.5.4` + `-device:1.3.5` + `-base:1.8.5`) + `hiddenapibypass:6.1`, used only by `BooxInkBackend` in `core:ink`, runtime-gated to Onyx devices (inert elsewhere); cleartext-HTTP Maven repo. See `core/ink/CLAUDE.md` for the firmware raw-drawing model (two independent firmware switches, canvas-only surface, freeze-toggle reconcile)
 - UI: Android Views (no Compose), Material 3
 - Handwriting recognition: Google ML Kit Digital Ink 18.1.0 (stroke-native; bundled-only artifact requires GMS + one-time per-language ~20 MB model download via `RemoteModelManager` — host tablet has GMS + Google account)
 - CalDAV transport: OkHttp 4.12.0 (scoped to `app/notes/caldav/` only — the sync engine still rides `HttpURLConnection` per `core:sync` rationale). UI never PUTs synchronously: the lasso → task path enqueues into a local SQLite outbox (`caldav_outbox`, LOCAL-ONLY) and a `CalDavOutboxDrainer` (lifecycle peer of `SyncController`) does the PUTs, with a `NetworkAvailabilityMonitor` kicking `drainNow()` when WiFi comes back. No WorkManager — the AiPaper is foreground-driven, and SQLite + lifecycle hooks + `NetworkCallback` cover the actual failure mode
@@ -24,7 +25,7 @@ E-ink note-taking app for the Viwoods AiPaper Mini tablet. Uses reverse-engineer
 
 ## Project Structure
 - `app/notes/` - Main application module (Activity, DrawView, ToolBar, NotebookStore persistence owner)
-- `core/ink/` - Ink rendering domain (backends, stroke model, coordinate transform)
+- `core/ink/` - Ink rendering domain (backends incl. Viwoods/Boox/Generic, the `StrokeSink` ingest seam, stroke model, coordinate transform)
 - `core/format/` - Storage domain (SQLDelight database, serialization)
 - `build-logic/` - Gradle convention plugins (shared Android config)
 - `docs/` - Design plans and implementation phases
