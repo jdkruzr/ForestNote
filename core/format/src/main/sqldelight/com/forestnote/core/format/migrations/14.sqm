@@ -1,0 +1,14 @@
+-- v14 -> v15 (RhizomeSync cutover, Phase 8 C5): two NON-destructive additions to the local-only
+-- sync_state singleton. sync_state is local-only, so neither column touches the wire schema_hash.
+--
+-- 1. rhizome_migrated: the run-once gate for the in-app copy of the legacy sync tables
+--    (sync_state / outbox / sync_row_meta) into the adapter-owned rhizome_* tables. The copy runs
+--    on the first bootstrap of a cutover build (see NotebookRepository.migrateLegacySyncToRhizome)
+--    and flips this to 1 so it never runs again — a second pass would clobber rhizome state that a
+--    sync session may already have advanced. Fresh installs default to 0 and run a harmless no-op
+--    copy (legacy tables empty), then set it.
+-- 2. stored_schema_hash: the synced-schema generation this device last reconciled against, for the
+--    §I.9 cursor-reset (wired in Phase D). NULL after the cutover migration, which Phase D treats as
+--    "reset the cursor once and re-pull" — a free self-healing full re-pull on first post-cutover launch.
+ALTER TABLE sync_state ADD COLUMN rhizome_migrated INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sync_state ADD COLUMN stored_schema_hash TEXT;

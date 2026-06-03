@@ -104,10 +104,11 @@ class NotebookRepository private constructor(
     private val clock: () -> Long,
     /**
      * RhizomeSync's [SqliteHandle], bound to the SAME SQLite connection that backs [db] (prod: the
-     * shared [SupportSQLiteOpenHelper]; tests: the [JdbcSqliteDriver]'s shared connection). Used only
-     * to build [syncStore]; never touched directly.
+     * shared [SupportSQLiteOpenHelper]; tests: the [JdbcSqliteDriver]'s shared connection). Builds
+     * [syncStore]; also used directly by [migrateLegacySyncToRhizome] for the one-shot cross-table
+     * copy into the adapter's `rhizome_*` tables (which SQLDelight doesn't know about).
      */
-    syncHandle: SqliteHandle
+    private val syncHandle: SqliteHandle
 ) {
     private var currentNotebookId: String = ""
     private var currentPageId: String = ""
@@ -228,6 +229,9 @@ class NotebookRepository private constructor(
      */
     private fun bootstrap() {
         val now = clock()
+        // RhizomeSync cutover (Phase 8 C5): one-shot copy of the legacy sync tables into the
+        // adapter's rhizome_* tables. Runs before anything touches sync; idempotent via its gate.
+        migrateLegacySyncToRhizome()
         // Ensure at least one notebook.
         var notebooks = db.notebookQueries.listNotebooks().executeAsList()
         if (notebooks.isEmpty()) {
@@ -259,6 +263,71 @@ class NotebookRepository private constructor(
         // freeze-at-creation). Idempotent: new pages are always concrete.
         val (seedTemplate, seedPitch) = defaultTemplateSeed()
         db.notebookQueries.bakeNullPageTemplates(seedTemplate, seedPitch)
+    }
+
+    /**
+     * RhizomeSync cutover (Phase 8 C5): one-shot, IRREVERSIBLE copy of this device's legacy sync
+     * tables (`sync_state` / `outbox` / `sync_row_meta`) into the adapter-owned `rhizome_*` tables,
+     * so an upgraded device keeps its site_id, cursor and pending ops instead of re-minting + losing
+     * its place + re-backfilling. Gated by `sync_state.rhizome_migrated` — it runs exactly once; a
+     * second pass would clobber rhizome state that a sync session may already have advanced.
+     *
+     * Runs inside one transaction on the shared connection (so the legacy reads and rhizome writes
+     * are atomic — see [SupportSqliteHandle]/[JdbcSqliteHandle]). The rhizome_* tables already exist
+     * here ([syncStore]'s init created them before [bootstrap]). The copy is raw SQL through
+     * [syncHandle] because SQLDelight doesn't know the rhizome_* tables.
+     *
+     * Mapping: `outbox.{table_name,wall_ts,payload}` → `rhizome_outbox.{tbl,op_ts,cols}`;
+     * `sync_row_meta.{table_name,lww_wall_ts,lww_op_seq,lww_site_id}` →
+     * `rhizome_row_meta.{tbl,op_ts,op_seq,site_id}`; `rhizome_sync_state.last_hlc` seeds to the
+     * greatest legacy wall_ts (the HLC's high bits are wall-clock ms, so the timeline is preserved).
+     * The legacy tables are LEFT IN PLACE one release as rollback substrate (a later migration drops
+     * them). Fresh installs run a harmless no-op copy (legacy tables empty) and set the gate.
+     */
+    private fun migrateLegacySyncToRhizome() {
+        val migrated = db.notebookQueries.getSyncState().executeAsOneOrNull()?.rhizome_migrated ?: 0L
+        if (migrated != 0L) return
+        db.transaction {
+            // Guarantee the legacy singleton exists so the flag-set below always lands (a never-synced
+            // fresh device has no sync_state row until enableSync); the new columns take their defaults.
+            db.notebookQueries.ensureSyncState()
+            // sync_state singleton → rhizome_sync_state. UPSERT-shaped so it's correct whether or not
+            // the adapter already inserted an id=0 row; last_hlc = max(legacy wall_ts) across both logs.
+            syncHandle.execute(
+                "INSERT OR IGNORE INTO rhizome_sync_state (id, site_id, cursor, next_op_seq, last_hlc) " +
+                    "VALUES (0, NULL, 0, 1, 0)",
+                emptyList(),
+            )
+            syncHandle.execute(
+                """
+                UPDATE rhizome_sync_state SET
+                  site_id = (SELECT site_id FROM sync_state WHERE id = 0),
+                  cursor = COALESCE((SELECT cursor FROM sync_state WHERE id = 0), 0),
+                  next_op_seq = COALESCE((SELECT next_op_seq FROM sync_state WHERE id = 0), 1),
+                  last_hlc = COALESCE(
+                    (SELECT MAX(ts) FROM (
+                       SELECT wall_ts AS ts FROM outbox
+                       UNION ALL
+                       SELECT lww_wall_ts AS ts FROM sync_row_meta)),
+                    0)
+                WHERE id = 0
+                """.trimIndent(),
+                emptyList(),
+            )
+            // outbox → rhizome_outbox (op_seq preserved; wall_ts → op_ts; payload → cols).
+            syncHandle.execute(
+                "INSERT INTO rhizome_outbox (op_seq, tbl, pk, op_ts, cols) " +
+                    "SELECT op_seq, table_name, pk, wall_ts, payload FROM outbox",
+                emptyList(),
+            )
+            // sync_row_meta → rhizome_row_meta (LWW provenance, same triple).
+            syncHandle.execute(
+                "INSERT INTO rhizome_row_meta (tbl, pk, op_ts, op_seq, site_id) " +
+                    "SELECT table_name, pk, lww_wall_ts, lww_op_seq, lww_site_id FROM sync_row_meta",
+                emptyList(),
+            )
+            db.notebookQueries.setRhizomeMigrated()
+        }
     }
 
     /** The global default template/pitch as concrete columns, for seeding new pages. */

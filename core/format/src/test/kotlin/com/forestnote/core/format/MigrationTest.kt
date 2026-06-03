@@ -202,7 +202,7 @@ class MigrationTest {
         // openExisting → bootstrap queries the current tables (notebook incl. modified_at +
         // folder_id + soft-delete cols, app_state incl. settings_json) AND reads the notebook_live
         // view, so migrate all the way up to the current schema.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = 13L)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 1L, newVersion = NotebookDatabase.Schema.version)
 
         // openExisting (no schema.create) must work against the migrated DB.
         val repo = NotebookRepository.openExisting(driver)
@@ -226,7 +226,7 @@ class MigrationTest {
         createV2Schema(driver)
 
         // Migrate to the current version; runs v2->v3 plus every later step up to v11->v12.
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 13L)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = NotebookDatabase.Schema.version)
 
         assertTrue(tableExists(driver, "notebook"), "notebook table exists after v2->v3")
         assertTrue(tableExists(driver, "app_state"), "app_state table exists after v2->v3")
@@ -568,11 +568,10 @@ class MigrationTest {
 
         // The views were created by the migration: the repository's live query returns the
         // pre-existing notebook (this would throw "no such table: notebook_live" if not).
-        // The repo's generated queries target the current schema, so finish the upgrade before
-        // opening (v7->v8 sync tables + deleted_at; v8->v9 joined; v9->v10 text_box; v10->v11
-        // backfill_version; v11->v12 page_text_* tables; v12->v13 local stale_at column;
-        // no view change).
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 13L)
+        // The repo's generated queries target the current schema, so finish the upgrade to the
+        // current version before opening (later steps add sync tables/columns + caldav_outbox +
+        // the rhizome cutover columns; none change the views).
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = NotebookDatabase.Schema.version)
         val repo = NotebookRepository.openExisting(driver)
         assertTrue(repo.listNotebooks().any { it.id == "n1" }, "live query (via notebook_live view) returns the kept notebook")
 
@@ -860,6 +859,143 @@ class MigrationTest {
         )
         assertEquals("hi", preservedText, "pre-v14 rows survive the additive migration")
 
+        driver.close()
+    }
+
+    private fun readLong(driver: JdbcSqliteDriver, sql: String): Long {
+        var v = 0L
+        driver.executeQuery(null, sql, { c -> c.next(); v = c.getLong(0)!!; QueryResult.Value(Unit) }, 0)
+        return v
+    }
+
+    private fun readString(driver: JdbcSqliteDriver, sql: String): String? {
+        var v: String? = null
+        driver.executeQuery(null, sql, { c -> c.next(); v = c.getString(0); QueryResult.Value(Unit) }, 0)
+        return v
+    }
+
+    /**
+     * RhizomeSync cutover (Phase 8 C5): migrating v14 -> v15 adds the local-only run-once gate
+     * (sync_state.rhizome_migrated) + the §I.9 cursor-reset marker (sync_state.stored_schema_hash).
+     * Both are additive; a pre-existing sync_state row survives with the defaults (0 / NULL).
+     */
+    @Test
+    fun v14ToV15AddsRhizomeMigratedAndStoredSchemaHash() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        createV7PageStroke(driver)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 14L)
+        assertFalse(columnNames(driver, "sync_state").contains("rhizome_migrated"),
+            "v14 has no rhizome_migrated column")
+        assertFalse(columnNames(driver, "sync_state").contains("stored_schema_hash"),
+            "v14 has no stored_schema_hash column")
+        // Seed a v14 sync_state row so we can assert it survives the additive migration.
+        driver.execute(null,
+            "INSERT INTO sync_state(id, site_id, next_op_seq, cursor, acked_op_seq) VALUES (0, 'SITE', 9, 4, 3)", 0)
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 14L, newVersion = 15L)
+
+        val cols = columnNames(driver, "sync_state")
+        assertTrue(cols.contains("rhizome_migrated"), "rhizome_migrated exists after v14->v15")
+        assertTrue(cols.contains("stored_schema_hash"), "stored_schema_hash exists after v14->v15")
+        assertEquals(0L, readLong(driver, "SELECT rhizome_migrated FROM sync_state WHERE id = 0"),
+            "existing rows default rhizome_migrated = 0 (the copy has not run yet)")
+        assertNull(readString(driver, "SELECT stored_schema_hash FROM sync_state WHERE id = 0"),
+            "existing rows default stored_schema_hash = NULL (Phase D treats NULL as 'reset + re-pull once')")
+        assertEquals("SITE", readString(driver, "SELECT site_id FROM sync_state WHERE id = 0"),
+            "pre-v15 sync_state values survive the additive migration")
+        driver.close()
+    }
+
+    /**
+     * RhizomeSync cutover (Phase 8 C5): the one-shot in-app copy. A device upgrading onto the
+     * cutover build has live data in the legacy sync tables; opening the repository must copy it
+     * into the adapter's rhizome_* tables — preserving site_id / cursor / next_op_seq, mapping
+     * wall_ts -> op_ts, seeding last_hlc to the greatest legacy wall_ts — so the device keeps
+     * syncing without re-minting its identity or losing its cursor.
+     */
+    @Test
+    fun cutoverCopiesLegacySyncTablesIntoRhizomeTablesOnce() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        // Full current schema. The rhizome_* tables are NOT created here — the adapter makes them
+        // when the repository is constructed, exactly as on a real upgraded device.
+        NotebookDatabase.Schema.create(driver)
+        // Seed legacy sync state as if this device had been syncing pre-cutover.
+        driver.execute(null,
+            "INSERT INTO sync_state(id, site_id, next_op_seq, cursor, acked_op_seq, joined, backfill_version) " +
+                "VALUES (0, 'SITE0', 7, 42, 5, 1, 1)", 0)
+        driver.execute(null,
+            "INSERT INTO outbox(op_seq, table_name, pk, wall_ts, payload, created_at) " +
+                "VALUES (5, 'notebook', 'nb1', 1000, '{\"name\":\"a\"}', 1000)", 0)
+        driver.execute(null,
+            "INSERT INTO outbox(op_seq, table_name, pk, wall_ts, payload, created_at) " +
+                "VALUES (6, 'stroke', 'st1', 2500, '{\"z\":1}', 2500)", 0)
+        driver.execute(null,
+            "INSERT INTO sync_row_meta(table_name, pk, lww_wall_ts, lww_op_seq, lww_site_id) " +
+                "VALUES ('notebook', 'nb1', 1000, 5, 'SITE0')", 0)
+        // A remote-won row carries the greatest wall_ts (3300) — last_hlc must seed to it.
+        driver.execute(null,
+            "INSERT INTO sync_row_meta(table_name, pk, lww_wall_ts, lww_op_seq, lww_site_id) " +
+                "VALUES ('page', 'pg9', 3300, 2, 'PEER1')", 0)
+
+        // Opening the repo constructs the adapter (creates rhizome_*) and runs the run-once copy.
+        NotebookRepository.openExisting(driver) { 9999L }
+
+        // rhizome_sync_state inherits site_id/cursor/next_op_seq + last_hlc = max(all wall_ts) = 3300.
+        assertEquals("SITE0", readString(driver, "SELECT site_id FROM rhizome_sync_state WHERE id = 0"))
+        assertEquals(42L, readLong(driver, "SELECT cursor FROM rhizome_sync_state WHERE id = 0"))
+        assertEquals(7L, readLong(driver, "SELECT next_op_seq FROM rhizome_sync_state WHERE id = 0"))
+        assertEquals(3300L, readLong(driver, "SELECT last_hlc FROM rhizome_sync_state WHERE id = 0"),
+            "last_hlc seeds to the greatest legacy wall_ts so the HLC never regresses")
+        // rhizome_outbox got both ops, with wall_ts -> op_ts and payload -> cols.
+        assertEquals(2L, readLong(driver, "SELECT count(*) FROM rhizome_outbox"))
+        assertEquals(2500L, readLong(driver, "SELECT op_ts FROM rhizome_outbox WHERE op_seq = 6"))
+        assertEquals("stroke", readString(driver, "SELECT tbl FROM rhizome_outbox WHERE op_seq = 6"))
+        assertEquals("{\"z\":1}", readString(driver, "SELECT cols FROM rhizome_outbox WHERE op_seq = 6"))
+        // rhizome_row_meta got both provenance rows, with lww_* -> op_ts/op_seq/site_id.
+        assertEquals(2L, readLong(driver, "SELECT count(*) FROM rhizome_row_meta"))
+        assertEquals("PEER1", readString(driver, "SELECT site_id FROM rhizome_row_meta WHERE pk = 'pg9'"))
+        assertEquals(3300L, readLong(driver, "SELECT op_ts FROM rhizome_row_meta WHERE pk = 'pg9'"))
+        // The gate is set so the copy never runs again.
+        assertEquals(1L, readLong(driver, "SELECT rhizome_migrated FROM sync_state WHERE id = 0"))
+        driver.close()
+    }
+
+    /**
+     * RhizomeSync cutover (Phase 8 C5): the copy is strictly run-once. After the gate is set, a
+     * later sync session advances the rhizome state (cursor moves, acked ops are pruned, fresh
+     * ops are captured). Re-opening the repository must NOT re-run the copy — a second pass would
+     * reset the cursor to the stale legacy value and re-insert already-pruned ops.
+     */
+    @Test
+    fun cutoverCopyRunsOnlyOnceAndNeverClobbersAdvancedRhizomeState() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        NotebookDatabase.Schema.create(driver)
+        driver.execute(null,
+            "INSERT INTO sync_state(id, site_id, next_op_seq, cursor, acked_op_seq) VALUES (0, 'SITE0', 7, 42, 5)", 0)
+        driver.execute(null,
+            "INSERT INTO outbox(op_seq, table_name, pk, wall_ts, payload, created_at) " +
+                "VALUES (5, 'notebook', 'nb1', 1000, '{}', 1000)", 0)
+
+        // First open: runs the copy and sets the gate.
+        NotebookRepository.openExisting(driver) { 9999L }
+        assertEquals(1L, readLong(driver, "SELECT rhizome_migrated FROM sync_state WHERE id = 0"))
+
+        // Simulate a later sync session: cursor advanced, the seeded op acked + pruned, a new op
+        // captured. This is exactly the state a second copy would corrupt.
+        driver.execute(null, "UPDATE rhizome_sync_state SET cursor = 500, next_op_seq = 99 WHERE id = 0", 0)
+        driver.execute(null, "DELETE FROM rhizome_outbox", 0)
+        driver.execute(null,
+            "INSERT INTO rhizome_outbox (op_seq, tbl, pk, op_ts, cols) VALUES (98, 'page', 'pg2', 9000, '{}')", 0)
+
+        // Re-open: the gate is set, so the copy must be skipped.
+        NotebookRepository.openExisting(driver) { 12345L }
+
+        assertEquals(500L, readLong(driver, "SELECT cursor FROM rhizome_sync_state WHERE id = 0"),
+            "the advanced cursor is preserved — the copy did not run a second time")
+        assertEquals(99L, readLong(driver, "SELECT next_op_seq FROM rhizome_sync_state WHERE id = 0"))
+        assertEquals(1L, readLong(driver, "SELECT count(*) FROM rhizome_outbox"),
+            "no legacy op was re-copied on top of the advanced outbox")
+        assertEquals(98L, readLong(driver, "SELECT op_seq FROM rhizome_outbox"))
         driver.close()
     }
 }
