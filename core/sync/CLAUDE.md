@@ -1,32 +1,26 @@
 # Sync Domain (core:sync)
 
-Last verified: 2026-05-26
+Last verified: 2026-06-02 (phase8-rhizome-cutover)
 
 ## Purpose
-The ForestNote↔UltraBridge (UB) sync client: drives the `POST /sync/v1` round-trip that uploads this device's local ops and applies the ops relayed from the user's other devices. The wire protocol and merge rule are a frozen dual-language contract — UB `docs/sync/forestnote-sync-protocol.md`, schema_hash v3 `724411eb…f3fe` (UB accepts {v2 `bc1953e2…`, v3} during the page_text rollout grace window). This module owns the network + orchestration (coroutines); the durable merge/decode and the outbox live in `core:format`.
+After the RhizomeSync cutover (Phase 8) this module is **just the pure, app-side sync *policy*** — the two decisions that are ForestNote's, not the library's. The sync ENGINE, wire protocol, transport, config and the `SyncLocalStore` interface now live in the **RhizomeSync library** (`io.rhizome.core` / `io.rhizome.http`, published `io.rhizome:*:0.8.0` to mavenLocal) and are consumed directly by `app:notes`' `SyncController`. The durable merge/decode + outbox + the registry-driven capture live in `core:format` (via the library's `SqliteStorageAdapter`).
 
 ## Contracts
-- **Exposes**: `SyncEngine(store, transport, schemaHash?, clock?, onRejected?)` with `suspend syncOnce(): SyncResult` + `status: StateFlow<SyncStatus>`; `SyncTransport` interface + `SyncOutcome` (Ok/HttpError/TransportError) + production `HttpUrlTransport(endpoint, authHeader, …)`; `SyncLocalStore` interface (the engine's view of persistence — implemented by an app-side adapter over `NotebookStore`); wire DTOs `SyncRequest`/`SyncResponse`/`RejectedOp`/`WireOp` + `SyncOp.toWire()`/`WireOp.toSyncOp()`; constants `SCHEMA_HASH`, `PROTOCOL_VERSION`.
-- **Guarantees**: `syncOnce()` is a full session — it repeats the POST while the server reports `has_more`, draining the relay backlog. On 200 it surfaces `rejected` (via `onRejected`), advances the ack high-water (which also prunes quarantined ops), applies relayed ops transactionally, and adopts the server cursor as authoritative (incl. rollback, §7.4). Envelope errors never apply anything and map to actionable `SyncResult`: 401→AuthRequired, 409→SchemaMismatch, 5xx/transport→Retryable, 400/413→Failed. No timers/backoff here — scheduling is the trigger layer's job (Phase 5).
-- **Expects**: a `SyncLocalStore` whose calls land on the DB single-writer thread; a `SyncTransport` (real network = `HttpUrlTransport`, fakes in tests).
+- **Exposes** (`SyncOrchestration.kt`, both pure singletons, no Android/coroutine deps):
+  - `SyncBackoff.delayMillis(attempt, baseMs=1_000, capMs=60_000)` — exponential backoff for retrying a `Retryable` session (overflow-guarded; the trigger layer's cue to back off, not the engine's).
+  - `SyncJoinPlan.shouldDiscardBootstrap(wasPristine, bootstrapId, notebookIdsAfterPull)` — the pull-first join policy: drop the auto-created bootstrap notebook only when it was pristine AND the pull delivered some OTHER notebook (so a first device keeps + uploads its bootstrap).
+- **Guarantees**: pure functions — deterministic, fully unit-tested (`SyncOrchestrationTest`), no I/O.
 
 ## Dependencies
-- **Uses**: `core:format` (the `SyncOp` domain type + the apply/send accessors on `NotebookRepository`), kotlinx-coroutines-core, kotlinx-serialization-json. Dependency direction is `core:sync → core:format → core:ink` (never the reverse).
-- **Used by**: `app:notes` (Phase 5 wiring: Settings credentials + toolbar trigger).
-- **Boundary**: no Android UI, no direct DB access — everything goes through `SyncLocalStore`.
+- **Uses**: nothing. No external deps; `junit`/`kotlin-test` for tests come from the `forestnote.android.library` convention plugin.
+- **Used by**: `app:notes` `SyncController` (imports `SyncBackoff` + `SyncJoinPlan`; everything else it needs — `SyncEngine`, `SyncTransport`, `SyncConfig`, `SyncStatus`, `SyncResult`, `HttpUrlTransport` — comes from the RhizomeSync library).
+- **Boundary**: no Android UI, no DB, no network.
 
 ## Key Decisions
-- `HttpURLConnection`, not OkHttp: dependency-light, fits the locked-device ethos. Every failure folds into a `SyncOutcome` so the engine never catches an exception and the §7.1 status mapping stays in one place.
-- Wire DTOs (`WireOp` etc.) are separate from the domain `SyncOp` (core:format) and map at the engine boundary, so snake_case wire names never leak into storage. `@SerialName` pins `site_id`/`op_seq`/`wall_ts`.
-- The engine is pure orchestration over injected `SyncTransport` + `SyncLocalStore` — fully unit-tested with fakes (`SyncEngineTest`). `HttpUrlTransport` is the only untested piece (real sockets; covered by the local-UB integration check).
+- **Why this module still exists after the cutover:** `SyncBackoff` (retry schedule) and `SyncJoinPlan` (pull-first join policy) are ForestNote product decisions, not generic sync mechanism, so they stayed here as pure policy instead of moving into the library. Everything that WAS generic mechanism (the §4.2 session loop, wire DTOs, `HttpURLConnection` transport, schema-hash gate, `SyncLocalStore`) moved to RhizomeSync — single source of truth, no FN/UB drift.
 
 ## Key Files
-- `SyncEngine.kt` - The §4.2 loop + `SyncResult`/`SyncStatus`.
-- `SyncProtocol.kt` - Wire DTOs, `SyncOp`↔`WireOp` mapping, `SCHEMA_HASH`/`PROTOCOL_VERSION`.
-- `SyncTransport.kt` - Transport interface + `SyncOutcome`.
-- `SyncLocalStore.kt` - The engine's persistence interface (app implements over `NotebookStore`).
-- `HttpUrlTransport.kt` - Production `POST /sync/v1` over `HttpURLConnection`.
+- `SyncOrchestration.kt` - `SyncBackoff` + `SyncJoinPlan`.
 
-## Gotchas / TODO
-- **Initial-sync handshake (deferred to Phase 5 wiring):** a fresh device bootstraps "Notebook 1" + a page, and `enableSync()` backfills ops for them. A device JOINING an existing account must pull-before-backfill (or discard its pristine bootstrap notebook) so it doesn't upload a spurious empty notebook. This needs the credentials/enable UX, so it lands with Phase 5 — confirm the join policy with the user.
-- `syncOnce()` does not sleep/retry; a `Retryable` result is the trigger layer's cue to back off and call again.
+## Gotchas / History
+- **Pre-cutover this module owned the whole engine** (`SyncEngine`/`SyncProtocol`/`SyncTransport`/`SyncLocalStore`/`SyncConfig`/`HttpUrlTransport`). Phase 8 deleted all of those — they now come from `io.rhizome.core`/`io.rhizome.http`. If you're looking for the session loop, schema-hash gate (v3 `724411eb…`), or wire DTOs, they're in the rhizome repo (`~/rhizome`), not here. See memory `project_rhizome`.
