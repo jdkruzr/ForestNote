@@ -4,10 +4,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * Phase 8 cutover guard: the RhizomeSync [ForestNoteRegistry] must reproduce ForestNote's live
- * production schema byte-for-byte BEFORE the hand-rolled [SyncWire]/[SyncMerge] core is replaced.
- * Real devices + data are on schema-hash v3; a drift here is silent data-corruption risk, so it
- * fails loudly. Mirrors UltraBridge's `internal/syncstore/parity_test.go`.
+ * Live-cutover guard: the RhizomeSync [ForestNoteRegistry] must reproduce ForestNote's production
+ * schema-hash v3 byte-for-byte. Real devices + data sync on v3, so a drift here is silent
+ * data-corruption risk — it fails loudly. Mirrors UltraBridge's `internal/syncstore/parity_test.go`
+ * and the Go server's `registry.ForestNote()`. (The one-time byte-parity check against the
+ * hand-rolled SyncMerge/SyncWire retired with those classes in the Phase 8 cutover.)
  */
 class ForestNoteRegistryHashTest {
 
@@ -16,22 +17,5 @@ class ForestNoteRegistryHashTest {
     @Test
     fun registryReproducesV3Hash() {
         assertEquals(v3, ForestNoteRegistry.registry.schemaHash())
-    }
-
-    @Test
-    fun registryKnownColsMatchLegacySyncMerge() {
-        val registryCols = ForestNoteRegistry.registry.knownCols
-        assertEquals(
-            SyncMerge.knownCols.keys,
-            registryCols.keys,
-            "table set differs between registry and legacy SyncMerge",
-        )
-        for ((table, legacyCols) in SyncMerge.knownCols) {
-            assertEquals(
-                legacyCols,
-                registryCols[table],
-                "column list for table '$table' differs (alphabetical order is load-bearing for the hash)",
-            )
-        }
     }
 }

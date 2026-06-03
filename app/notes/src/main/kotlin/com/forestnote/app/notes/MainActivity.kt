@@ -28,7 +28,7 @@ import com.forestnote.core.ink.PenParams
 import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.Tool
 import com.forestnote.core.ink.ZBand
-import com.forestnote.core.sync.SyncStatus
+import io.rhizome.core.SyncStatus
 import com.forestnote.app.notes.caldav.CalDavOutboxDrainer
 import com.forestnote.app.notes.caldav.CalDavTaskSheet
 import com.forestnote.app.notes.caldav.EncryptedPrefsCredentialsBackend
@@ -220,7 +220,7 @@ class MainActivity : Activity() {
         syncScope.launch {
             syncController.status.collect { status ->
                 libraryView.setSyncCaption(syncCaption(status))
-                if (status is com.forestnote.core.sync.SyncStatus.Synced) refreshOcrButtonState()
+                if (status is SyncStatus.Synced) refreshOcrButtonState()
             }
         }
 

@@ -20,11 +20,11 @@ import com.forestnote.app.notes.caldav.SecureCredentialsStore
 import com.forestnote.app.notes.caldav.VTodoBuilder
 import com.forestnote.app.notes.caldav.VTodoInput
 import com.forestnote.core.format.CalDavOutboxEntry
-import com.forestnote.core.format.SyncOp
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokeGeometry
 import com.forestnote.core.ink.TextBox
-import com.forestnote.core.sync.SyncLocalStore
+import io.rhizome.core.Op
+import io.rhizome.core.SyncLocalStore
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -680,8 +680,8 @@ class NotebookStore(
     fun syncLocalStore(): SyncLocalStore = object : SyncLocalStore {
         override suspend fun siteId(): String? = onDb { it.syncSiteId() }
         override suspend fun cursor(): Long = onDb { it.syncCursor() }
-        override suspend fun pendingOps(): List<SyncOp> = onDb { it.pendingOps() }
-        override suspend fun applyRelayed(ops: List<SyncOp>) = onDb { it.applySyncOps(ops) }
+        override suspend fun pendingOps(): List<Op> = onDb { it.pendingOps() }
+        override suspend fun applyRelayed(ops: List<Op>) = onDb { it.applySyncOps(ops) }
         override suspend fun markAckedThrough(through: Long) = onDb { it.markAckedThrough(through) }
         override suspend fun setCursor(cursor: Long) = onDb { it.setSyncCursor(cursor) }
     }

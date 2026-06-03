@@ -660,6 +660,13 @@ UPDATE page_text_from_server
 SET stale_at = ?
 WHERE id = ? AND deleted_at IS NULL AND stale_at IS NULL;
 
+-- Clear the LOCAL-ONLY stale marker after a server OCR upsert lands. The RhizomeSync adapter
+-- upserts only the registry (wire) columns, so it can't touch stale_at; NotebookRepository's
+-- applySyncOps post-apply hook calls this for every relayed page_text_from_server op (restoring
+-- the behaviour the hand-rolled applyUpsertPageTextFromServer had inline). NOT a sync op.
+clearPageTextStale:
+UPDATE page_text_from_server SET stale_at = NULL WHERE id = ?;
+
 -- ── Library search ──────────────────────────────────────────────────────────
 -- Four parallel queries powering the Library search dialog. All scope library-wide
 -- (no current-folder / current-notebook filter). LIKE patterns are caller-built with

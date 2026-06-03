@@ -25,6 +25,9 @@ dependencies {
     implementation(libs.findLibrary("androidx-sqlite-framework").get())
     implementation(libs.findLibrary("sqldelight-runtime").get())
     implementation(libs.findLibrary("kotlinx-serialization-json").get())
+    // runBlocking, to drive the RhizomeSync adapter's suspend capture/apply from NotebookRepository's
+    // synchronous (single-writer-thread) methods — the adapter never actually suspends.
+    implementation(libs.findLibrary("kotlinx-coroutines-core").get())
     // RhizomeSync: Registry declaration (rhizome-core) + the registry-driven SQLite sync adapter
     // (rhizome-sqlite) that replaces the hand-rolled SyncWire/SyncMerge/outbox capture.
     implementation(libs.findLibrary("rhizome-core").get())

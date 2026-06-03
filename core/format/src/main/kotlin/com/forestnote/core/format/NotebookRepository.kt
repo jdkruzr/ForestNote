@@ -7,13 +7,15 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.forestnote.core.ink.Stroke
+import io.rhizome.core.Op
 import io.rhizome.sqlite.SqliteHandle
 import io.rhizome.sqlite.SqliteStorageAdapter
+import kotlinx.coroutines.runBlocking
 import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.Ulid
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 /** Public notebook metadata so the UI never touches generated row types. */
 data class NotebookMeta(
@@ -210,11 +212,13 @@ class NotebookRepository private constructor(
          * driver + [SupportSqliteHandle]; the `as JdbcSqliteDriver` cast is satisfied by the
          * test-only (compileOnly in main) `sqldelight-sqlite-driver`.
          */
-        private fun jdbcHandleFor(driver: SqlDriver): SqliteHandle =
-            // connectionAndClose().first is the driver's live connection (the single shared one for an
-            // in-memory/file URL); .second is its close callback, a no-op for SQLite's single-connection
-            // manager, so binding the handle to .first shares exactly the connection SQLDelight uses.
-            JdbcSqliteHandle((driver as JdbcSqliteDriver).connectionAndClose().first)
+        private fun jdbcHandleFor(driver: SqlDriver): SqliteHandle {
+            // Hand the handle a SUPPLIER of the driver's current connection (re-fetched per op), so it
+            // tracks SQLDelight's enclosing transaction and survives ThreadedConnectionManager's
+            // per-statement connection recycling on file-backed DBs (see JdbcSqliteHandle docs).
+            val jdbc = driver as JdbcSqliteDriver
+            return JdbcSqliteHandle { jdbc.connectionAndClose().first }
+        }
     }
 
     /**
@@ -1163,57 +1167,46 @@ class NotebookRepository private constructor(
     }
 
     /**
-     * Mint + persist this install's `site_id` (capture goes live from here), WITHOUT backfilling.
-     * Idempotent — returns the existing site_id if already minted. The join handshake mints first,
-     * pulls, then [backfillOutbox]s, so a fresh device doesn't upload before it sees the server.
+     * Mint + persist this install's `site_id` through the RhizomeSync adapter (capture goes live from
+     * here), WITHOUT backfilling. Idempotent — returns the existing site_id if already minted. The
+     * join handshake mints first, pulls, then [backfillOutbox]s, so a fresh device doesn't upload
+     * before it sees the server. The id lives in the adapter's `rhizome_sync_state` (D7); legacy
+     * `sync_state.site_id` is no longer authoritative.
      */
     fun mintSiteId(): String {
+        // The adapter owns site_id in rhizome_sync_state; the app-side `joined`/`backfill_version`
+        // still live in the legacy `sync_state` row (D7), so ensure that row exists here — nothing
+        // else creates it now that capture writes only rhizome_* tables.
         db.notebookQueries.ensureSyncState()
-        db.notebookQueries.getSyncState().executeAsOne().site_id?.let { return it }
-        val site = Ulid.generate(clock())
-        db.notebookQueries.setSyncSiteId(site)
-        return site
+        return runBlocking { syncStore.siteId() ?: Ulid.generate(clock()).also { syncStore.enableSync(it) } }
     }
 
     /**
-     * Enqueue an upload op for every local row that has no `sync_row_meta` yet — i.e. genuinely
-     * local content the server hasn't seen. Rows that arrived via a pull are already stamped, so
-     * they are skipped: backfill is idempotent and never re-uploads relayed rows. wall_ts = now is
-     * safe (pre-sync libraries have disjoint ULIDs across devices, so a backfill can't lose a
-     * cross-device conflict, and later real edits get a higher op_seq). No-op when sync is off.
+     * Capture an upload op for every existing local row of every capturable table, via the adapter's
+     * registry-driven [SqliteStorageAdapter.backfill]. Used on first enable/join and on a
+     * schema-generation re-backfill to seed the server with pre-sync content. Idempotent under LWW
+     * (re-capturing a row the server already has is a harmless no-change winner). No-op when sync is
+     * off. The app-side [SYNC_BACKFILL_VERSION] is then stamped in `sync_state` so
+     * [rebackfillIfSchemaAdvanced] knows this device is caught up.
      */
     fun backfillOutbox() {
-        if (syncSiteId() == null) return
-        db.transaction {
-            val now = clock()
-            db.notebookQueries.allFolderIds().executeAsList().forEach { if (lacksMeta("folder", it)) enqueueOp("folder", it, now) }
-            db.notebookQueries.allNotebookIds().executeAsList().forEach { if (lacksMeta("notebook", it)) enqueueOp("notebook", it, now) }
-            db.notebookQueries.allPageIds().executeAsList().forEach { if (lacksMeta("page", it)) enqueueOp("page", it, now) }
-            db.notebookQueries.allStrokeIds().executeAsList().forEach { if (lacksMeta("stroke", it)) enqueueOp("stroke", it, now) }
-            if (TEXT_BOX_SYNC_ENABLED) {
-                db.notebookQueries.allTextBoxIds().executeAsList().forEach { if (lacksMeta("text_box", it)) enqueueOp("text_box", it, now) }
-            }
-            // A full backfill covers the current synced schema, so mark this device caught up.
-            db.notebookQueries.setBackfillVersion(SYNC_BACKFILL_VERSION.toLong())
-        }
+        if (runBlocking { syncStore.siteId() } == null) return
+        runBlocking { syncStore.backfill() }
+        db.notebookQueries.setBackfillVersion(SYNC_BACKFILL_VERSION.toLong())
     }
 
     /**
      * Re-run [backfillOutbox] once if this (already-enabled) device backfilled for an older synced
-     * schema than the current [SYNC_BACKFILL_VERSION] — e.g. it joined before `text_box` was a
-     * synced table, so those rows never got outbox ops. The backfill is idempotent (`lacksMeta`
-     * skips already-synced rows) and re-stamps the version, so this is a no-op on every later call.
-     * Sync-off / not-yet-enabled is left alone: the first [enableSync]/join does a full backfill.
+     * schema than the current [SYNC_BACKFILL_VERSION] — e.g. it joined before `text_box` was a synced
+     * table. The backfill is idempotent and re-stamps the version, so this is a no-op on every later
+     * call. Sync-off / not-yet-enabled is left alone: the first [enableSync]/join does a full backfill.
      */
     fun rebackfillIfSchemaAdvanced() {
+        if (runBlocking { syncStore.siteId() } == null) return
         val state = db.notebookQueries.getSyncState().executeAsOneOrNull() ?: return
-        if (state.site_id == null) return
         if (state.backfill_version >= SYNC_BACKFILL_VERSION) return
         backfillOutbox()
     }
-
-    private fun lacksMeta(table: String, pk: String): Boolean =
-        db.notebookQueries.getRowMeta(table, pk).executeAsOneOrNull() == null
 
     /**
      * True iff the library is an untouched fresh install: exactly one live notebook with exactly
@@ -1250,102 +1243,52 @@ class NotebookRepository private constructor(
         }
     }
 
-    /** True once [enableSync] has minted a site_id (capture is active). */
-    private fun syncEnabled(): Boolean =
-        db.notebookQueries.getSyncState().executeAsOneOrNull()?.site_id != null
-
     /**
-     * Capture one full-row-UPSERT op for [table]/[pk] at [wallTs]. Reads the row's current
-     * synced columns (so the op reflects post-mutation state, including a stamped deleted_at),
-     * allocates the next per-device op_seq, appends to the outbox, and records the winning
-     * provenance in sync_row_meta. MUST be called inside the mutation's transaction. No-op when
-     * sync is disabled or the row no longer exists.
+     * Capture one full-row UPSERT op for [table]/[pk] through the RhizomeSync adapter (Phase 8). The
+     * adapter re-reads the row's current (post-mutation, transaction-visible) columns, encodes them
+     * per [ForestNoteRegistry], appends to the rhizome outbox, and stamps `rhizome_row_meta` + an HLC
+     * `op_ts`. No-op when sync is dormant (no site_id), the row is gone, or the table is
+     * server-authored-only (`page_text_from_server`) — the structural single-writer guarantee is now
+     * the registry's `serverAuthoredOnly` flag, not a missing `buildCols` case.
+     *
+     * MUST run on the DB-writer thread (NotebookStore's executor). [wallTs] is ignored — the HLC owns
+     * op timestamps now — but kept in the signature so the ~20 mutation call sites are untouched by
+     * the cutover (a later cleanup can drop it). `capture` is `suspend` yet never actually suspends
+     * (its body is synchronous DB I/O), so [runBlocking] completes it inline, within the caller's
+     * already-open transaction (the adapter's handle nests into it).
      */
-    private fun enqueueOp(table: String, pk: String, wallTs: Long) {
-        val state = db.notebookQueries.getSyncState().executeAsOneOrNull() ?: return
-        val site = state.site_id ?: return
-        val cols = buildCols(table, pk) ?: return
-        val opSeq = state.next_op_seq
-        db.notebookQueries.insertOutbox(opSeq, table, pk, wallTs, cols, clock())
-        db.notebookQueries.upsertRowMeta(table, pk, wallTs, opSeq, site)
-        db.notebookQueries.bumpNextOpSeq()
+    private fun enqueueOp(table: String, pk: String, @Suppress("UNUSED_PARAMETER") wallTs: Long) {
+        runBlocking { syncStore.capture(table, pk) }
     }
 
-    /** Build the wire `cols` JSON for a row from its current base-table state (null if gone). */
-    private fun buildCols(table: String, pk: String): String? = when (table) {
-        "notebook" -> db.notebookQueries.syncRowNotebook(pk).executeAsOneOrNull()?.let {
-            SyncWire.notebookCols(it.folder_id, it.name, it.sort_order, it.created_at, it.deleted_at)
-        }
-        "folder" -> db.notebookQueries.syncRowFolder(pk).executeAsOneOrNull()?.let {
-            SyncWire.folderCols(it.name, it.sort_order, it.created_at, it.deleted_at, it.parent_folder_id)
-        }
-        "page" -> db.notebookQueries.syncRowPage(pk).executeAsOneOrNull()?.let {
-            SyncWire.pageCols(it.notebook_id, it.sort_order, it.created_at, it.deleted_at, it.template, it.template_pitch_mm)
-        }
-        "stroke" -> db.notebookQueries.syncRowStroke(pk).executeAsOneOrNull()?.let {
-            SyncWire.strokeCols(it.page_id, it.color, it.pen_width_min, it.pen_width_max, it.points, it.z, it.created_at, it.deleted_at)
-        }
-        "text_box" -> db.notebookQueries.syncRowTextBox(pk).executeAsOneOrNull()?.let {
-            SyncWire.textBoxCols(
-                it.page_id, it.x, it.y, it.width, it.height, it.text, it.font_name, it.font_size,
-                it.color, it.weight, it.border_width, it.z, it.created_at, it.deleted_at
-            )
-        }
-        // NOTE: page_text_from_server / page_text_from_client are deliberately ABSENT. They are
-        // server-/future-authored; the client is a read-only consumer (apply path only). Returning
-        // null here makes enqueueOp a no-op, and there is no allPageText*Ids loop in
-        // backfillOutbox — so the device can never author one of these and clobber the server's
-        // text under LWW. The exclusion is structural: there is no enqueueOp("page_text_*") site.
-        else -> null
-    }
-
-    // -- Sync send side (Phase 4) ------------------------------------------------
+    // -- Sync send side ----------------------------------------------------------
     //
-    // The engine drives the §4.2 loop over these: read pending ops, POST, then on success
-    // advance the ack water (pruning the outbox) and adopt the server cursor.
+    // The rhizome SyncEngine drives the §I.6 loop over these: read pending ops, POST, then on success
+    // advance the ack water (pruning the rhizome outbox) and adopt the server cursor. Each delegates
+    // to the RhizomeSync adapter, which owns site_id/cursor/outbox in its `rhizome_*` tables (D7).
 
-    /** This install's sync site_id, or null until [enableSync] mints it. */
-    fun syncSiteId(): String? = db.notebookQueries.getSyncState().executeAsOneOrNull()?.site_id
+    /** This install's sync site_id, or null until [mintSiteId] mints it. */
+    fun syncSiteId(): String? = runBlocking { syncStore.siteId() }
 
     /** Last global seq applied from the server (0 = never synced). */
-    fun syncCursor(): Long = db.notebookQueries.getSyncState().executeAsOneOrNull()?.cursor ?: 0L
+    fun syncCursor(): Long = runBlocking { syncStore.cursor() }
 
-    /** Contiguous accepted_through high-water: the outbox is pruned at/below this. */
-    fun syncAckedOpSeq(): Long = db.notebookQueries.getSyncState().executeAsOneOrNull()?.acked_op_seq ?: 0L
-
-    /** Pending outbound ops (op_seq > acked), in authoring order. Empty when sync is disabled. */
-    fun pendingOps(): List<SyncOp> {
-        val site = syncSiteId() ?: return emptyList()
-        val acked = syncAckedOpSeq()
-        return db.notebookQueries.pendingOutbox(acked).executeAsList().map {
-            SyncOp(it.table_name, it.pk, site, it.op_seq, it.wall_ts, Json.parseToJsonElement(it.payload).jsonObject)
-        }
-    }
+    /** Pending outbound ops, in op_seq order. Empty when sync is disabled. */
+    fun pendingOps(): List<Op> = runBlocking { syncStore.pendingOps() }
 
     /**
-     * Cheap "anything to push?" probe: the count of unacked outbox rows. Used by the
-     * sync-on-close path in MainActivity to skip a `syncNow()` round trip when nothing
-     * has changed since the last successful upload. Returns 0 when sync is disabled
-     * (no site_id ⇒ no ops are being captured anyway), so callers don't need to gate.
+     * Cheap "anything to push?" probe for the sync-on-close dirty gate in MainActivity. The adapter
+     * prunes acked ops from the rhizome outbox on [markAckedThrough], so the pending count is just the
+     * outbox size. Returns 0 when sync is disabled (no site_id ⇒ nothing captured), so callers don't
+     * need to gate.
      */
-    fun countPendingOps(): Long {
-        if (syncSiteId() == null) return 0L
-        val acked = syncAckedOpSeq()
-        return db.notebookQueries.countPendingOpsAbove(acked).executeAsOne()
-    }
+    fun countPendingOps(): Long = runBlocking { syncStore.pendingOps().size.toLong() }
 
-    /** Advance the ack high-water to [through] and prune the now-settled outbox ops (one txn). */
-    fun markAckedThrough(through: Long) {
-        db.transaction {
-            db.notebookQueries.setAckedOpSeq(through)
-            db.notebookQueries.pruneOutbox(through)
-        }
-    }
+    /** Advance the ack high-water to [through], pruning the now-settled ops from the rhizome outbox. */
+    fun markAckedThrough(through: Long) = runBlocking { syncStore.markAckedThrough(through) }
 
     /** Adopt the server's cursor as the new local high-water (authoritative, §7.4). */
-    fun setSyncCursor(cursor: Long) {
-        db.notebookQueries.setCursor(cursor)
-    }
+    fun setSyncCursor(cursor: Long) = runBlocking { syncStore.setCursor(cursor) }
 
     /** True once the initial pull-first join handshake has completed at least once. */
     fun syncJoined(): Boolean = db.notebookQueries.getSyncState().executeAsOneOrNull()?.joined == 1L
@@ -1356,76 +1299,46 @@ class NotebookRepository private constructor(
         db.notebookQueries.setJoined(if (joined) 1L else 0L)
     }
 
-    // -- Sync apply (Phase 4) ----------------------------------------------------
+    // -- Sync apply --------------------------------------------------------------
     //
-    // Merge relayed ops (authored by other devices) into the local mirror by the same row-level
-    // LWW rule the server uses (protocol §5). Applied as one transaction so a partial failure
-    // re-fetches and re-applies idempotently (§4.2/§7.3). Relayed ops are never re-authored, so
-    // this path deliberately bypasses enqueueOp/next_op_seq.
+    // Relayed ops (authored by other devices) merge into the local mirror via the RhizomeSync
+    // adapter's row-level LWW — the same rule the server uses. Two FN-specific touches the generic,
+    // registry-driven adapter can't know about are re-applied afterward (see [applySyncOps]).
 
     /**
-     * Apply a batch of relayed [ops]. For each op (in the given order): drop unknown columns,
-     * compare its key `(wall_ts, op_seq, site_id)` against the row's recorded provenance, and on
-     * a strict win write the decoded columns through to the base table, re-stamp `sync_row_meta`,
-     * and raise the owning notebook's `modified_at` to `max(current, wall_ts)`. Losses and ties
-     * (incl. a re-delivered op) leave the row untouched — the merge is idempotent and
-     * order-independent.
+     * Apply a batch of relayed [ops] through [SqliteStorageAdapter.applyRelayed] (collapse to one
+     * winner per (table, pk), apply only strict LWW wins, re-stamp row_meta — all transactional,
+     * idempotent, order-independent). Then re-apply the two FN behaviours the generic adapter omits:
+     *
+     *  1. **modified_at** — raise each touched notebook's `modified_at` to `max(current, op_ts)` so a
+     *     remote edit resurfaces the notebook in "recently edited". `modified_at` is a LOCAL column
+     *     (not in the registry), so the adapter's upsert leaves it untouched. Folders and page-text
+     *     are excluded, matching the old `writeWinningOp` (folders aren't notebooks; OCR isn't a user
+     *     edit, so it must not resurface the notebook).
+     *  2. **stale_at** — clear the LOCAL-ONLY `page_text_from_server.stale_at` marker on every relayed
+     *     server-text op (fresh OCR landed → no longer "pending"); the registry-driven upsert can't
+     *     touch a non-wire column. (Replaces the inline `stale_at = NULL` the old apply path had.)
+     *
+     * Both hooks run over ALL ops in the batch, not just adapter winners: `max(current, op_ts)` makes
+     * an over-bump from a losing op harmless, and clearing stale on a losing/duplicate server-text op
+     * is still correct (the server's text is current either way).
      */
-    fun applySyncOps(ops: List<SyncOp>) {
+    fun applySyncOps(ops: List<Op>) {
         if (ops.isEmpty()) return
+        runBlocking { syncStore.applyRelayed(ops) }
         db.transaction {
-            for (raw in ops) {
-                val op = SyncMerge.normalize(raw)
-                val meta = db.notebookQueries.getRowMeta(op.table, op.pk).executeAsOneOrNull()
-                if (meta != null) {
-                    val stored = SyncOp(op.table, op.pk, meta.lww_site_id, meta.lww_op_seq, meta.lww_wall_ts, op.cols)
-                    if (!SyncMerge.less(stored, op)) continue // incoming did not strictly win
+            for (op in ops) {
+                when (op.table) {
+                    "notebook" -> db.notebookQueries.bumpNotebookModifiedAtMax(op.opTs, op.pk)
+                    "page" -> op.cols["notebook_id"]?.jsonPrimitive?.contentOrNull
+                        ?.let { db.notebookQueries.bumpNotebookModifiedAtMax(op.opTs, it) }
+                    "stroke", "text_box" -> op.cols["page_id"]?.jsonPrimitive?.contentOrNull
+                        ?.let { db.notebookQueries.notebookIdOfPage(it).executeAsOneOrNull() }
+                        ?.let { nb -> db.notebookQueries.bumpNotebookModifiedAtMax(op.opTs, nb) }
+                    "page_text_from_server" -> db.notebookQueries.clearPageTextStale(op.pk)
                 }
-                if (!writeWinningOp(op)) continue
-                db.notebookQueries.upsertRowMeta(op.table, op.pk, op.wallTs, op.opSeq, op.siteId)
             }
         }
-    }
-
-    /** Materialize a winning op's columns into its base table; true if applied. */
-    private fun writeWinningOp(op: SyncOp): Boolean {
-        when (op.table) {
-            "notebook" -> SyncWire.decodeNotebook(op.cols).let {
-                db.notebookQueries.applyUpsertNotebook(op.pk, it.name, it.sortOrder, it.createdAt, op.wallTs, it.folderId, it.deletedAt)
-                db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, op.pk)
-            }
-            "folder" -> SyncWire.decodeFolder(op.cols).let {
-                db.notebookQueries.applyUpsertFolder(op.pk, it.name, it.sortOrder, it.createdAt, op.wallTs, it.parentFolderId, it.deletedAt)
-            }
-            "page" -> SyncWire.decodePage(op.cols).let {
-                db.notebookQueries.applyUpsertPage(op.pk, it.notebookId, it.sortOrder, it.createdAt, it.template, it.templatePitchMm, it.deletedAt)
-                db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, it.notebookId)
-            }
-            "stroke" -> SyncWire.decodeStroke(op.cols).let {
-                db.notebookQueries.applyUpsertStroke(op.pk, it.pageId, it.color, it.penWidthMin, it.penWidthMax, it.points, it.z, it.createdAt, it.deletedAt)
-                db.notebookQueries.notebookIdOfPage(it.pageId).executeAsOneOrNull()
-                    ?.let { nb -> db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, nb) }
-            }
-            "text_box" -> SyncWire.decodeTextBox(op.cols).let {
-                db.notebookQueries.applyUpsertTextBox(
-                    op.pk, it.pageId, it.x, it.y, it.width, it.height, it.text, it.fontName,
-                    it.fontSize, it.color, it.weight, it.borderWidth, it.z, it.createdAt, it.deletedAt
-                )
-                db.notebookQueries.notebookIdOfPage(it.pageId).executeAsOneOrNull()
-                    ?.let { nb -> db.notebookQueries.bumpNotebookModifiedAtMax(op.wallTs, nb) }
-            }
-            // Server-/future-authored recognized text. pk = the page's ULID. Deliberately does NOT
-            // bump the owning notebook's modified_at — OCR text is not a user edit, so it must not
-            // resurface the notebook in "recently edited".
-            "page_text_from_server" -> SyncWire.decodePageText(op.cols).let {
-                db.notebookQueries.applyUpsertPageTextFromServer(op.pk, it.text, it.ocrAt, it.model, it.createdAt, it.deletedAt)
-            }
-            "page_text_from_client" -> SyncWire.decodePageText(op.cols).let {
-                db.notebookQueries.applyUpsertPageTextFromClient(op.pk, it.text, it.ocrAt, it.model, it.createdAt, it.deletedAt)
-            }
-            else -> return false // unknown table: skip (a relayed op for a table we don't model)
-        }
-        return true
     }
 
     /**

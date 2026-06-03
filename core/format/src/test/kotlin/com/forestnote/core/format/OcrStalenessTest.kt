@@ -5,6 +5,9 @@ import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.ZBand
+import io.rhizome.core.Op
+import io.rhizome.core.WireCodec
+import kotlinx.serialization.json.buildJsonObject
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -222,9 +225,9 @@ class OcrStalenessTest {
 
     @Test
     fun `stale_at is NOT in the sync wire knownCols for page_text_from_server`() {
-        // If this fires, someone bumped the wire schema by accident — review
-        // SyncProtocol.SCHEMA_HASH and the v3 grace window with UB before re-running.
-        val cols = SyncMerge.knownCols["page_text_from_server"]
+        // If this fires, someone bumped the wire schema by accident — review ForestNoteRegistry
+        // (it must reproduce v3 724411eb…) and the grace window with UB before re-running.
+        val cols = ForestNoteRegistry.registry.knownCols["page_text_from_server"]
         assertNotNull(cols)
         assertFalse("stale_at" in cols, "stale_at must stay local-only; was found in wire knownCols")
     }
@@ -233,9 +236,36 @@ class OcrStalenessTest {
     fun `stale_at is NOT in the sync wire knownCols for page_text_from_client`() {
         // Same invariant for the reserved client-side sibling — it doesn't have stale_at
         // today (only server-OCR rows do), but the wire contract must stay v3-pure.
-        val cols = SyncMerge.knownCols["page_text_from_client"]
+        val cols = ForestNoteRegistry.registry.knownCols["page_text_from_client"]
         assertNotNull(cols)
         assertFalse("stale_at" in cols)
+    }
+
+    @Test
+    fun `a relayed server-OCR op clears the local stale marker`() {
+        // The FN-specific post-apply hook in NotebookRepository.applySyncOps: the registry-driven
+        // adapter upserts only wire columns, so clearing the LOCAL-ONLY stale_at is done by FN.
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver) { 1000L }
+        val pageId = repo.currentPageId()
+        seedOcr(driver, pageId)
+        repo.saveStroke(aStroke()) // a local mutation flips stale_at
+        assertTrue(repo.loadPageTextFromServer(pageId)!!.isStale, "precondition: stale after a local edit")
+
+        val def = ForestNoteRegistry.registry.byName.getValue("page_text_from_server")
+        val values = mapOf<String, Any?>(
+            "text" to "fresh server OCR", "ocr_at" to 1700_000_002_000L, "model" to "m", "created_at" to 0L,
+        )
+        val op = Op(
+            "page_text_from_server", pageId, "0000000000000000000000RMT0", 1, 9_000_000_000L,
+            buildJsonObject { for (c in def.columns) put(c.name, WireCodec.encode(c.type, values[c.name])) },
+        )
+        repo.applySyncOps(listOf(op))
+
+        val r = repo.loadPageTextFromServer(pageId)!!
+        assertFalse(r.isStale, "a relayed server-OCR op clears the local stale marker")
+        assertEquals("fresh server OCR", r.text)
+        repo.close()
     }
 
     private fun readStaleAt(driver: JdbcSqliteDriver, pageId: String): Long? {

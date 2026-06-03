@@ -2,12 +2,12 @@ package com.forestnote.app.notes
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.forestnote.core.format.NotebookRepository
-import com.forestnote.core.sync.SyncOutcome
-import com.forestnote.core.sync.SyncRequest
-import com.forestnote.core.sync.SyncResponse
-import com.forestnote.core.sync.SyncResult
-import com.forestnote.core.sync.SyncTransport
-import com.forestnote.core.sync.WireOp
+import io.rhizome.core.SyncOutcome
+import io.rhizome.core.SyncRequest
+import io.rhizome.core.SyncResponse
+import io.rhizome.core.SyncResult
+import io.rhizome.core.SyncTransport
+import io.rhizome.core.WireOp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -47,7 +47,7 @@ class SyncControllerTest {
     }
 
     private fun relayedNotebook(pk: String, name: String) = WireOp(
-        table = "notebook", pk = pk, siteId = "0000000000000000000000PEER", opSeq = 1, wallTs = 3000,
+        table = "notebook", pk = pk, siteId = "0000000000000000000000PEER", opSeq = 1, opTs = 3000,
         cols = buildJsonObject { put("created_at", 3000); put("deleted_at", null as String?); put("folder_id", null as String?); put("name", name); put("sort_order", 0) }
     )
 

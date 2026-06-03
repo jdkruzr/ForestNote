@@ -38,6 +38,13 @@ dependencies {
     implementation(project(":core:format"))
     implementation(project(":core:sync"))
 
+    // RhizomeSync engine + transport (Phase 8 cutover): SyncController drives io.rhizome.core.SyncEngine
+    // over io.rhizome.http.HttpUrlTransport, and NotebookStore.syncLocalStore() returns an
+    // io.rhizome.core.SyncLocalStore. core:sync only re-exports its pure policy now, so app:notes
+    // declares these directly (implementation deps aren't transitive).
+    implementation(libs.findLibrary("rhizome-core").get())
+    implementation(libs.findLibrary("rhizome-http").get())
+
     // Ink API for erase tools (geometry types used indirectly via StrokeGeometry)
     implementation(libs.findLibrary("androidx-ink-geometry").get())
 

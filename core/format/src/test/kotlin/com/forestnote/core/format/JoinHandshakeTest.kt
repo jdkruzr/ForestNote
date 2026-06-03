@@ -3,27 +3,46 @@ package com.forestnote.core.format
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
+import io.rhizome.core.Op
+import io.rhizome.core.WireCodec
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * Sync Phase 5 — the initial-sync handshake for a device JOINING an existing account. The enable
- * flow is split so a join can: mint the site_id (capture goes live), pull first, drop the
- * untouched bootstrap notebook if the server delivered real content, then backfill only the
- * genuinely-local rows. The key invariant making this safe: [backfillOutbox] enqueues a row ONLY
- * if it has no `sync_row_meta` — so a row that arrived via the pull (already stamped) is never
- * re-uploaded, and backfill is idempotent.
+ * The initial-sync handshake for a device JOINING an existing account. The enable flow is split so a
+ * join can: mint the site_id (capture goes live), pull first, drop the untouched bootstrap notebook
+ * if the server delivered real content, then backfill the local rows.
+ *
+ * Phase 8 note: backfill now runs through the RhizomeSync adapter, which captures EVERY capturable
+ * row each call — it does NOT skip rows that arrived via a pull (the old `lacksMeta` optimization is
+ * gone). That is idempotent under the server's row-level LWW (a re-captured row carries a higher HLC
+ * `op_ts` and re-asserts identical data), just not idempotent in outbox COUNT — so these tests no
+ * longer assert a stable pending-ops size across repeated backfills.
  */
 class JoinHandshakeTest {
 
     private val REMOTE = "0000000000000000000000RMT0"
 
     private fun stroke(x: Int) = Stroke(points = listOf(StrokePoint(x, x, 500, 1000L)), color = Stroke.COLOR_BLACK)
-    private fun cols(json: String) = Json.parseToJsonElement(json).jsonObject
+
+    private fun wireCols(table: String, values: Map<String, Any?>): JsonObject {
+        val def = ForestNoteRegistry.registry.byName.getValue(table)
+        return buildJsonObject { for (c in def.columns) put(c.name, WireCodec.encode(c.type, values[c.name])) }
+    }
+
+    private fun nbOp(pk: String, opSeq: Long, opTs: Long, name: String) = Op(
+        "notebook", pk, REMOTE, opSeq, opTs,
+        wireCols("notebook", mapOf("name" to name, "sort_order" to 0L, "created_at" to opTs)),
+    )
+
+    private fun pageOp(pk: String, nb: String, opSeq: Long, opTs: Long) = Op(
+        "page", pk, REMOTE, opSeq, opTs,
+        wireCols("page", mapOf("notebook_id" to nb, "sort_order" to 0L, "created_at" to opTs)),
+    )
 
     @Test
     fun `joined flag defaults false and round-trips`() {
@@ -48,29 +67,12 @@ class JoinHandshakeTest {
     }
 
     @Test
-    fun `backfillOutbox enqueues local rows and is idempotent`() {
+    fun `backfillOutbox captures the existing local rows`() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val repo = NotebookRepository.forTesting(driver) { 1000L }
         repo.mintSiteId()
         repo.backfillOutbox()
-        val first = repo.pendingOps().size
-        assertTrue(first >= 2, "the bootstrap notebook + page are enqueued")
-        repo.backfillOutbox()
-        assertEquals(first, repo.pendingOps().size, "a second backfill re-enqueues nothing")
-        repo.close()
-    }
-
-    @Test
-    fun `backfill does not re-upload a row that arrived via pull`() {
-        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
-        val repo = NotebookRepository.forTesting(driver) { 1000L }
-        repo.mintSiteId()
-        val remoteNb = "00000000000000000000000RMB"
-        repo.applySyncOps(listOf(SyncOp("notebook", remoteNb, REMOTE, 1, 3000, cols(SyncWire.notebookCols(null, "Pulled", 0, 3000, null)))))
-
-        repo.backfillOutbox()
-
-        assertTrue(repo.pendingOps().none { it.pk == remoteNb }, "a pulled row already has provenance and is never backfilled")
+        assertTrue(repo.pendingOps().size >= 2, "the bootstrap notebook + its first page are captured")
         repo.close()
     }
 
@@ -102,12 +104,7 @@ class JoinHandshakeTest {
         // Pull a real notebook + page from the server.
         val remoteNb = "00000000000000000000000RMB"
         val remotePg = "00000000000000000000000RMP"
-        repo.applySyncOps(
-            listOf(
-                SyncOp("notebook", remoteNb, REMOTE, 1, 3000, cols(SyncWire.notebookCols(null, "Real", 0, 3000, null))),
-                SyncOp("page", remotePg, REMOTE, 2, 3000, cols(SyncWire.pageCols(remoteNb, 0, 3000, null, null, null)))
-            )
-        )
+        repo.applySyncOps(listOf(nbOp(remoteNb, 1, 3000, "Real"), pageOp(remotePg, remoteNb, 2, 3000)))
 
         repo.discardBootstrapNotebook(bootstrap)
 

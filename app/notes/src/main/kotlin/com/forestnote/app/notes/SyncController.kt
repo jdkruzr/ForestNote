@@ -1,13 +1,14 @@
 package com.forestnote.app.notes
 
+import com.forestnote.core.format.ForestNoteRegistry
 import com.forestnote.core.sync.SyncBackoff
-import com.forestnote.core.sync.SyncConfig
-import com.forestnote.core.sync.SyncEngine
 import com.forestnote.core.sync.SyncJoinPlan
-import com.forestnote.core.sync.SyncResult
-import com.forestnote.core.sync.SyncStatus
-import com.forestnote.core.sync.SyncTransport
-import com.forestnote.core.sync.HttpUrlTransport
+import io.rhizome.core.SyncConfig
+import io.rhizome.core.SyncEngine
+import io.rhizome.core.SyncResult
+import io.rhizome.core.SyncStatus
+import io.rhizome.core.SyncTransport
+import io.rhizome.http.HttpUrlTransport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -73,7 +74,7 @@ class SyncController(
     suspend fun runSession(): SyncResult = mutex.withLock {
         val cfg = config() ?: run { log("runSession: sync not configured"); return@withLock notEnabled() }
         log("runSession: endpoint=${cfg.endpoint}")
-        val engine = SyncEngine(store.syncLocalStore(), transportFactory(cfg), log = log)
+        val engine = SyncEngine(store.syncLocalStore(), transportFactory(cfg), schemaHash = ForestNoteRegistry.registry.schemaHash(), log = log)
         _status.value = SyncStatus.Syncing
         var attempt = 0
         while (true) {
@@ -106,7 +107,7 @@ class SyncController(
             log("enableAndJoin: no server configured — enabled locally, backfilled for later upload")
             return@withLock notEnabled()
         }
-        val engine = SyncEngine(store.syncLocalStore(), transportFactory(cfg), log = log)
+        val engine = SyncEngine(store.syncLocalStore(), transportFactory(cfg), schemaHash = ForestNoteRegistry.registry.schemaHash(), log = log)
         _status.value = SyncStatus.Syncing
 
         val pull = engine.syncOnce()

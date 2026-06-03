@@ -11,39 +11,44 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Sync Phase 2: every local mutation, while sync is ENABLED, appends a full-row-UPSERT op to the
- * `outbox` and stamps `sync_row_meta` with this device's authoring provenance — all inside the
- * mutation's own transaction (the single-writer chokepoint). When sync is disabled, nothing is
+ * Capture (Phase 8): every local mutation, while sync is ENABLED, appends one full-row-UPSERT op to
+ * the RhizomeSync adapter's `rhizome_outbox` and stamps `rhizome_row_meta` with this device's
+ * provenance — all through [NotebookRepository.enqueueOp] → [SqliteStorageAdapter.capture], inside
+ * the mutation's own transaction (the single-writer chokepoint). When sync is disabled, nothing is
  * captured. Enabling sync backfills an op for every existing row so the pre-sync library uploads.
+ *
+ * The wire `cols` JSON is byte-identical to the legacy SyncWire encoding (proven by rhizome-sqlite's
+ * own byte-parity oracle), so the cols-content assertions below are unchanged. Op TIMESTAMPS are now
+ * the HLC `op_ts` (monotone, ≥ the mutation clock) rather than the raw clock, so those checks use ≥.
  */
 class OutboxCaptureTest {
 
-    private data class OutboxRow(val opSeq: Long, val table: String, val pk: String, val wallTs: Long, val payload: String)
+    private data class OutboxRow(val opSeq: Long, val table: String, val pk: String, val opTs: Long, val cols: String)
 
     private fun outbox(driver: JdbcSqliteDriver): List<OutboxRow> {
         val out = mutableListOf<OutboxRow>()
         driver.executeQuery(
             null,
-            "SELECT op_seq, table_name, pk, wall_ts, payload FROM outbox ORDER BY op_seq",
+            "SELECT op_seq, tbl, pk, op_ts, cols FROM rhizome_outbox ORDER BY op_seq",
             { c ->
                 while (c.next().value) {
                     out.add(OutboxRow(c.getLong(0)!!, c.getString(1)!!, c.getString(2)!!, c.getLong(3)!!, c.getString(4)!!))
                 }
                 QueryResult.Value(Unit)
             },
-            0
+            0,
         )
         return out
     }
 
-    /** (lww_wall_ts, lww_op_seq, lww_site_id) for a row, or null if unstamped. */
+    /** (op_ts, op_seq, site_id) for a row, or null if unstamped. */
     private fun rowMeta(driver: JdbcSqliteDriver, table: String, pk: String): Triple<Long, Long, String>? {
         var r: Triple<Long, Long, String>? = null
         driver.executeQuery(
             null,
-            "SELECT lww_wall_ts, lww_op_seq, lww_site_id FROM sync_row_meta WHERE table_name = ? AND pk = ?",
+            "SELECT op_ts, op_seq, site_id FROM rhizome_row_meta WHERE tbl = ? AND pk = ?",
             { c -> if (c.next().value) r = Triple(c.getLong(0)!!, c.getLong(1)!!, c.getString(2)!!); QueryResult.Value(Unit) },
-            2
+            2,
         ) { bindString(0, table); bindString(1, pk) }
         return r
     }
@@ -78,14 +83,15 @@ class OutboxCaptureTest {
     }
 
     @Test
-    fun `enableSync is idempotent and returns the same site id`() {
+    fun `enableSync returns a stable site id`() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val repo = NotebookRepository.forTesting(driver) { 1000L }
         val first = repo.enableSync()
-        val backfillCount = outbox(driver).size
         val second = repo.enableSync()
         assertEquals(first, second, "site id is stable across enableSync calls")
-        assertEquals(backfillCount, outbox(driver).size, "second enableSync does not re-backfill")
+        // NOTE: unlike the legacy lacksMeta backfill, the adapter re-captures all rows each backfill
+        // (idempotent under server LWW, not in outbox count), so the op count is intentionally NOT
+        // asserted stable here.
         repo.close()
     }
 
@@ -103,7 +109,7 @@ class OutboxCaptureTest {
             null,
             "INSERT INTO text_box(id, page_id, x, y, width, height, text, font_name, font_size, color, weight, border_width, z, created_at) " +
                 "VALUES ('00000000000000000000000OLD', ?, 0, 0, 100, 100, 'old', '', 200, -16777216, 400, 0, 0, 1000)",
-            1
+            1,
         ) { bindString(0, pg) }
         driver.execute(null, "UPDATE sync_state SET backfill_version = 0", 0)
 
@@ -111,11 +117,11 @@ class OutboxCaptureTest {
 
         assertTrue(
             outbox(driver).any { it.table == "text_box" && it.pk == "00000000000000000000000OLD" },
-            "the pre-existing text box is backfilled once the schema generation advances"
+            "the pre-existing text box is backfilled once the schema generation advances",
         )
         val count = outbox(driver).size
-        repo.rebackfillIfSchemaAdvanced() // caught up now → no-op
-        assertEquals(count, outbox(driver).size, "rebackfill is idempotent once the version is current")
+        repo.rebackfillIfSchemaAdvanced() // version is current now → the guard makes this a no-op
+        assertEquals(count, outbox(driver).size, "rebackfill is gated by backfill_version, so it runs once")
         repo.close()
     }
 
@@ -134,15 +140,15 @@ class OutboxCaptureTest {
         val op = ops.last()
         assertEquals("stroke", op.table)
         assertEquals(s.id, op.pk)
-        assertEquals(5000L, op.wallTs, "op wall_ts is the mutation clock")
-        assertTrue(op.payload.contains("\"color\":4278190080"), "ARGB black is encoded as unsigned int64 on the wire")
-        assertTrue(op.payload.contains("\"deleted_at\":null"), "a live stroke has null deleted_at")
-        assertTrue(Regex("\"points\":\"[A-Za-z0-9+/=]+\"").containsMatchIn(op.payload), "points are base64-encoded")
+        assertTrue(op.opTs >= 5000L, "op op_ts is the HLC (≥ the mutation clock)")
+        assertTrue(op.cols.contains("\"color\":4278190080"), "ARGB black is encoded as unsigned int64 on the wire")
+        assertTrue(op.cols.contains("\"deleted_at\":null"), "a live stroke has null deleted_at")
+        assertTrue(Regex("\"points\":\"[A-Za-z0-9+/=]+\"").containsMatchIn(op.cols), "points are base64-encoded")
 
         val meta = rowMeta(driver, "stroke", s.id)
         assertNotNull(meta, "row meta stamped for the new stroke")
-        assertEquals(5000L, meta!!.first, "lww_wall_ts matches the op")
-        assertEquals(site, meta.third, "lww_site_id is this device")
+        assertTrue(meta!!.first >= 5000L, "row-meta op_ts matches the op (HLC ≥ clock)")
+        assertEquals(site, meta.third, "row-meta site_id is this device")
         repo.close()
     }
 
@@ -157,7 +163,7 @@ class OutboxCaptureTest {
         repo.deleteStroke(s.id)
 
         val op = outbox(driver).last { it.pk == s.id }
-        assertTrue(op.payload.contains("\"deleted_at\":7000"), "the erase op carries a stamped deleted_at (tombstone upsert)")
+        assertTrue(op.cols.contains("\"deleted_at\":7000"), "the erase op carries a stamped deleted_at (tombstone upsert)")
         repo.close()
     }
 
@@ -169,7 +175,7 @@ class OutboxCaptureTest {
         val nid = repo.createNotebook("New")
         val ops = outbox(driver)
         assertTrue(ops.any { it.table == "notebook" && it.pk == nid }, "new notebook captured")
-        assertTrue(ops.any { it.table == "page" && it.payload.contains("\"notebook_id\":\"$nid\"") }, "its first page captured")
+        assertTrue(ops.any { it.table == "page" && it.cols.contains("\"notebook_id\":\"$nid\"") }, "its first page captured")
         repo.close()
     }
 
@@ -180,7 +186,7 @@ class OutboxCaptureTest {
         repo.enableSync()
         val nid = repo.currentNotebookId()
         repo.renameNotebook(nid, "Renamed")
-        assertTrue(outbox(driver).last { it.table == "notebook" && it.pk == nid }.payload.contains("\"name\":\"Renamed\""))
+        assertTrue(outbox(driver).last { it.table == "notebook" && it.pk == nid }.cols.contains("\"name\":\"Renamed\""))
         repo.close()
     }
 
@@ -191,7 +197,7 @@ class OutboxCaptureTest {
         repo.enableSync()
         val gone = repo.createNotebook("Gone")
         repo.deleteNotebook(gone)
-        assertTrue(outbox(driver).last { it.table == "notebook" && it.pk == gone }.payload.contains("\"deleted_at\":3000"))
+        assertTrue(outbox(driver).last { it.table == "notebook" && it.pk == gone }.cols.contains("\"deleted_at\":3000"))
         repo.close()
     }
 
@@ -203,7 +209,7 @@ class OutboxCaptureTest {
         val fid = repo.createFolder("F", null)
         assertTrue(outbox(driver).any { it.table == "folder" && it.pk == fid }, "folder create captured")
         repo.renameFolder(fid, "F2")
-        assertTrue(outbox(driver).last { it.table == "folder" && it.pk == fid }.payload.contains("\"name\":\"F2\""))
+        assertTrue(outbox(driver).last { it.table == "folder" && it.pk == fid }.cols.contains("\"name\":\"F2\""))
         repo.close()
     }
 
@@ -216,8 +222,8 @@ class OutboxCaptureTest {
         val nA = repo.createNotebook("A", f1)
         repo.deleteFolder(f1)
         val ops = outbox(driver)
-        assertTrue(ops.last { it.table == "folder" && it.pk == f1 }.payload.contains("\"deleted_at\":9000"), "folder tombstoned op")
-        assertTrue(ops.last { it.table == "notebook" && it.pk == nA }.payload.contains("\"deleted_at\":9000"), "contained notebook tombstoned op")
+        assertTrue(ops.last { it.table == "folder" && it.pk == f1 }.cols.contains("\"deleted_at\":9000"), "folder tombstoned op")
+        assertTrue(ops.last { it.table == "notebook" && it.pk == nA }.cols.contains("\"deleted_at\":9000"), "contained notebook tombstoned op")
         repo.close()
     }
 
@@ -244,8 +250,8 @@ class OutboxCaptureTest {
         repo.switchPage(first)
         repo.deletePage(second)
         val ops = outbox(driver)
-        assertTrue(ops.last { it.table == "page" && it.pk == second }.payload.contains("\"deleted_at\":6000"), "page tombstone op")
-        assertTrue(ops.last { it.table == "stroke" && it.pk == s.id }.payload.contains("\"deleted_at\":6000"), "its stroke tombstone op")
+        assertTrue(ops.last { it.table == "page" && it.pk == second }.cols.contains("\"deleted_at\":6000"), "page tombstone op")
+        assertTrue(ops.last { it.table == "stroke" && it.pk == s.id }.cols.contains("\"deleted_at\":6000"), "its stroke tombstone op")
         repo.close()
     }
 
@@ -257,8 +263,8 @@ class OutboxCaptureTest {
         val pid = repo.currentPageId()
         repo.setPageTemplate(pid, PageTemplate.GRID, 7)
         val op = outbox(driver).last { it.table == "page" && it.pk == pid }
-        assertTrue(op.payload.contains("\"template\":\"GRID\""), "template captured")
-        assertTrue(op.payload.contains("\"template_pitch_mm\":7"), "pitch captured")
+        assertTrue(op.cols.contains("\"template\":\"GRID\""), "template captured")
+        assertTrue(op.cols.contains("\"template_pitch_mm\":7"), "pitch captured")
         repo.close()
     }
 
@@ -275,8 +281,8 @@ class OutboxCaptureTest {
         repo.clearPage()
         val ops = outbox(driver)
         assertEquals(before + 2, ops.size, "one tombstone op per cleared stroke")
-        assertTrue(ops.last { it.pk == a.id }.payload.contains("\"deleted_at\":8000"))
-        assertTrue(ops.last { it.pk == b.id }.payload.contains("\"deleted_at\":8000"))
+        assertTrue(ops.last { it.pk == a.id }.cols.contains("\"deleted_at\":8000"))
+        assertTrue(ops.last { it.pk == b.id }.cols.contains("\"deleted_at\":8000"))
         repo.close()
     }
 
@@ -292,8 +298,8 @@ class OutboxCaptureTest {
         val frag = stroke(200)
         repo.applyErase(removedIds = listOf(erased.id), added = listOf(frag))
         val ops = outbox(driver)
-        assertTrue(ops.last { it.pk == erased.id }.payload.contains("\"deleted_at\":9000"), "removed stroke tombstoned op")
-        assertTrue(ops.any { it.pk == frag.id && it.payload.contains("\"deleted_at\":null") }, "added fragment is a live op")
+        assertTrue(ops.last { it.pk == erased.id }.cols.contains("\"deleted_at\":9000"), "removed stroke tombstoned op")
+        assertTrue(ops.any { it.pk == frag.id && it.cols.contains("\"deleted_at\":null") }, "added fragment is a live op")
         repo.close()
     }
 }
