@@ -697,6 +697,10 @@ class NotebookStore(
     suspend fun syncMarkJoined() = onDb { it.setSyncJoined(true) }
     /** Re-backfill once if this joined device is behind the current synced-schema generation. */
     suspend fun syncRebackfillIfNeeded() = onDb { it.rebackfillIfSchemaAdvanced() }
+    /** §I.9: reset the cursor for a one-shot full re-pull if the synced-schema hash changed. */
+    suspend fun syncResetCursorIfSchemaChanged() = onDb { it.resetCursorIfSchemaChanged() }
+    /** Stamp the current schema hash as reconciled (after a successful join's full pull). */
+    suspend fun syncMarkSchemaReconciled() = onDb { it.markSchemaReconciled() }
 
     /** Read the persisted sync config (server URL + credentials), off-thread. */
     suspend fun syncSettings(): Settings = onDb { it.settings() }

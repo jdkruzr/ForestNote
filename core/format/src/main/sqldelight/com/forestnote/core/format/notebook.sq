@@ -546,6 +546,12 @@ UPDATE sync_state SET joined = ? WHERE id = 0;
 setBackfillVersion:
 UPDATE sync_state SET backfill_version = ? WHERE id = 0;
 
+-- Record the synced-schema hash this device has reconciled against (§I.9 schema-evolution).
+-- Stamped after a full pull (join, or a schema-change-triggered cursor reset); a later mismatch
+-- vs ForestNoteRegistry.schemaHash() drives a one-shot cursor=0 re-pull. See resetCursorIfSchemaChanged.
+setStoredSchemaHash:
+UPDATE sync_state SET stored_schema_hash = ? WHERE id = 0;
+
 -- Flip the run-once RhizomeSync-cutover gate after migrateLegacySyncToRhizome has copied the legacy
 -- sync tables into the rhizome_* tables (Phase 8 C5). Idempotent; only the first call does the copy.
 setRhizomeMigrated:

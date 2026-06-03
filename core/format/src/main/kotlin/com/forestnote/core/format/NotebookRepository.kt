@@ -1278,6 +1278,38 @@ class NotebookRepository private constructor(
     }
 
     /**
+     * §I.9 schema-evolution cursor reset. When this (already-joined) device's stored synced-schema
+     * hash differs from the current [ForestNoteRegistry] hash — because it just upgraded to a build
+     * with a changed wire schema, OR because it's the FIRST launch after the RhizomeSync cutover
+     * (where the `stored_schema_hash` column migrated in NULL) — reset the cursor to 0 so the next
+     * session re-pulls the entire relay log once and re-materializes every row under the new schema.
+     * The re-pull is idempotent under LWW (a row the device already has is a no-change winner), and
+     * the marker is rewritten to the current hash so this fires AT MOST ONCE per schema generation.
+     *
+     * Must run BEFORE the session, only for an enabled+joined device — a fresh join already pulls
+     * from cursor 0 and stamps the marker via [markSchemaReconciled], so it never needs the reset.
+     */
+    fun resetCursorIfSchemaChanged() {
+        if (runBlocking { syncStore.siteId() } == null) return
+        val current = ForestNoteRegistry.registry.schemaHash()
+        val stored = db.notebookQueries.getSyncState().executeAsOneOrNull()?.stored_schema_hash
+        if (stored == current) return
+        runBlocking { syncStore.setCursor(0) }
+        db.notebookQueries.setStoredSchemaHash(current)
+    }
+
+    /**
+     * Stamp the current [ForestNoteRegistry] schema hash as the generation this device has fully
+     * reconciled against — called after a successful join (which pulls the whole library from
+     * cursor 0). Without it a freshly-joined device would see a NULL marker on its next resume and
+     * do one redundant full re-pull via [resetCursorIfSchemaChanged]. No-op when sync is off.
+     */
+    fun markSchemaReconciled() {
+        if (runBlocking { syncStore.siteId() } == null) return
+        db.notebookQueries.setStoredSchemaHash(ForestNoteRegistry.registry.schemaHash())
+    }
+
+    /**
      * True iff the library is an untouched fresh install: exactly one live notebook with exactly
      * one live page, no strokes on it, and no folders. The join handshake captures this BEFORE
      * pulling so it can discard the auto-created bootstrap notebook once the server delivers real

@@ -121,6 +121,7 @@ class SyncController(
         val push = engine.syncOnce() // push the backfilled local content
         if (push is SyncResult.Success) {
             store.syncMarkJoined() // the full handshake completed — future sessions are plain syncs
+            store.syncMarkSchemaReconciled() // this full pull caught us up to the current schema gen
             log("enableAndJoin: join complete")
         }
         finish(push)
@@ -169,6 +170,10 @@ class SyncController(
                 // re-backfills its pre-existing rows of the new kind (e.g. text boxes) once before
                 // the session, so they upload too — not just rows touched after the upgrade.
                 store.syncRebackfillIfNeeded()
+                // §I.9: if the synced-schema hash changed (schema upgrade, or first launch after the
+                // RhizomeSync cutover where the marker migrated in NULL), reset the cursor so this
+                // session re-pulls the whole log once and re-materializes every row. Idempotent.
+                store.syncResetCursorIfSchemaChanged()
                 runSession()
             }
             startPeriodic(s.syncIntervalMinutes)
