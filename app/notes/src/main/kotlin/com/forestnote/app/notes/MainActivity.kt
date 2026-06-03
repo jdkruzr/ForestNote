@@ -1090,6 +1090,13 @@ class MainActivity : Activity() {
             onBulkMove = { ids -> showMoveTargetDialog(ids) },
             onBulkDelete = { ids -> confirmBulkDelete(ids) }
         ))
+        // Sync-on-close: returning to the Library (i.e. "closing" the notebook you were editing) is
+        // the moment matching the Settings label "Sync when returning to Library". Fire the dirty-gate
+        // sync now, AFTER show(), so the status flows into the just-shown Library's Sync cell
+        // (Syncing… → Synced) — visible feedback the close path otherwise never gave. The paired
+        // closeLibrary() call stays: it covers mutations made INSIDE the Library (notebook/folder
+        // delete/rename/move) that need pushing when you leave back to the editor.
+        syncIfDirty()
     }
 
     /**

@@ -47,6 +47,15 @@ class SecureCredentialsStoreTest {
         assertNull(store.syncCreds())
     }
 
+    @Test
+    fun `setSyncCreds writes both fields in one atomic call`() {
+        // The Settings "Save" button reads both EditTexts and writes them together via
+        // this atomic setter — never a read-modify-write of the gated syncCreds (which
+        // is null until both are set, and would clobber the partner field mid-entry).
+        store.setSyncCreds(SyncCredentials("ultrabridge", "ehh1701jqb"))
+        assertEquals(SyncCredentials("ultrabridge", "ehh1701jqb"), store.syncCreds())
+    }
+
     // --- caldavCreds round-trip ----------------------------------------------------
 
     @Test

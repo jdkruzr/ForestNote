@@ -140,6 +140,8 @@ class SettingsView {
         val caldavUserInput = view.findViewById<EditText>(R.id.input_caldav_username)
         val caldavPassInput = view.findViewById<EditText>(R.id.input_caldav_password)
         val caldavTestBtn = view.findViewById<Button>(R.id.btn_caldav_test)
+        val syncSaveBtn = view.findViewById<Button>(R.id.btn_sync_save)
+        val caldavSaveBtn = view.findViewById<Button>(R.id.btn_caldav_save)
         val binRetentionInput = view.findViewById<EditText>(R.id.input_bin_retention_days)
         val debugLogsCheck = view.findViewById<CheckBox>(R.id.check_debug_logs)
         val prefillTimestampCheck = view.findViewById<CheckBox>(R.id.check_prefill_timestamp)
@@ -227,13 +229,15 @@ class SettingsView {
         // Sync credentials go to ESP (post-migration source of truth). Reads are paired with
         // the same fallback used in [bind] so editing the field always writes to ESP, never
         // back to Settings — that one-way drain is the migration.
-        wireSecure(syncUserInput, isPassword = false, guard = { loading }) { user ->
-            val cur = secureCreds?.syncCreds()
-            secureCreds?.setSyncCreds(SyncCredentials(user, cur?.password.orEmpty()))
-        }
-        wireSecure(syncPassInput, isPassword = true, guard = { loading }) { pass ->
-            val cur = secureCreds?.syncCreds()
-            secureCreds?.setSyncCreds(SyncCredentials(cur?.username.orEmpty(), pass))
+        // Sync credentials save EXPLICITLY via the Save button — never on per-field blur.
+        // The button snapshots both EditTexts and writes them in one atomic setSyncCreds,
+        // so there's no "did the field commit?" ambiguity and no read-modify-write that
+        // could clobber a partner field (the bug that left username empty on the wire).
+        syncSaveBtn.setOnClickListener {
+            val u = syncUserInput.text?.toString().orEmpty().trim()
+            val p = syncPassInput.text?.toString().orEmpty()
+            secureCreds?.setSyncCreds(SyncCredentials(u, p))
+            Toast.makeText(view.context, "Sync credentials saved", Toast.LENGTH_SHORT).show()
         }
         // Interval is a non-negative integer; blank/invalid commits as 0 (= off).
         wireUrl(syncIntervalInput) { s, v -> s.copy(syncIntervalMinutes = v.toIntOrNull()?.coerceAtLeast(0) ?: 0) }
@@ -244,17 +248,14 @@ class SettingsView {
         // All three CalDAV fields write to ESP. Setting [collectionUrl]/[username]/[password]
         // independently is fine because [SecureCredentialsStore.caldavCreds] returns null until
         // all three are non-blank — so a half-typed config never trips the recognize pill.
-        wireSecure(caldavInput, isPassword = false, guard = { loading }) { url ->
-            val cur = secureCreds?.caldavCreds()
-            secureCreds?.setCaldavCreds(CalDavCredentials(url, cur?.username.orEmpty(), cur?.password.orEmpty()))
-        }
-        wireSecure(caldavUserInput, isPassword = false, guard = { loading }) { user ->
-            val cur = secureCreds?.caldavCreds()
-            secureCreds?.setCaldavCreds(CalDavCredentials(cur?.collectionUrl.orEmpty(), user, cur?.password.orEmpty()))
-        }
-        wireSecure(caldavPassInput, isPassword = true, guard = { loading }) { pass ->
-            val cur = secureCreds?.caldavCreds()
-            secureCreds?.setCaldavCreds(CalDavCredentials(cur?.collectionUrl.orEmpty(), cur?.username.orEmpty(), pass))
+        // CalDAV credentials also save explicitly (all three fields are one credential
+        // tuple — collectionUrl/username/password — written atomically on Save).
+        caldavSaveBtn.setOnClickListener {
+            val url = caldavInput.text?.toString().orEmpty().trim()
+            val u = caldavUserInput.text?.toString().orEmpty().trim()
+            val p = caldavPassInput.text?.toString().orEmpty()
+            secureCreds?.setCaldavCreds(CalDavCredentials(url, u, p))
+            Toast.makeText(view.context, "CalDAV credentials saved", Toast.LENGTH_SHORT).show()
         }
         caldavTestBtn.setOnClickListener { onTestCalDavConnection(view) }
         // Retention is a non-negative integer; blank/invalid commits as 0 (= never).

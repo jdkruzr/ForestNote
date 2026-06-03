@@ -77,6 +77,21 @@ class JoinHandshakeTest {
     }
 
     @Test
+    fun `backfillOutbox is idempotent — re-running at the same version does not re-pile the outbox`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver) { 1000L }
+        repo.mintSiteId()
+        repo.backfillOutbox()
+        val afterFirst = repo.pendingOps().size
+        assertTrue(afterFirst >= 2, "first backfill seeds the outbox")
+        // A join that keeps retrying re-calls backfillOutbox; it must NOT re-capture the whole corpus
+        // (the death-spiral bug: stacked duplicate backfills run op_seq away and bloat the relay).
+        repo.backfillOutbox()
+        assertEquals(afterFirst, repo.pendingOps().size, "second backfill at the same version is a no-op")
+        repo.close()
+    }
+
+    @Test
     fun `isPristineBootstrap is true on a fresh library and false once used`() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val repo = NotebookRepository.forTesting(driver) { 1000L }

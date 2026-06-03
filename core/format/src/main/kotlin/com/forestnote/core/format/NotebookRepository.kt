@@ -1260,6 +1260,15 @@ class NotebookRepository private constructor(
      */
     fun backfillOutbox() {
         if (runBlocking { syncStore.siteId() } == null) return
+        // Idempotent: seed the outbox with every row ONCE per backfill generation. Without this gate a
+        // join that keeps retrying (enableAndJoin re-runs until `joined` is set) re-captures the whole
+        // corpus every attempt, stacking duplicate ops in the outbox AND the relay (op_seq runs away,
+        // the push never drains, the relay bloats until OpsSince times out — a death spiral). The
+        // version is bumped only by a schema generation change (SYNC_BACKFILL_VERSION), which is the
+        // one legitimate reason to re-seed. Already-acked rows live on the server; un-acked ones are
+        // still queued — either way re-capturing them is wrong.
+        val state = db.notebookQueries.getSyncState().executeAsOneOrNull()
+        if (state != null && state.backfill_version >= SYNC_BACKFILL_VERSION) return
         runBlocking { syncStore.backfill() }
         db.notebookQueries.setBackfillVersion(SYNC_BACKFILL_VERSION.toLong())
     }

@@ -151,6 +151,13 @@
                 android:inputType="textPassword"
                 android:imeOptions="actionDone" />
 
+            <Button
+                android:id="@+id/btn_sync_save"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Save credentials"
+                android:layout_marginTop="8dp" />
+
             <TextView style="@style/SettingsLabel" android:text="Auto-sync every N minutes (0 = off)" />
             <EditText
                 android:id="@+id/input_sync_interval"
@@ -268,6 +275,13 @@
                 android:hint="password"
                 android:inputType="textPassword"
                 android:imeOptions="actionDone" />
+
+            <Button
+                android:id="@+id/btn_caldav_save"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Save credentials"
+                android:layout_marginTop="8dp" />
 
             <Button
                 android:id="@+id/btn_caldav_test"
