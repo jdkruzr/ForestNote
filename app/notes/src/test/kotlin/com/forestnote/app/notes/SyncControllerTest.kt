@@ -61,11 +61,14 @@ class SyncControllerTest {
         store.updateSettings({ it.copy(syncServerUrl = "https://ub.example.org", syncUsername = "u", syncPassword = "p") }, {})
         val bootstrapId = store.syncCurrentNotebookId()
 
-        // Pull delivers a real notebook; the follow-up push has nothing to send.
+        // Pull delivers a real notebook; the follow-up push backfills the surviving (pulled) rows.
+        // The push response must ACK those ops (accepted_through covers them) — post-0.8.1 the session
+        // loops until BOTH has_more is false AND the outbox is drained, so a push acked through 0 would
+        // (correctly) keep looping for the un-pruned backfill and exhaust the scripted queue.
         val transport = ScriptedTransport(
             listOf(
                 ok(acceptedThrough = 0, cursor = 5, ops = listOf(relayedNotebook("00000000000000000000000RMB", "Real"))),
-                ok(acceptedThrough = 0, cursor = 5)
+                ok(acceptedThrough = 2, cursor = 5)
             )
         )
         val controller = SyncController(store, CoroutineScope(Dispatchers.Unconfined), transportFactory = { transport }, now = { 42 })
