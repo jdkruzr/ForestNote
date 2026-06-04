@@ -30,6 +30,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 // pattern: Imperative Shell
@@ -677,11 +680,25 @@ class NotebookStore(
         }
 
     /** The engine's persistence view — every call lands on the single DB-writer thread. */
+    /**
+     * Monotonic counter bumped each time a sync session applies a NON-EMPTY batch of relayed rows
+     * (a pull that actually changed local data). The UI collects this to refresh the on-screen Library
+     * after sync writes pulled content — without it a join's pull lands in the DB but the showing
+     * Library never re-queries, so it looks like "synced nothing" until an app restart. Gating on
+     * `ops.isNotEmpty()` keeps no-op periodic syncs from repainting the e-ink grid (no flicker).
+     * StateFlow.value is safe to set from the DB executor thread; the collector hops to the UI thread.
+     */
+    private val _remoteApplied = MutableStateFlow(0L)
+    val remoteApplied: StateFlow<Long> = _remoteApplied.asStateFlow()
+
     fun syncLocalStore(): SyncLocalStore = object : SyncLocalStore {
         override suspend fun siteId(): String? = onDb { it.syncSiteId() }
         override suspend fun cursor(): Long = onDb { it.syncCursor() }
         override suspend fun pendingOps(): List<Op> = onDb { it.pendingOps() }
-        override suspend fun applyRelayed(ops: List<Op>) = onDb { it.applySyncOps(ops) }
+        override suspend fun applyRelayed(ops: List<Op>) = onDb {
+            it.applySyncOps(ops)
+            if (ops.isNotEmpty()) _remoteApplied.value += 1
+        }
         override suspend fun markAckedThrough(through: Long) = onDb { it.markAckedThrough(through) }
         override suspend fun setCursor(cursor: Long) = onDb { it.setSyncCursor(cursor) }
     }

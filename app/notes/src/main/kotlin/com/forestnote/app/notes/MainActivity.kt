@@ -223,6 +223,18 @@ class MainActivity : Activity() {
                 if (status is SyncStatus.Synced) refreshOcrButtonState()
             }
         }
+        // When a sync session applies pulled rows (e.g. a join's full re-pull), refresh the on-screen
+        // Library so freshly synced notebooks/folders actually appear — otherwise the rows land in the
+        // DB but the showing grid never re-queries and it looks like "synced nothing" until a restart.
+        // remoteApplied bumps ONLY on a non-empty apply, so idle periodic syncs never repaint (no e-ink
+        // flicker). syncScope is main-scoped, so touching the view here is safe. The editor isn't
+        // force-reloaded (it'd interrupt drawing + flash e-ink); the fresh-join case lands in the
+        // Library anyway, which is the reported symptom.
+        syncScope.launch {
+            store.remoteApplied.collect { rev ->
+                if (rev > 0L && libraryView.isShowing) libraryView.reload()
+            }
+        }
 
         // Load layout from XML
         setContentView(R.layout.activity_main)
@@ -1131,9 +1143,8 @@ class MainActivity : Activity() {
      */
     private fun closeLibrary() {
         libraryView.hide()
-        // Boox: resume firmware input ownership now the overlay is gone (paired with openLibrary's
-        // suspend); the editor repaint below brings the canvas back. No-op on Viwoods/Generic.
-        if (backend.ownsInput()) backend.setInputSuspended(false)
+        // revealEditorChrome() below resumes firmware input ownership (paired with openLibrary's
+        // suspend) — it's the shared editor-entry chokepoint, so the resume lives there now.
         revealEditorChrome()
         if (!editorLoaded) {
             // First reveal of the editor this session, OR a deferred reload after a
@@ -1178,6 +1189,15 @@ class MainActivity : Activity() {
     private fun revealEditorChrome() {
         findViewById<View>(R.id.navbar)?.visibility = View.VISIBLE
         drawView.visibility = View.VISIBLE
+        // Boox: the editor is the visible surface again, so resume firmware input ownership (paired
+        // with openLibrary's suspend). This is the SINGLE chokepoint every editor-entry path funnels
+        // through — closeLibrary, goToNotebook, goToNotebookPage — so opening a notebook by TAPPING a
+        // Library card resumes too, not just the system-back closeLibrary path. Without it, a card tap
+        // landed in the editor with input still suspended: Pen drew nothing (firmware off + the stylus
+        // MotionEvent swallowed) while Lasso (ordinary dispatch) still worked. Idempotent; no-op on
+        // Viwoods/Generic. applyFirmwareEnableState then gates on the active tool, so a non-Pen tool
+        // stays firmware-off regardless.
+        if (backend.ownsInput()) backend.setInputSuspended(false)
     }
 
     /**
