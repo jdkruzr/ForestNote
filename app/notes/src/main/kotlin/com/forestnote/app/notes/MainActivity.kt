@@ -90,6 +90,18 @@ class MainActivity : Activity() {
     /** Whether the editor's ink/text has been painted this session. False until we either launch
      *  into the editor or first reveal it from the Library — see the launch sequencing in onCreate. */
     private var editorLoaded = false
+
+    /** True when the current editor session was navigated INTO from the Library (a card/search/create
+     *  tap → [goToNotebook]/[goToNotebookPage]), so the Library is its logical parent: system Back
+     *  returns to the Library instead of exiting the app (#29). Cleared for root entries — cold-launch
+     *  resume (default false) and deep links ([routeToDeepLink]). */
+    private var editorOpenedFromLibrary = false
+
+    /** True when the Library currently on screen was reached by backing OUT of a [editorOpenedFromLibrary]
+     *  editor (vs. peeking at it via the navbar icon over a root editor). Set per-open in [openLibrary];
+     *  drives whether Back from the Library exits the app (editor→Library→exit) or returns to the editor
+     *  behind it (icon peek). */
+    private var libraryReachedByBack = false
     // Full-screen Settings overlay (B2). Reuses this Activity's single store; shown over
     // the editor and dismissed by its Back header or the system back button.
     private val settingsView = SettingsView()
@@ -939,6 +951,10 @@ class MainActivity : Activity() {
         if (settingsView.isShowing) settingsView.hide()
         if (recycleBinView.isShowing) recycleBinView.hide()
         goToNotebookPage(target.notebookId, target.pageId)
+        // A deep link is a ROOT entry into the editor (the user came from outside the app, not from the
+        // Library), so Back exits rather than opening a Library the user never visited — undo the
+        // from-Library marker goToNotebookPage just set (#29).
+        editorOpenedFromLibrary = false
     }
 
     /** Reload whatever page the repo currently considers active (after a delete). */
@@ -961,6 +977,7 @@ class MainActivity : Activity() {
         // the freshly opened notebook actually paints. Idempotent otherwise.
         revealEditorChrome()
         editorLoaded = true
+        editorOpenedFromLibrary = true // navigated in from the Library → Back returns there (#29)
         drawView.clearAll()
         store.switchNotebook(notebookId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
@@ -981,6 +998,7 @@ class MainActivity : Activity() {
         // Same revival as goToNotebook — search can route us here from the eager Library.
         revealEditorChrome()
         editorLoaded = true
+        editorOpenedFromLibrary = true // navigated in from the Library → Back returns there (#29)
         drawView.clearAll()
         store.switchNotebookToPage(notebookId, pageId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
@@ -1074,8 +1092,12 @@ class MainActivity : Activity() {
      * grid is the list/switch, +Notebook creates, the gear opens Settings. Tap a card to
      * open it in the editor; long-press for its Properties dialog (AC4.4/AC4.5).
      */
-    private fun openLibrary() {
+    private fun openLibrary(viaBack: Boolean = false) {
         if (libraryView.isShowing) return
+        // Record HOW we got here so Back from the Library does the right thing (#29): backing out of a
+        // from-Library editor (viaBack) → Back exits the app; peeking via the navbar icon → Back returns
+        // to the editor behind it.
+        libraryReachedByBack = viaBack
         textBoxEditOverlay.commitIfShowing() // don't strand an open editor behind the Library overlay
         // Boox: a full-screen overlay must drop firmware render BEFORE it draws, or live firmware
         // render suppresses normal EPD posting and the overlay opens INVISIBLY on top of the editor —
@@ -1406,8 +1428,22 @@ class MainActivity : Activity() {
             return
         }
         if (libraryView.isShowing) {
-            // In select mode, back exits selection first rather than closing the Library.
-            if (libraryView.isSelectMode) libraryView.exitSelectMode() else closeLibrary()
+            when {
+                // In select mode, back exits selection first rather than closing the Library.
+                libraryView.isSelectMode -> libraryView.exitSelectMode()
+                // Reached by backing out of a from-Library notebook (editor→Library→exit): nothing is
+                // logically below the Library, so Back exits the app.
+                libraryReachedByBack -> { @Suppress("DEPRECATION") super.onBackPressed() }
+                // Otherwise the Library is a peek over a root editor — return to it.
+                else -> closeLibrary()
+            }
+            return
+        }
+        // Editor with no overlay. If we navigated here FROM the Library, Back returns to the Library
+        // (its logical parent) rather than exiting (#29); a root editor (cold-launch resume / deep link)
+        // exits as usual.
+        if (editorOpenedFromLibrary) {
+            openLibrary(viaBack = true)
             return
         }
         @Suppress("DEPRECATION")
