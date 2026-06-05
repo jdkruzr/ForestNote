@@ -1363,10 +1363,51 @@ class DrawView @JvmOverloads constructor(
                         onStrokeSaved?.invoke(completed)
                     }
 
-                    // Redraw on e-ink for quality output (postDelayed prevents excessive redraws).
-                    postDelayed({ invalidate() }, 900)
+                    if (backend?.ownsInput() == true) {
+                        // Boox: the firmware drew this stroke's live ink but it lives only on the
+                        // ephemeral firmware layer — never committed to the surface buffer. Commit it
+                        // now (so a later render-toggle can't lose it) and un-freeze the panel for touch
+                        // gestures. invalidate() is a no-op here (the DrawView is transparent; the panel
+                        // shows the surface), so this REPLACES the 900ms quality redraw below.
+                        commitFirmwareStroke(stroke)
+                    } else {
+                        // Redraw on e-ink for quality output (postDelayed prevents excessive redraws).
+                        postDelayed({ invalidate() }, 900)
+                    }
                 }
             }
+        }
+
+        /**
+         * Commit the just-finished firmware stroke to an input-owning backend's surface + un-freeze
+         * the panel (see [InkBackend.commitInkStroke]). The dirty region is the stroke's accumulated
+         * MOVE bounds ([dMinX]..[dMaxY], view-local px = bitmap coords since the DrawView is canvas-
+         * sized); a single-point tap has no MOVE bounds ([hasDirty] false) so we box the down point
+         * ([prevX]/[prevY]). Padded by the stroke's max half-width so round caps aren't clipped.
+         */
+        private fun commitFirmwareStroke(stroke: StrokeBuilder) {
+            val bmp = writingBitmap ?: return
+            val pad = transform.toScreenSize(stroke.penWidthMax.toFloat()).toInt() + 2
+            val rect = if (hasDirty) {
+                Rect(
+                    (dMinX.toInt() - pad).coerceAtLeast(0),
+                    (dMinY.toInt() - pad).coerceAtLeast(0),
+                    (dMaxX.toInt() + pad).coerceAtMost(bmp.width),
+                    (dMaxY.toInt() + pad).coerceAtMost(bmp.height),
+                )
+            } else {
+                Rect(
+                    (prevX.toInt() - pad).coerceAtLeast(0),
+                    (prevY.toInt() - pad).coerceAtLeast(0),
+                    (prevX.toInt() + pad).coerceAtMost(bmp.width),
+                    (prevY.toInt() + pad).coerceAtMost(bmp.height),
+                )
+            }
+            hasDirty = false
+            if (rect.isEmpty) return
+            val loc = IntArray(2)
+            getLocationOnScreen(loc)
+            backend?.commitInkStroke(bmp, loc, rect)
         }
 
         override fun cancel() {

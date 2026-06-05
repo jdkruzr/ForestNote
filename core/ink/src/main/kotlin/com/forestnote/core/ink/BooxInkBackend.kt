@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -126,6 +128,38 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
      */
     @Volatile
     private var cleanNextReconcile = false
+
+    /**
+     * True while a per-stroke commit ([commitInkStroke]) is queued/running. Coalesces a flurry of
+     * rapid pen-ups into a SINGLE blit+unfreeze pass over the accumulated [pendingCommitDirty] union
+     * — without this, fast handwriting backs up a queue of 300/500 ms render-toggles on
+     * [reconcileExecutor] and the firmware live-ink layer stays mostly suspended.
+     */
+    private val commitPending = AtomicBoolean(false)
+
+    /**
+     * The union (in bitmap/canvas coords) of stroke dirty rects awaiting a commit. Guarded by
+     * [commitDirtyLock]: written from the UI thread ([commitInkStroke]), drained on [reconcileExecutor].
+     */
+    private var pendingCommitDirty: Rect? = null
+    private val commitDirtyLock = Any()
+
+    /**
+     * Main-thread handler driving the debounced post-stroke un-freeze (see [commitInkStroke]). Lazy so
+     * merely CONSTRUCTING the backend (e.g. `BackendDetector` probing `isAvailable()` in a JVM unit
+     * test, where `Looper.getMainLooper()` isn't mocked) never touches a Looper — it's built on first
+     * real use, which only happens on-device.
+     */
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+    /**
+     * Debounced un-freeze: a render-only toggle that un-sticks the panel for system touch gestures
+     * AFTER the user pauses. Posted (and re-posted, cancelling the prior) on every pen-up, so during
+     * active writing it keeps deferring and NEVER fires mid-stroke — the toggle suspends live firmware
+     * ink for its settle window, which is exactly what made fast strokes render late when it ran per
+     * stroke. It fires only once writing goes idle for [UNFREEZE_IDLE_MS].
+     */
+    private val unfreezeRunnable = Runnable { runUnfreeze() }
 
     /**
      * The most recent page bitmap handed to [reconcileRepaint], re-blitted once the surface
@@ -313,6 +347,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     }
 
     override fun detachInput() {
+        mainHandler.removeCallbacks(unfreezeRunnable)
         try {
             surfaceView?.holder?.removeCallback(surfaceCallback)
             touchHelper?.setRawDrawingEnabled(false)
@@ -369,6 +404,14 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             // in onSurfaceInit; it's the missing piece behind "the toolbar/overlay only updates on a
             // page change."
             EpdController.enablePost(1)
+            // Set the surface's DEFAULT update mode to the firmware handwriting-repaint waveform so a
+            // scoped surface post (the per-stroke commit blit in [commitInkStroke]) auto-refreshes just
+            // that region at handwriting speed — no explicit whole-canvas EpdController GC, hence no
+            // per-stroke flash. This is the missing piece behind notable's flash-free per-stroke
+            // commit; without it a post is silent and only an explicit refresh (the heavy reconcile)
+            // shows ink. Falls back to REGAL where the handwriting mode isn't supported (notable's
+            // tryToSetRefreshMode pattern); both are defensive.
+            setSurfaceUpdateMode(surface)
             // openRawDrawing always left the engine ON; reconcile it to the actual tool/suspend state
             // so a surface re-setup that fires while a non-pen tool or a popup is active doesn't
             // silently re-grab the stylus.
@@ -379,6 +422,27 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
                 "surfaceOnScreen=(${sloc[0]},${sloc[1]}) surfaceInWindow=(${swin[0]},${swin[1]}) surface=${width}x$height")
         } catch (t: Throwable) {
             Log.e(TAG, "setupRawDrawing FAILED — this unit may not deliver raw input", t)
+        }
+    }
+
+    /**
+     * Set the surface's default EPD update mode to the firmware handwriting-repaint waveform (notable's
+     * `onSurfaceInit`), so an ordinary surface post refreshes its region at handwriting speed. Tries
+     * [UpdateMode.HAND_WRITING_REPAINT_MODE] first, falls back to [UpdateMode.REGAL] where the
+     * handwriting mode is unsupported. Defensive: the Onyx SDK is unstable, so a failure just logs.
+     */
+    private fun setSurfaceUpdateMode(surface: SurfaceView) {
+        val ok = try {
+            EpdController.setViewDefaultUpdateMode(surface, UpdateMode.HAND_WRITING_REPAINT_MODE)
+        } catch (t: Throwable) {
+            Log.w(TAG, "setViewDefaultUpdateMode(HAND_WRITING_REPAINT_MODE) failed", t); false
+        }
+        if (!ok) {
+            try {
+                EpdController.setViewDefaultUpdateMode(surface, UpdateMode.REGAL)
+            } catch (t: Throwable) {
+                Log.w(TAG, "setViewDefaultUpdateMode(REGAL) fallback failed", t)
+            }
         }
     }
 
@@ -432,6 +496,18 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         // firmware that drops the LIST. begin/move/end stay light so the firmware releases cleanly.
         override fun onBeginRawDrawing(b: Boolean, point: TouchPoint?) {
             strokeInProgress = true
+            // Writing is NOT idle: cancel the debounced un-freeze and re-assert live render NOW. Without
+            // this, a stroke begun while a prior un-freeze toggle is mid-settle (render off) is captured
+            // but never rendered live — it only appears on the next panel refresh. removeCallbacks is
+            // thread-safe; the render set is the same one applyFirmwareEnableState drives.
+            mainHandler.removeCallbacks(unfreezeRunnable)
+            if (firmwareShouldBeLive()) {
+                try {
+                    touchHelper?.isRawDrawingRenderEnabled = true
+                } catch (t: Throwable) {
+                    Log.w(TAG, "re-assert render on begin failed", t)
+                }
+            }
             // Draw-to-dismiss: a firmware pen-down means the user started drawing, so close any open
             // over-canvas popup. UI op → hop to the UI thread. Cheap no-op when nothing's open.
             surfaceView?.post { onPenDown?.invoke() }
@@ -586,6 +662,93 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         }
     }
 
+    override fun commitInkStroke(bitmap: Bitmap, viewLocation: IntArray, dirtyRect: Rect) {
+        lastBitmap = bitmap
+        lastViewLocation = viewLocation
+        if (surfaceView == null || touchHelper == null) return
+        // Accumulate this stroke's region into the pending union so a coalesced flurry blits ALL of
+        // them (a stroke whose region wasn't committed before the next render-toggle would vanish).
+        synchronized(commitDirtyLock) {
+            pendingCommitDirty = pendingCommitDirty?.apply { union(dirtyRect) } ?: Rect(dirtyRect)
+        }
+        // COMMIT (per stroke) — blit the region to the surface buffer with render left ON: the
+        // firmware ink layer isn't wiped (prior strokes stay on the panel) and live ink keeps flowing
+        // uninterrupted. This only populates the buffer so a later render-toggle can reveal it; the
+        // handwriting view update mode refreshes the posted region. NO render toggle here — toggling
+        // per stroke suspends live ink for its settle window and makes fast strokes render late.
+        if (commitPending.compareAndSet(false, true)) {
+            reconcileExecutor.execute {
+                commitPending.set(false)
+                val surface = surfaceView ?: return@execute
+                val bmp = lastBitmap ?: return@execute
+                val dirty = synchronized(commitDirtyLock) {
+                    val d = pendingCommitDirty; pendingCommitDirty = null; d
+                } ?: return@execute
+                try {
+                    blitCanvasRegion(surface, bmp, dirty)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "commitInkStroke blit failed", t)
+                }
+            }
+        }
+        // UN-FREEZE (debounced) — defer the render-only toggle until writing goes idle, so it never
+        // interrupts active writing; each pen-up cancels + re-arms it.
+        mainHandler.removeCallbacks(unfreezeRunnable)
+        mainHandler.postDelayed(unfreezeRunnable, UNFREEZE_IDLE_MS)
+    }
+
+    /**
+     * The debounced post-stroke un-freeze body. Toggles ONLY the render passthrough (off → settle →
+     * back to [firmwareShouldBeLive]) — NOT [TouchHelper.setRawDrawingEnabled] (toggling capture wipes
+     * live ink with no commit). Queued on [reconcileExecutor] AFTER any pending commit blit, so the
+     * surface buffer already holds every stroke when render drops → nothing vanishes, and the panel is
+     * un-stuck so system refresh gestures + navbar taps work. notable's resetScreenFreeze, debounced.
+     */
+    private fun runUnfreeze() {
+        // A stroke slipped in right as the debounce fired — don't start an off-pulse over live writing;
+        // the stroke's pen-up re-arms the debounce.
+        if (strokeInProgress) return
+        val settleMs = if (colorDevice) 500L else 300L
+        reconcileExecutor.execute {
+            if (strokeInProgress) return@execute
+            val th = touchHelper ?: return@execute
+            try {
+                th.isRawDrawingRenderEnabled = false
+                Thread.sleep(settleMs)
+                th.isRawDrawingRenderEnabled = firmwareShouldBeLive()
+            } catch (t: Throwable) {
+                Log.w(TAG, "post-stroke un-freeze failed", t)
+            }
+        }
+    }
+
+    /**
+     * Blit ONLY [canvasRect] (bitmap/canvas coords) of [bitmap] onto the surface — the scoped sibling
+     * of [blitFullCanvas]. `lockCanvas(dst)` clips drawing to the region and the system preserves the
+     * surface content outside it, so prior strokes are untouched. The locked region is laid white
+     * first (the page bitmap is transparent; the Onyx buffer is opaque) then the bitmap region drawn.
+     */
+    private fun blitCanvasRegion(surface: SurfaceView, bitmap: Bitmap, canvasRect: Rect) {
+        val src = Rect(canvasRect)
+        if (!src.intersect(0, 0, bitmap.width, bitmap.height)) return
+        val dst = Rect(src.left, src.top + canvasTopOffset, src.right, src.bottom + canvasTopOffset)
+        val canvas = try {
+            surface.holder.lockCanvas(dst)
+        } catch (t: Throwable) {
+            Log.w(TAG, "lockCanvas(region) failed", t); null
+        } ?: return
+        try {
+            canvas.drawColor(Color.WHITE)
+            canvas.drawBitmap(bitmap, src, dst, null)
+        } finally {
+            try {
+                surface.holder.unlockCanvasAndPost(canvas)
+            } catch (t: Throwable) {
+                Log.w(TAG, "unlockCanvasAndPost(region) failed", t)
+            }
+        }
+    }
+
     // ===== Lifecycle =====
 
     override fun cleanNextReconcile() {
@@ -621,5 +784,13 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
 
         /** Sentinel exclude rect (1px at the origin) used to "clear" excludes — see [currentExcludeRects]. */
         private val NO_OP_EXCLUDE = Rect(0, 0, 1, 1)
+
+        /**
+         * Idle gap after the last pen-up before the debounced un-freeze toggle fires (see
+         * [commitInkStroke]). Long enough that ordinary inter-stroke pauses while writing don't trip it
+         * (so live ink is never suspended mid-word), short enough that a refresh gesture right after
+         * writing works almost immediately.
+         */
+        private const val UNFREEZE_IDLE_MS = 700L
     }
 }

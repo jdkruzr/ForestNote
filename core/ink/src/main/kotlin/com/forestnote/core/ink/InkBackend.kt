@@ -159,6 +159,21 @@ interface InkBackend {
     fun reconcileRepaint(bitmap: Bitmap, viewLocation: IntArray, dirtyRect: Rect?) {}
 
     /**
+     * Commit a just-finished APPEND stroke onto an input-owning backend's panel — the per-stroke
+     * sibling of [reconcileRepaint]. The two are NOT the same: a reconcile (erase / page-switch /
+     * load) must clear STALE firmware ink, which means suspending render — and suspending render
+     * wipes the firmware ink layer GLOBALLY, forcing a whole-canvas repaint (the flash that makes a
+     * reconcile too heavy to run per stroke). An append has no stale ink: the firmware already drew
+     * exactly this stroke live. So this path leaves render ON (prior strokes stay visible, no global
+     * wipe), blits ONLY [dirtyRect] of [bitmap] onto the surface so the stroke is committed to the
+     * buffer (a later render-toggle then can't lose it), and briefly toggles render to un-freeze the
+     * panel for system touch gestures. Mirrors notable's `refreshUi(dirtyRect)`. [dirtyRect] is in
+     * the bitmap's own coordinate space. No-op on Viwoods/Generic — their live ink already lives in
+     * the bitmap the MotionEvent path blits in `onDraw`.
+     */
+    fun commitInkStroke(bitmap: Bitmap, viewLocation: IntArray, dirtyRect: Rect) {}
+
+    /**
      * Ask an input-owning backend to make its NEXT [reconcileRepaint] a ghost-clearing (GC) refresh
      * instead of the low-flash default — used when returning to the editor from a dismissed dialog,
      * whose high-contrast text the default mono refresh leaves ghosted. One-shot. No-op on
