@@ -423,6 +423,7 @@ class DrawView @JvmOverloads constructor(
 
     fun setBackend(backend: InkBackend) {
         this.backend = backend
+        backend.attachHost(this)
     }
 
     /**

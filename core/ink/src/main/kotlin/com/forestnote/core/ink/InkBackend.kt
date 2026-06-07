@@ -30,6 +30,12 @@ interface InkBackend {
     /** One-time setup. Called once at app start. */
     fun init(context: Context): Boolean
 
+    /**
+     * Attach the View whose bitmap/coordinates are passed to the display accelerator.
+     * Backends that need a concrete host View can defer startup until this arrives.
+     */
+    fun attachHost(host: View) {}
+
     /** Switch the display refresh strategy. */
     fun setDisplayMode(mode: DisplayMode)
 
