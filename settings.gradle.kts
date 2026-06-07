@@ -11,6 +11,13 @@ pluginManagement {
     }
 }
 
+includeBuild("../vw_ink_sdk_unofficial") {
+    dependencySubstitution {
+        substitute(module("io.github.vwunofficial:viwoods-ink"))
+            .using(project(":viwoods-ink"))
+    }
+}
+
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {

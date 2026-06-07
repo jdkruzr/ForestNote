@@ -12,6 +12,7 @@ dependencies {
     implementation(libs.findLibrary("androidx-ink-geometry").get())
     implementation(libs.findLibrary("androidx-ink-brush").get())
     implementation(libs.findLibrary("androidx-ink-strokes").get())
+    implementation("io.github.vwunofficial:viwoods-ink:0.1.0-SNAPSHOT")
 
     // Onyx/Boox Pen SDK — TouchHelper/RawInputCallback firmware raw drawing + EpdController,
     // used only by BooxInkBackend (gated to Onyx devices at runtime, inert elsewhere). Versions +
