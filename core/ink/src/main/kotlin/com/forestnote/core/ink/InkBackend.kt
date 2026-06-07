@@ -40,8 +40,9 @@ interface InkBackend {
     fun setDisplayMode(mode: DisplayMode)
 
     /**
-     * Called on pen-down. Provides the offscreen bitmap and its
-     * screen-space position for the backend to set up rendering.
+     * Called on every pen-down. Provides the offscreen bitmap and its
+     * screen-space position, and lets display-accelerator backends begin
+     * any per-stroke native writing transaction.
      *
      * @param bitmap The offscreen bitmap that strokes are drawn into
      * @param viewLocation The view's [x, y] position on screen from getLocationOnScreen()

@@ -10,7 +10,9 @@ import io.github.vwunofficial.ink.ViwoodsEinkMode
 import io.github.vwunofficial.ink.ViwoodsInkConfig
 import io.github.vwunofficial.ink.ViwoodsInkController
 import io.github.vwunofficial.ink.ViwoodsInkLogger
+import io.github.vwunofficial.ink.ViwoodsInkRenderResult
 import io.github.vwunofficial.ink.ViwoodsInkRenderer
+import java.util.Date
 
 /**
  * InkBackend implementation for Viwoods AiPaper devices.
@@ -26,6 +28,22 @@ class ViwoodsBackend : InkBackend {
     private val currentViewLocation = intArrayOf(0, 0)
     private var controller: ViwoodsInkController? = null
     private var currentMode = ViwoodsEinkMode.FAST
+    private var nativeStrokeActive = false
+    private var startAttempts = 0
+    private var startSuccesses = 0
+    private var strokesStarted = 0
+    private var strokesEnded = 0
+    private var renderCalls = 0
+    private var rendered = 0
+    private var renderSkipped = 0
+    private var renderFailed = 0
+    private var lastStartStatus = "not_started"
+    private var lastStartDetail = ""
+    private var lastBeginStrokeOk = false
+    private var lastEndStrokeOk = false
+    private var lastRenderStatus = "none"
+    private var lastRenderRect = Rect()
+    private var lastRenderDetail = ""
 
     override fun isAvailable(): Boolean {
         return ENOTE_SETTING_CLASSES.any { className ->
@@ -40,6 +58,7 @@ class ViwoodsBackend : InkBackend {
 
     override fun init(context: Context): Boolean {
         initialized = isAvailable()
+        writeStatus("init")
         return initialized
     }
 
@@ -64,16 +83,23 @@ class ViwoodsBackend : InkBackend {
         updateBitmapAndLocation(bitmap, viewLocation)
         val activeController = ensureController() ?: return
         activeController.refreshWritingBitmap()
-        activeController.beginStroke()
+        lastBeginStrokeOk = activeController.beginStroke()
+        nativeStrokeActive = lastBeginStrokeOk
+        strokesStarted++
     }
 
     override fun renderSegment(dirtyRect: Rect) {
         val activeController = ensureController() ?: return
-        activeController.renderNow(screenToLocal(dirtyRect))
+        ensureNativeStrokeStarted(activeController, "renderSegment")
+        val result = activeController.renderNow(screenToLocal(dirtyRect))
+        recordRender(result)
     }
 
     override fun endStroke() {
-        controller?.endStroke()
+        lastEndStrokeOk = controller?.endStroke() == true
+        nativeStrokeActive = false
+        strokesEnded++
+        writeStatus("endStroke")
     }
 
     override fun pushBackgroundBitmap(bitmap: Bitmap, viewLocation: IntArray) {
@@ -91,7 +117,8 @@ class ViwoodsBackend : InkBackend {
         } else {
             Rect(0, 0, bitmap.width, bitmap.height)
         }
-        activeController.renderNow(localRect)
+        recordRender(activeController.renderNow(localRect))
+        writeStatus("resetOverlay")
     }
 
     override fun release() {
@@ -99,6 +126,8 @@ class ViwoodsBackend : InkBackend {
         controller?.stop()
         controller = null
         initialized = false
+        nativeStrokeActive = false
+        writeStatus("release")
     }
 
     /**
@@ -108,9 +137,11 @@ class ViwoodsBackend : InkBackend {
     override fun onResumeReacquire() {
         initialized = isAvailable()
         controller = null
+        nativeStrokeActive = false
         if (initialized && currentBitmap != null && host != null) {
             ensureController()
         }
+        writeStatus("onResumeReacquire")
     }
 
     private fun ensureController(): ViwoodsInkController? {
@@ -135,18 +166,83 @@ class ViwoodsBackend : InkBackend {
             config,
             ViwoodsInkLogger { message -> Log.d(TAG, message) }
         )
+        startAttempts++
         val result = newController.startDisplayOnlyWithResult()
+        lastStartStatus = result.status.name
+        lastStartDetail = result.detail
         if (!result.started) {
             CrashLog.write(
                 "forestnote_viwoods_sdk.txt",
                 "Viwoods SDK start failed: ${result.status}: ${result.detail}\n"
             )
+            writeStatus("startFailed")
             newController.stop()
             return null
         }
+        startSuccesses++
         newController.setDisplayMode(currentMode)
         controller = newController
+        writeStatus("startSucceeded")
         return newController
+    }
+
+    private fun ensureNativeStrokeStarted(activeController: ViwoodsInkController, reason: String) {
+        if (nativeStrokeActive) return
+        lastBeginStrokeOk = activeController.beginStroke()
+        nativeStrokeActive = lastBeginStrokeOk
+        strokesStarted++
+        writeStatus("beginStroke:$reason")
+    }
+
+    private fun recordRender(result: ViwoodsInkRenderResult) {
+        renderCalls++
+        lastRenderStatus = result.status.name
+        lastRenderRect = Rect(result.screenRect)
+        lastRenderDetail = result.detail
+        when (result.status) {
+            ViwoodsInkRenderResult.Status.RENDERED -> rendered++
+            ViwoodsInkRenderResult.Status.SKIPPED_EMPTY_RECT -> renderSkipped++
+            ViwoodsInkRenderResult.Status.FAILED -> renderFailed++
+        }
+        if (result.status == ViwoodsInkRenderResult.Status.FAILED) {
+            writeStatus("render")
+        }
+    }
+
+    private fun writeStatus(reason: String) {
+        val view = host
+        val bitmap = currentBitmap
+        val activeController = controller
+        val content = buildString {
+            appendLine("updated=${Date()}")
+            appendLine("reason=$reason")
+            appendLine("available=${isAvailable()}")
+            appendLine("initialized=$initialized")
+            appendLine("hostAttached=${view != null}")
+            appendLine("hostSize=${view?.width ?: 0}x${view?.height ?: 0}")
+            appendLine("bitmap=${bitmap?.width ?: 0}x${bitmap?.height ?: 0} recycled=${bitmap?.isRecycled ?: false}")
+            appendLine("viewLocation=${currentViewLocation[0]},${currentViewLocation[1]}")
+            appendLine("mode=$currentMode")
+            appendLine("controllerRunning=${activeController?.isRunning == true}")
+            appendLine("nativeStrokeActive=$nativeStrokeActive")
+            appendLine("startAttempts=$startAttempts")
+            appendLine("startSuccesses=$startSuccesses")
+            appendLine("lastStartStatus=$lastStartStatus")
+            appendLine("lastStartDetail=$lastStartDetail")
+            appendLine("strokesStarted=$strokesStarted")
+            appendLine("strokesEnded=$strokesEnded")
+            appendLine("lastBeginStrokeOk=$lastBeginStrokeOk")
+            appendLine("lastEndStrokeOk=$lastEndStrokeOk")
+            appendLine("renderCalls=$renderCalls")
+            appendLine("rendered=$rendered")
+            appendLine("renderSkipped=$renderSkipped")
+            appendLine("renderFailed=$renderFailed")
+            appendLine("lastRenderStatus=$lastRenderStatus")
+            appendLine("lastRenderRect=$lastRenderRect")
+            appendLine("lastRenderDetail=$lastRenderDetail")
+        }
+        Log.i(TAG, content.replace('\n', ' '))
+        CrashLog.write(STATUS_FILE, content)
     }
 
     private fun updateBitmapAndLocation(bitmap: Bitmap, viewLocation: IntArray) {
@@ -171,6 +267,7 @@ class ViwoodsBackend : InkBackend {
 
     companion object {
         private const val TAG = "ForestNoteViwoods"
+        private const val STATUS_FILE = "forestnote_viwoods_status.txt"
         private val ENOTE_SETTING_CLASSES = arrayOf(
             "android.os.enote.ENoteSetting",
             "android.p000os.enote.ENoteSetting",

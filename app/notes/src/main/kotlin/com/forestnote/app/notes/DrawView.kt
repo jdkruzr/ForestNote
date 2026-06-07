@@ -601,17 +601,20 @@ class DrawView @JvmOverloads constructor(
         }
     }
 
-    /**
-     * Provide bitmap to backend if not yet provided in this session.
-     * Backend needs bitmap and its screen-space offset for rendering.
-     */
+    /** Track that a valid bitmap exists for backend calls in this view-size session. */
     private fun provideBitmapIfNeeded() {
         if (!bitmapProvided && writingBitmap != null) {
-            val loc = IntArray(2)
-            getLocationOnScreen(loc)
-            backend?.startStroke(writingBitmap!!, loc)
             bitmapProvided = true
         }
+    }
+
+    /** Begin a backend-native writing transaction for the current pen/eraser stroke. */
+    private fun beginBackendStroke() {
+        val bmp = writingBitmap ?: return
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        backend?.startStroke(bmp, loc)
+        bitmapProvided = true
     }
 
     // ========== Touch Event Handling ==========
@@ -1312,7 +1315,7 @@ class DrawView @JvmOverloads constructor(
 
         override fun begin(tool: Tool, penParams: PenParams) {
             ensureBitmap()
-            provideBitmapIfNeeded()
+            beginBackendStroke()
             // Resolve colour/xfermode (highlighter composites DST_OVER) for the live paint.
             configureStrokePaintFor(penParams.color)
             currentStroke = StrokeBuilder(penParams.color, penParams.wMin, penParams.wMax)
@@ -1494,7 +1497,7 @@ class DrawView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 ensureBitmap()
-                provideBitmapIfNeeded()
+                beginBackendStroke()
                 prevScreenX = event.x
                 prevScreenY = event.y
                 // Start a fresh eraser path (virtual coords) for reconciliation.
