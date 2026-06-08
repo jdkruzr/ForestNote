@@ -208,7 +208,7 @@ class DrawView @JvmOverloads constructor(
     /** Active pen variant; set by MainActivity when a variant is picked. */
     var activePenVariant: PenVariant = PenVariant.FOUNTAIN
     /** Active pen width level (A10); set by MainActivity on width pick / variant switch / launch. */
-    var activePenWidthLevel: PenWidthLevel = PenWidthLevel.M
+    var activePenWidthLevel: PenWidthLevel = PenWidthLevel.DEFAULT
     var onStrokeSaved: ((Stroke) -> Unit)? = null
 
     // ===== Lasso selection state (A6) — kept off the fast-ink writing buffer =====

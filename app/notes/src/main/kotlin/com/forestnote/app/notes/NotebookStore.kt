@@ -333,6 +333,25 @@ class NotebookStore(
         }
     }
 
+    /** Load device-authored OCR text for [pageId] off-thread. */
+    fun loadPageTextFromClient(pageId: String, onResult: (RecognizedText?) -> Unit) {
+        executor.execute {
+            val r = runCatching { repo?.loadPageTextFromClient(pageId) }
+                .onFailure { android.util.Log.e(TAG, "failed to load device OCR text", it) }
+                .getOrNull()
+            poster { onResult(r) }
+        }
+    }
+
+    /** Store a fresh device OCR row and capture it for sync. */
+    fun savePageTextFromClient(pageId: String, text: String, model: String, onDone: () -> Unit = {}) {
+        executor.execute {
+            runCatching { repo?.upsertPageTextFromClient(pageId, text, model) }
+                .onFailure { android.util.Log.e(TAG, "failed to save device OCR text", it) }
+            poster { onDone() }
+        }
+    }
+
     // --- CalDAV outbox (lasso-recognize → VTODO; OFFLINE-FIRST) ------------------
     //
     // Send-path: UI → enqueueCalDavTask → outbox row → CalDavOutboxDrainer (separate
@@ -678,6 +697,18 @@ class NotebookStore(
                 }
             }
         }
+
+    suspend fun loadStrokesForPageSync(pageId: String): List<Stroke> =
+        onDb { it.loadStrokesForPage(pageId) }
+
+    suspend fun loadPageTextFromClientSync(pageId: String): RecognizedText? =
+        onDb { it.loadPageTextFromClient(pageId) }
+
+    suspend fun savePageTextFromClientSync(pageId: String, text: String, model: String) =
+        onDb { it.upsertPageTextFromClient(pageId, text, model) }
+
+    suspend fun pagesNeedingClientOcr(notebookId: String): List<String> =
+        onDb { it.listPagesWithMissingOrStaleClientText(notebookId) }
 
     /** The engine's persistence view — every call lands on the single DB-writer thread. */
     /**

@@ -393,12 +393,12 @@ class ToolBarLogicTest {
     // library-and-tools.AC10.2/AC10.4: per-variant width, remembered across variant switches.
 
     @Test
-    fun `everyPenVariantDefaultsToMediumWidth`() {
+    fun `everyPenVariantDefaultsToLevel4Width`() {
         val logic = ToolSelectionLogic()
         PenVariant.entries.forEach {
-            assertEquals(PenWidthLevel.M, logic.penWidthFor(it), "$it defaults to M")
+            assertEquals(PenWidthLevel.LEVEL_4, logic.penWidthFor(it), "$it defaults to 4")
         }
-        assertEquals(PenWidthLevel.M, logic.activePenWidth(), "active width defaults to M")
+        assertEquals(PenWidthLevel.LEVEL_4, logic.activePenWidth(), "active width defaults to 4")
     }
 
     @Test
@@ -406,11 +406,11 @@ class ToolBarLogicTest {
         val logic = ToolSelectionLogic()
         logic.selectPenVariant(PenVariant.FOUNTAIN)
 
-        logic.selectPenWidth(PenWidthLevel.XL)
+        logic.selectPenWidth(PenWidthLevel.LEVEL_7)
 
-        assertEquals(PenWidthLevel.XL, logic.penWidthFor(PenVariant.FOUNTAIN), "Fountain took XL")
-        assertEquals(PenWidthLevel.M, logic.penWidthFor(PenVariant.FINELINER), "Fineliner untouched")
-        assertEquals(PenWidthLevel.M, logic.penWidthFor(PenVariant.HIGHLIGHTER), "Highlighter untouched")
+        assertEquals(PenWidthLevel.LEVEL_7, logic.penWidthFor(PenVariant.FOUNTAIN), "Fountain took 7")
+        assertEquals(PenWidthLevel.LEVEL_4, logic.penWidthFor(PenVariant.FINELINER), "Fineliner untouched")
+        assertEquals(PenWidthLevel.LEVEL_4, logic.penWidthFor(PenVariant.HIGHLIGHTER), "Highlighter untouched")
     }
 
     @Test
@@ -418,26 +418,26 @@ class ToolBarLogicTest {
         // AC10.2: each variant keeps its own width; switching variant surfaces that width.
         val logic = ToolSelectionLogic()
         logic.selectPenVariant(PenVariant.FOUNTAIN)
-        logic.selectPenWidth(PenWidthLevel.S)
+        logic.selectPenWidth(PenWidthLevel.LEVEL_2)
         logic.selectPenVariant(PenVariant.HIGHLIGHTER)
-        logic.selectPenWidth(PenWidthLevel.XL)
+        logic.selectPenWidth(PenWidthLevel.LEVEL_7)
 
         logic.selectPenVariant(PenVariant.FOUNTAIN)
-        assertEquals(PenWidthLevel.S, logic.activePenWidth(), "Fountain's width returns")
+        assertEquals(PenWidthLevel.LEVEL_2, logic.activePenWidth(), "Fountain's width returns")
 
         logic.selectPenVariant(PenVariant.HIGHLIGHTER)
-        assertEquals(PenWidthLevel.XL, logic.activePenWidth(), "Highlighter's width returns")
+        assertEquals(PenWidthLevel.LEVEL_7, logic.activePenWidth(), "Highlighter's width returns")
     }
 
     @Test
     fun `setPenWidthForVariantSeedsLoadedSettings_andAllPenWidthLevelsSnapshots`() {
         val logic = ToolSelectionLogic()
-        logic.setPenWidthForVariant(PenVariant.FINELINER, PenWidthLevel.L)
+        logic.setPenWidthForVariant(PenVariant.FINELINER, PenWidthLevel.LEVEL_6)
 
-        assertEquals(PenWidthLevel.L, logic.penWidthFor(PenVariant.FINELINER))
+        assertEquals(PenWidthLevel.LEVEL_6, logic.penWidthFor(PenVariant.FINELINER))
         val all = logic.allPenWidthLevels()
-        assertEquals(PenWidthLevel.L, all[PenVariant.FINELINER])
-        assertEquals(PenWidthLevel.M, all[PenVariant.FOUNTAIN], "unseeded variants stay M")
+        assertEquals(PenWidthLevel.LEVEL_6, all[PenVariant.FINELINER])
+        assertEquals(PenWidthLevel.LEVEL_4, all[PenVariant.FOUNTAIN], "unseeded variants stay 4")
         assertEquals(PenVariant.entries.size, all.size, "snapshot covers every variant")
     }
 }

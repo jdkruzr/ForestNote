@@ -90,15 +90,17 @@ CREATE INDEX text_box_page_id ON text_box(page_id);
 -- Per-page recognized text (OCR round-trip). pk = the page's ULID (1:1 with a page).
 -- page_text_from_server is written ONLY by the UltraBridge server (it OCRs a synced page and
 -- pushes the text back); the client is a read-only consumer and NEVER authors it. text is a flat
--- per-page string ("" is valid). NULL deleted_at = live. page_text_from_client is the RESERVED
--- sibling for a future on-device-recognition feature (client-authored) — present now only so its
--- columns are in the v3 schema hash; nothing authors it yet. (added v12)
+-- per-page string ("" is valid). NULL deleted_at = live. page_text_from_client is the
+-- client-authored sibling for on-device recognition. Both rows are kept separate so devices can
+-- inspect server and local recognizer output independently. (added v12)
 --
 -- stale_at (added v13) is a LOCAL-ONLY marker: ms-UTC the device noticed the page changed
 -- (stroke/text-box mutation) since the server-OCR'd text was recorded. Cleared on every server
 -- upsert via applyUpsertPageTextFromServer. NOT a synced column — deliberately ABSENT from
 -- SyncWire.pageTextCols / SyncMerge.knownCols["page_text_from_server"] so the v3 schema hash
 -- (724411eb…) does NOT change.
+-- page_text_from_client.stale_at (added v15) follows the same local-only rule and is deliberately
+-- absent from ForestNoteRegistry, so the Rhizome schema hash remains unchanged.
 CREATE TABLE page_text_from_server (
     id TEXT PRIMARY KEY NOT NULL,
     text TEXT NOT NULL,
@@ -114,7 +116,8 @@ CREATE TABLE page_text_from_client (
     ocr_at INTEGER NOT NULL,
     model TEXT,
     created_at INTEGER NOT NULL,
-    deleted_at INTEGER
+    deleted_at INTEGER,
+    stale_at INTEGER -- LOCAL-ONLY; absent from ForestNoteRegistry.
 );
 
 -- ── CalDAV outbox (lasso-recognize → VTODO) — LOCAL ONLY ────────────────────────
@@ -647,14 +650,15 @@ ON CONFLICT(id) DO UPDATE SET
     stale_at = NULL;
 
 applyUpsertPageTextFromClient:
-INSERT INTO page_text_from_client(id, text, ocr_at, model, created_at, deleted_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO page_text_from_client(id, text, ocr_at, model, created_at, deleted_at, stale_at)
+VALUES (?, ?, ?, ?, ?, ?, NULL)
 ON CONFLICT(id) DO UPDATE SET
     text = excluded.text,
     ocr_at = excluded.ocr_at,
     model = excluded.model,
     created_at = excluded.created_at,
-    deleted_at = excluded.deleted_at;
+    deleted_at = excluded.deleted_at,
+    stale_at = NULL;
 
 -- ── Page recognized-text read (editor OCR viewer) ───────────────────────────
 -- Used by the editor's OCR-text modal. Returns the live (non-tombstoned) server-
@@ -668,6 +672,10 @@ getLivePageTextFromServer:
 SELECT text, ocr_at, model, stale_at FROM page_text_from_server
 WHERE id = ? AND deleted_at IS NULL;
 
+getLivePageTextFromClient:
+SELECT text, ocr_at, model, stale_at FROM page_text_from_client
+WHERE id = ? AND deleted_at IS NULL;
+
 -- Mark a page's server-OCR row as locally-stale. Stamp wall_ts only if a live row
 -- exists AND it isn't already stale (first-mutation-wins keeps the marker meaningful
 -- as "stale since when"); if the page has no row yet, the toolbar button is already
@@ -676,6 +684,20 @@ markPageTextStale:
 UPDATE page_text_from_server
 SET stale_at = ?
 WHERE id = ? AND deleted_at IS NULL AND stale_at IS NULL;
+
+markPageTextFromClientStale:
+UPDATE page_text_from_client
+SET stale_at = ?
+WHERE id = ? AND deleted_at IS NULL AND stale_at IS NULL;
+
+listPagesWithMissingOrStaleClientText:
+SELECT p.id
+FROM page p
+LEFT JOIN page_text_from_client ptc ON ptc.id = p.id AND ptc.deleted_at IS NULL
+WHERE p.notebook_id = ?
+  AND p.deleted_at IS NULL
+  AND (ptc.id IS NULL OR ptc.stale_at IS NOT NULL)
+ORDER BY p.sort_order ASC;
 
 -- Clear the LOCAL-ONLY stale marker after a server OCR upsert lands. The RhizomeSync adapter
 -- upserts only the registry (wire) columns, so it can't touch stale_at; NotebookRepository's

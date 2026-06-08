@@ -39,9 +39,11 @@ import com.forestnote.app.notes.caldav.SecureCredentialsStore
 import com.forestnote.app.notes.caldav.SettingsCredsView
 import com.forestnote.app.notes.caldav.TryOutcome
 import com.forestnote.app.notes.caldav.VTodoProvenance
+import com.forestnote.app.notes.ocr.DeviceOcrScheduler
 import com.forestnote.app.notes.recognize.MlKitRecognizer
 import com.forestnote.app.notes.recognize.RecognitionModelManager
 import com.forestnote.app.notes.recognize.RecognizedText
+import com.forestnote.app.notes.recognize.RecognizerError
 import okhttp3.OkHttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -132,6 +134,7 @@ class MainActivity : Activity() {
     // released in onDestroy. Both wrappers are defensive — never throw, never crash.
     val recognizer = MlKitRecognizer()
     val modelManager = RecognitionModelManager()
+    private lateinit var deviceOcrScheduler: DeviceOcrScheduler
 
     // Captured when the async FontCatalog loader finishes (see onCreate's loader Thread).
     // The per-text-box Options dialog reads the name list from here so its font picker
@@ -194,6 +197,13 @@ class MainActivity : Activity() {
             store, syncScope,
             log = { fileLogger.log("Sync", it) },
             secureCreds = secureCreds,
+        )
+        deviceOcrScheduler = DeviceOcrScheduler(
+            store = store,
+            recognizer = recognizer,
+            modelManager = modelManager,
+            scope = syncScope,
+            requestSync = { syncController.syncNow() },
         )
         // Offline CalDAV queue. The drainer owns the network side of the outbox;
         // NotebookStore owns the durable side. Resume()/pause()/shutdown() in
@@ -563,8 +573,8 @@ class MainActivity : Activity() {
             showClearConfirmation()
         }
 
-        // OCR cell: opens the recognized-text viewer for the active page; greyed when the
-        // server hasn't OCR'd the page yet (refreshed on page/notebook switch + sync Synced).
+        // OCR cell: opens the recognized-text viewer for the active page. The dialog shows
+        // server and device sources independently and can run device recognition on demand.
         toolBar.setOnOcrClicked { showOcrDialog() }
 
         // Paste cell: enabled live whenever the clipboard is non-empty (AC1.6).
@@ -1023,10 +1033,9 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Refresh the editor's OCR toolbar button enabled state from the active page's server
-     * OCR row: enabled when a live row exists, greyed when it doesn't. Called on every
-     * page/notebook switch, on the first editor load, and after a sync run completes
-     * (which is the only path that creates page_text_from_server rows).
+     * Refresh the editor's OCR toolbar button state and open-dialog source rows. The toolbar is
+     * available for any active page because Device recognized can be run even before server OCR
+     * exists.
      */
     private fun refreshOcrButtonState() {
         val pageId = activePageId
@@ -1034,18 +1043,14 @@ class MainActivity : Activity() {
             toolBar.setOcrEnabled(false)
             return
         }
-        // Capture pageId locally so a slow callback that lands AFTER a page switch can
-        // be ignored — otherwise the toolbar (and the open dialog) would briefly show
-        // the previous page's OCR state. Same discipline used in showOcrDialog below.
+        toolBar.setOcrEnabled(true)
         val requestedPageId = pageId
-        store.loadPageTextFromServer(requestedPageId) { r ->
+        store.loadPageTextFromServer(requestedPageId) { server ->
             if (activePageId != requestedPageId) return@loadPageTextFromServer
-            toolBar.setOcrEnabled(r != null)
-            // If the dialog is open on the same page, push the fresh row in so the dimmed
-            // "OCR pending" state clears (or appears) without the user closing/reopening.
-            // Hook is called on every page switch AND on SyncStatus.Synced, so this is
-            // the natural place for dialog auto-refresh too.
-            ocrTextDialog.update(r)
+            store.loadPageTextFromClient(requestedPageId) { device ->
+                if (activePageId != requestedPageId) return@loadPageTextFromClient
+                ocrTextDialog.update(server, device)
+            }
         }
     }
 
@@ -1062,14 +1067,19 @@ class MainActivity : Activity() {
         if (ocrTextDialog.isShowing) return
         val pageId = activePageId.takeIf { it.isNotEmpty() } ?: return
         val requestedPageId = pageId
-        store.loadPageTextFromServer(requestedPageId) { r ->
+        store.loadPageTextFromServer(requestedPageId) { server ->
             if (activePageId != requestedPageId) return@loadPageTextFromServer
-            ocrTextDialog.show(
-                this,
-                recognizedFromServer = r,
-                onRefresh = { refreshOcrInDialog() },
-                onRedrawNeeded = { drawView.gcRefresh() }
-            )
+            store.loadPageTextFromClient(requestedPageId) { device ->
+                if (activePageId != requestedPageId) return@loadPageTextFromClient
+                ocrTextDialog.show(
+                    this,
+                    recognizedFromServer = server,
+                    recognizedFromDevice = device,
+                    onRefresh = { refreshOcrInDialog() },
+                    onRunDevice = { runDeviceOcrForActivePage() },
+                    onRedrawNeeded = { drawView.gcRefresh() }
+                )
+            }
         }
     }
 
@@ -1081,9 +1091,56 @@ class MainActivity : Activity() {
     private fun refreshOcrInDialog() {
         if (!ocrTextDialog.isShowing) return
         val requestedPageId = activePageId.takeIf { it.isNotEmpty() } ?: return
-        store.loadPageTextFromServer(requestedPageId) { r ->
+        store.loadPageTextFromServer(requestedPageId) { server ->
             if (activePageId != requestedPageId) return@loadPageTextFromServer
-            ocrTextDialog.update(r)
+            store.loadPageTextFromClient(requestedPageId) { device ->
+                if (activePageId != requestedPageId) return@loadPageTextFromClient
+                ocrTextDialog.update(server, device)
+            }
+        }
+    }
+
+    private fun runDeviceOcrForActivePage() {
+        val pageId = activePageId.takeIf { it.isNotEmpty() } ?: return
+        runDeviceOcrForPage(pageId, promptForModel = true)
+    }
+
+    private fun runDeviceOcrForPage(pageId: String, promptForModel: Boolean) {
+        syncScope.launch {
+            val langTag = DeviceOcrScheduler.DEFAULT_LANG
+            if (!modelManager.isDownloaded(langTag)) {
+                if (!promptForModel) return@launch
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Download handwriting model")
+                    .setMessage("Device OCR needs the English (US) handwriting model before it can run.")
+                    .setPositiveButton("Download") { _, _ ->
+                        syncScope.launch {
+                            val ok = modelManager.download(langTag).isSuccess
+                            if (ok) runDeviceOcrForPage(pageId, promptForModel = false)
+                        }
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+                return@launch
+            }
+            if (activePageId == pageId && ocrTextDialog.isShowing) ocrTextDialog.showDeviceRunning()
+            val strokes = runCatching { store.loadStrokesForPageSync(pageId) }
+                .onFailure { fileLogger.log("OCR", "failed to load strokes for device OCR: ${it.message}") }
+                .getOrDefault(emptyList())
+            val result = recognizer.recognize(strokes, langTag)
+            val recognized = result.getOrElse { e ->
+                if (e !is RecognizerError.ModelMissing) {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Device OCR failed")
+                        .setMessage(e.message ?: "Recognition failed.")
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+                return@launch
+            }
+            store.savePageTextFromClientSync(pageId, recognized.text, DeviceOcrScheduler.modelLabel(langTag))
+            if (activePageId == pageId) refreshOcrInDialog()
+            syncController.syncNow()
         }
     }
 
@@ -1124,6 +1181,7 @@ class MainActivity : Activity() {
             onBulkMove = { ids -> showMoveTargetDialog(ids) },
             onBulkDelete = { ids -> confirmBulkDelete(ids) }
         ))
+        deviceOcrScheduler.enqueueNotebook(activeNotebookId)
         // Sync-on-close: returning to the Library (i.e. "closing" the notebook you were editing) is
         // the moment matching the Settings label "Sync when returning to Library". Fire the dirty-gate
         // sync now, AFTER show(), so the status flows into the just-shown Library's Sync cell

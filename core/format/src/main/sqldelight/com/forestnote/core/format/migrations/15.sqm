@@ -1,0 +1,7 @@
+-- v15 -> v16: local-only device OCR staleness marker.
+--
+-- page_text_from_client is already in the synced v3 registry, but stale_at is a
+-- device-local freshness marker exactly like page_text_from_server.stale_at. It
+-- is deliberately absent from ForestNoteRegistry, so this migration must not
+-- change the Rhizome schema hash.
+ALTER TABLE page_text_from_client ADD COLUMN stale_at INTEGER;

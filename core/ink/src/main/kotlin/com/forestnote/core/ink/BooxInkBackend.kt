@@ -81,7 +81,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     private var canvasTopOffset = 0
 
     /** Active pen params; the firmware live-ink style + the sink's stored stroke both read this. */
-    private var pen: PenParams = PenParams.of(PenVariant.FOUNTAIN, PenWidthLevel.M)
+    private var pen: PenParams = PenParams.of(PenVariant.FOUNTAIN, PenWidthLevel.DEFAULT)
 
     /**
      * The active tool. The firmware owns the stylus ONLY for [Tool.Pen]; for every other tool we

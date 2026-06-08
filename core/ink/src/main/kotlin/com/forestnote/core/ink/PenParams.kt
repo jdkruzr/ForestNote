@@ -29,7 +29,7 @@ data class PenParams(
         /**
          * Resolve params for [variant] at width [level] (AC10). The level picks the base
          * `(min, max)` pair via [PenWidthScale]; the per-variant transform below is unchanged
-         * from v1, so `(variant, PenWidthLevel.M)` reproduces the original `(7, 35)` rendering.
+         * from v1, so `(variant, PenWidthLevel.DEFAULT)` reproduces the original `(7, 35)` rendering.
          */
         fun of(variant: PenVariant, level: PenWidthLevel): PenParams {
             val (baseMin, baseMax) = PenWidthScale.pair(level)

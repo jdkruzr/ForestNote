@@ -90,10 +90,10 @@ class SettingsTest {
     fun penWidthLevelsRoundTripAndDefaultEmpty() {
         assertEquals(emptyMap(), Settings().penWidthLevels)
 
-        val original = Settings(penWidthLevels = mapOf("FOUNTAIN" to "L", "HIGHLIGHTER" to "XL"))
+        val original = Settings(penWidthLevels = mapOf("FOUNTAIN" to "6", "HIGHLIGHTER" to "7"))
         val decoded = json.decodeFromString(Settings.serializer(), json.encodeToString(Settings.serializer(), original))
 
-        assertEquals(mapOf("FOUNTAIN" to "L", "HIGHLIGHTER" to "XL"), decoded.penWidthLevels)
+        assertEquals(mapOf("FOUNTAIN" to "6", "HIGHLIGHTER" to "7"), decoded.penWidthLevels)
         assertEquals(original, decoded)
     }
 }

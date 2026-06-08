@@ -538,7 +538,7 @@ class ToolBar(
     }
 
     /**
-     * Pen-settings popup under the Fountain cell (A10): the variant rows plus a 5-chip width
+     * Pen-settings popup under the Fountain cell (A10): the variant rows plus a 7-chip width
      * strip (chips drawn as actual thickness samples) acting on the active variant. Unlike the
      * generic dropdown, tapping a variant or width updates the popup IN PLACE (no dismiss) so
      * variant + width can both be adjusted in one session; tap-outside dismisses.
@@ -622,7 +622,7 @@ class ToolBar(
     }
 
     /**
-     * A horizontal strip of 5 width chips (XS…XL). Each chip shows an actual thickness sample
+     * A horizontal strip of 7 width chips (1…7). Each chip shows an actual thickness sample
      * (a black bar whose height tracks the level's base max width) over its label; the [active]
      * chip gets a 1dp border. Tapping a chip calls [onPick].
      */
@@ -664,7 +664,7 @@ class ToolBar(
                     })
                 })
                 addView(TextView(ctx).apply {
-                    text = level.name
+                    text = level.label
                     textSize = 10f
                     setTextColor(Color.BLACK)
                     gravity = Gravity.CENTER

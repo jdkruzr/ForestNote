@@ -52,11 +52,11 @@ class ToolSelectionLogic(
     fun activePenVariant(): PenVariant = penVariant
 
     /**
-     * Per-variant pen width level (A10). Each variant remembers its own level; default M.
+     * Per-variant pen width level (A10). Each variant remembers its own level; default 4.
      * Switching variant needs no extra bookkeeping — [activePenWidth] keys off [penVariant].
      */
     private val penWidthLevels: MutableMap<PenVariant, PenWidthLevel> =
-        PenVariant.entries.associateWith { PenWidthLevel.M }.toMutableMap()
+        PenVariant.entries.associateWith { PenWidthLevel.DEFAULT }.toMutableMap()
 
     /** Set the active variant's width level (e.g. tapping a width chip). */
     fun selectPenWidth(level: PenWidthLevel) {
@@ -64,10 +64,10 @@ class ToolSelectionLogic(
     }
 
     /** The active variant's remembered width level. */
-    fun activePenWidth(): PenWidthLevel = penWidthLevels[penVariant] ?: PenWidthLevel.M
+    fun activePenWidth(): PenWidthLevel = penWidthLevels[penVariant] ?: PenWidthLevel.DEFAULT
 
     /** The remembered width level for a specific variant. */
-    fun penWidthFor(variant: PenVariant): PenWidthLevel = penWidthLevels[variant] ?: PenWidthLevel.M
+    fun penWidthFor(variant: PenVariant): PenWidthLevel = penWidthLevels[variant] ?: PenWidthLevel.DEFAULT
 
     /** Seed a variant's width level (used when loading persisted settings on launch). */
     fun setPenWidthForVariant(variant: PenVariant, level: PenWidthLevel) {

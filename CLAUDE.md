@@ -24,6 +24,15 @@ E-ink note-taking app for low-latency stylus handwriting. Two firmware-latency i
 - `./gradlew :app:notes:test` - Run app module unit tests
 - `./gradlew test` - Run all unit tests
 
+## Viwoods Dev Device
+- During active dev sessions, assume it is acceptable to build and install ForestNote on the Viwoods tablet unless the user says otherwise.
+- Current device access is SSH/Termux, not ADB shell: `ssh -p 8022 192.168.8.198` and `scp -P 8022 ... 192.168.8.198:/sdcard/Download/...`.
+- The device has Magisk root through Termux `su`; do not use blanket SELinux permissive mode (`setenforce 0`) because it breaks WritingSurface until reboot.
+- **Viwoods package-session backdoor:** ADB/Termux package-manager commands are restricted, but root package sessions work:
+  `su -c "cmd package install-create -r -d"`, then
+  `su -c "cmd package install-write SESSION base /sdcard/Download/forestnote-debug.apk && cmd package install-commit SESSION"`.
+- Standard deploy loop: build `app/notes/build/outputs/apk/debug/notes-debug.apk`, copy it to `/sdcard/Download/forestnote-debug.apk`, install via the root package-session commands, then verify with `su -c "cmd package list packages --show-versioncode com.forestnote; cmd package path com.forestnote"`.
+
 ## Project Structure
 - `app/notes/` - Main application module (Activity, DrawView, ToolBar, NotebookStore persistence owner)
 - `core/ink/` - Ink rendering domain (backends incl. Viwoods/Boox/Generic, the `StrokeSink` ingest seam, stroke model, coordinate transform)

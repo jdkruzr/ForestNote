@@ -795,10 +795,8 @@ class MigrationTest {
 
         assertTrue(columnNames(driver, "page_text_from_server").contains("stale_at"),
             "stale_at exists after v12->v13")
-        // page_text_from_client deliberately does NOT get stale_at (the reserved client-OCR
-        // sibling is not consulted by the dialog; if/when it ships, add separately).
         assertFalse(columnNames(driver, "page_text_from_client").contains("stale_at"),
-            "stale_at is added ONLY to page_text_from_server, not the reserved client sibling")
+            "v13 does not add stale_at to the client sibling")
 
         var preservedStale: Long? = -1L
         driver.executeQuery(
@@ -807,6 +805,33 @@ class MigrationTest {
         )
         assertNull(preservedStale, "pre-existing v12 rows survive with NULL stale_at (= fresh)")
 
+        driver.close()
+    }
+
+    @Test
+    fun v15ToV16AddsClientOcrStaleAtColumn() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        createV7PageStroke(driver)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 7L, newVersion = 15L)
+        driver.execute(
+            null,
+            "INSERT INTO page_text_from_client(id, text, ocr_at, model, created_at, deleted_at) " +
+                "VALUES ('p1', 'device text', 100, 'mlkit-digital-ink:en-US', 90, NULL)",
+            0
+        )
+        assertFalse(columnNames(driver, "page_text_from_client").contains("stale_at"),
+            "v15 has no client stale_at column")
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 15L, newVersion = 16L)
+
+        assertTrue(columnNames(driver, "page_text_from_client").contains("stale_at"),
+            "v16 adds local-only stale_at to page_text_from_client")
+        var preservedStale: Long? = -1L
+        driver.executeQuery(
+            null, "SELECT stale_at FROM page_text_from_client WHERE id = 'p1'",
+            { c -> c.next(); preservedStale = c.getLong(0); QueryResult.Value(Unit) }, 0
+        )
+        assertNull(preservedStale, "pre-existing client OCR rows survive with NULL stale_at")
         driver.close()
     }
 

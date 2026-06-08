@@ -65,9 +65,9 @@ data class Settings(
      */
     val prefillNotebookNameTimestamp: Boolean = false,
     /**
-     * Per-variant pen width level (A10), keyed by `PenVariant.name` → `PenWidthLevel.name`.
+     * Per-variant pen width level (A10), keyed by `PenVariant.name` → numeric width string.
      * Stringly-typed so this module needn't pull in core:ink's enums for serialization; the
-     * app layer converts. Empty/missing ⇒ that variant defaults to M (the v1 width).
+     * app layer converts. Empty/missing ⇒ that variant defaults to 4 (the v1 width).
      */
     val penWidthLevels: Map<String, String> = emptyMap(),
     /** Active text-box font (a /system/fonts basename). Empty ⇒ the system default font. */

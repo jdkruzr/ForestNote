@@ -47,6 +47,23 @@ class OcrStalenessTest {
         }
     }
 
+    private fun seedClientOcr(driver: JdbcSqliteDriver, pageId: String, text: String = "device OCR") {
+        driver.execute(
+            null,
+            "INSERT INTO page_text_from_client(id, text, ocr_at, model, created_at, deleted_at, stale_at) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            7
+        ) {
+            bindString(0, pageId)
+            bindString(1, text)
+            bindLong(2, 1700_000_000_000L)
+            bindString(3, "mlkit-digital-ink:en-US")
+            bindLong(4, 0L)
+            bindLong(5, null)
+            bindLong(6, null)
+        }
+    }
+
     private fun aStroke(): Stroke = Stroke(
         points = listOf(StrokePoint(10, 10, 500, 1000L), StrokePoint(60, 60, 500, 2000L)),
         color = Stroke.COLOR_BLACK,
@@ -74,6 +91,20 @@ class OcrStalenessTest {
         repo.saveStroke(aStroke())
 
         assertTrue(repo.loadPageTextFromServer(pageId)!!.isStale, "stroke save must flip stale")
+        repo.close()
+    }
+
+    @Test
+    fun `saveStroke marks the current page's client OCR row stale`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver)
+        val pageId = repo.currentPageId()
+        seedClientOcr(driver, pageId)
+        assertFalse(repo.loadPageTextFromClient(pageId)!!.isStale, "client row is fresh before mutation")
+
+        repo.saveStroke(aStroke())
+
+        assertTrue(repo.loadPageTextFromClient(pageId)!!.isStale, "stroke save must flip client stale")
         repo.close()
     }
 
@@ -221,6 +252,44 @@ class OcrStalenessTest {
         repo.close()
     }
 
+    @Test
+    fun `upsertPageTextFromClient captures sync op and clears stale_at`() {
+        val repo = createRepository()
+        repo.mintSiteId()
+        val pageId = repo.currentPageId()
+
+        repo.upsertPageTextFromClient(pageId, "fresh device OCR", "mlkit-digital-ink:en-US", 1234L)
+
+        val row = repo.loadPageTextFromClient(pageId)
+        assertNotNull(row)
+        assertEquals("fresh device OCR", row.text)
+        assertFalse(row.isStale)
+        assertTrue(
+            repo.pendingOps().any { it.table == "page_text_from_client" && it.pk == pageId },
+            "client OCR upsert must capture a page_text_from_client op"
+        )
+        repo.close()
+    }
+
+    @Test
+    fun `listPagesWithMissingOrStaleClientText returns missing and stale live pages`() {
+        val repo = createRepository()
+        val first = repo.currentPageId()
+        val second = repo.createPage()
+        repo.upsertPageTextFromClient(first, "fresh", "mlkit-digital-ink:en-US", 1000L)
+
+        assertEquals(listOf(second), repo.listPagesWithMissingOrStaleClientText(repo.currentNotebookId()))
+
+        repo.switchPage(first)
+        repo.saveStroke(aStroke())
+
+        assertEquals(
+            setOf(first, second),
+            repo.listPagesWithMissingOrStaleClientText(repo.currentNotebookId()).toSet()
+        )
+        repo.close()
+    }
+
     // -- wire purity: stale_at stays local-only --------------------------------------
 
     @Test
@@ -234,8 +303,8 @@ class OcrStalenessTest {
 
     @Test
     fun `stale_at is NOT in the sync wire knownCols for page_text_from_client`() {
-        // Same invariant for the reserved client-side sibling — it doesn't have stale_at
-        // today (only server-OCR rows do), but the wire contract must stay v3-pure.
+        // Same invariant for the client-side sibling: stale_at exists locally, but the
+        // wire contract must stay v3-pure.
         val cols = ForestNoteRegistry.registry.knownCols["page_text_from_client"]
         assertNotNull(cols)
         assertFalse("stale_at" in cols)

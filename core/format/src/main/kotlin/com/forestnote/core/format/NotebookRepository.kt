@@ -62,14 +62,13 @@ data class FolderMeta(
 )
 
 /**
- * Server-authored recognized text for a single page (`page_text_from_server`). pk is the
- * page's ULID — 1:1 with a page. [model] is the OCR engine identifier set by UltraBridge
- * (may be NULL for older rows). Null when the server has not OCR'd the page yet.
+ * Recognized text for a single page (`page_text_from_server` or `page_text_from_client`).
+ * pk is the page's ULID — 1:1 with a page. [model] is the recognizer identifier.
  *
  * [isStale] = true when the device has locally noticed a page mutation (stroke or text-box
  * change) since the row's [ocrAt] — the dialog uses this to dim the body and show a
  * "pending" badge until the next server upsert lands and clears the marker. Source is the
- * LOCAL-ONLY `stale_at` column (NOT a synced field; see notebook.sq §page_text_from_server).
+ * LOCAL-ONLY `stale_at` column (NOT a synced field; see notebook.sq §page_text_from_*).
  */
 data class RecognizedText(
     val text: String,
@@ -139,10 +138,9 @@ class NotebookRepository private constructor(
          * ships so an already-joined device re-backfills its existing rows of the new kind exactly
          * once (see [rebackfillIfSchemaAdvanced]). 0 = pre-text_box; 1 = text_box added.
          *
-         * NOT bumped for page_text_from_server / page_text_from_client (schema v3): the backfill
-         * re-emits CLIENT-authored outbox ops, and neither table is client-authored (server pushes
-         * page_text_from_server; page_text_from_client is reserved). There is no buildCols/all*Ids
-         * case for them, so a bump would re-emit nothing — leave at 1. Don't "complete the pattern."
+         * NOT bumped for page_text_from_server / page_text_from_client (schema v3): RhizomeSync's
+         * registry already contains both tables, and page_text_from_client is captured explicitly
+         * when on-device OCR authors a row.
          */
         internal const val SYNC_BACKFILL_VERSION = 1
 
@@ -1040,15 +1038,49 @@ class NotebookRepository private constructor(
             )
         }
 
+    /** The live client-authored device OCR text for [pageId], or null if this device has not run it. */
+    fun loadPageTextFromClient(pageId: String): RecognizedText? =
+        db.notebookQueries.getLivePageTextFromClient(pageId).executeAsOneOrNull()?.let {
+            RecognizedText(
+                text = it.text,
+                ocrAt = it.ocr_at,
+                model = it.model,
+                isStale = it.stale_at != null
+            )
+        }
+
     /**
-     * Mark the page's server-OCR row as locally stale (called from inside the mutation's
+     * Store a fresh on-device OCR result and capture it as a normal Rhizome op so UltraBridge
+     * and peer devices receive the client-recognized source. Empty text is valid.
+     */
+    fun upsertPageTextFromClient(pageId: String, text: String, model: String, ocrAt: Long = clock()) {
+        db.transaction {
+            db.notebookQueries.applyUpsertPageTextFromClient(
+                id = pageId,
+                text = text,
+                ocr_at = ocrAt,
+                model = model,
+                created_at = ocrAt,
+                deleted_at = null,
+            )
+            enqueueOp("page_text_from_client", pageId, ocrAt)
+        }
+    }
+
+    /** Live pages in [notebookId] whose client OCR row is missing or locally stale. */
+    fun listPagesWithMissingOrStaleClientText(notebookId: String): List<String> =
+        db.notebookQueries.listPagesWithMissingOrStaleClientText(notebookId).executeAsList()
+
+    /**
+     * Mark the page's OCR rows as locally stale (called from inside the mutation's
      * own transaction by saveStroke/deleteStroke/applyErase/clearPage/saveTextBox/
-     * deleteTextBox). No-op when the page has no row yet (toolbar is already disabled in
-     * that case) or when the row is already stale (first-mutation-wins keeps stale_at
-     * meaningful as "stale since when"). Not a sync op — stale_at is local-only.
+     * deleteTextBox). No-op when a source has no row yet or when the row is already stale
+     * (first-mutation-wins keeps stale_at meaningful as "stale since when"). Not a sync op —
+     * stale_at is local-only for both source tables.
      */
     private fun markPageOcrStale(pageId: String, now: Long) {
         db.notebookQueries.markPageTextStale(now, pageId)
+        db.notebookQueries.markPageTextFromClientStale(now, pageId)
     }
 
     // -- CalDAV outbox (lasso-recognize → VTODO; LOCAL ONLY) -----------------
