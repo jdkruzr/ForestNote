@@ -36,14 +36,15 @@ class CalDavTaskSheet {
     )
 
     /**
-     * Feature 2 provenance context for a task born from a lasso → To-do gesture.
-     * [recognizedText] is the original recognized handwriting (offered as the opt-in
-     * inline `text/plain` ATTACH); [provenance] is the `X-FORESTNOTE-*` block; [webUrl] is the standard
-     * iCal `URL` (https link to the source page, already null-gated on sync base).
-     * When null, the sheet emits no provenance and hides the "attach recognized text" row.
+     * Provenance + page-attachment context for a task born from a lasso → To-do gesture.
+     * [attachmentText] is full-page OCR text, not the lasso summary. It may arrive
+     * asynchronously after the sheet opens; [attachmentPending] gates Send while checked.
+     * [provenance] is the `X-FORESTNOTE-*` block; [webUrl] is the standard iCal `URL`.
+     * When null, the sheet emits no provenance and hides the attachment row.
      */
     data class TaskContext(
-        val recognizedText: String,
+        val attachmentText: String?,
+        val attachmentPending: Boolean = false,
         val provenance: VTodoProvenance?,
         val webUrl: String?,
     )
@@ -56,6 +57,7 @@ class CalDavTaskSheet {
     private var noteInput: EditText? = null
     private var dueSummaryText: TextView? = null
     private var attachRecognizedCheck: CheckBox? = null
+    private var sendButton: TextView? = null
     private var taskContext: TaskContext? = null
     private val chipViews = mutableMapOf<DueChoice, TextView>()
 
@@ -83,11 +85,17 @@ class CalDavTaskSheet {
         val summary = view.findViewById<EditText>(R.id.input_caldav_summary).also { summaryInput = it }
         val note = view.findViewById<EditText>(R.id.input_caldav_note).also { noteInput = it }
         dueSummaryText = view.findViewById(R.id.text_due_summary)
-        // The "Attach full recognized text" row only makes sense when we have recognized
-        // text to attach (i.e. opened from a lasso → To-do gesture). Hidden otherwise.
+        // The "Attach full page text" row is shown while OCR is pending or once
+        // full-page text exists. Default checked because this is the expected FN task context.
         attachRecognizedCheck = view.findViewById<CheckBox>(R.id.check_caldav_attach_recognized).also {
-            it.visibility = if (!context?.recognizedText.isNullOrBlank()) View.VISIBLE else View.GONE
+            it.visibility = if (context?.attachmentPending == true || !context?.attachmentText.isNullOrBlank()) View.VISIBLE else View.GONE
+            it.isChecked = it.visibility == View.VISIBLE
+            it.setOnCheckedChangeListener { _, _ ->
+                applyAttachmentState()
+                updateSendEnabled()
+            }
         }
+        sendButton = view.findViewById(R.id.btn_caldav_send)
 
         summary.setText(prefillSummary)
         summary.setSelection(prefillSummary.length)
@@ -125,9 +133,11 @@ class CalDavTaskSheet {
             hide()
             callbacks.onCancel()
         }
-        view.findViewById<View>(R.id.btn_caldav_send).setOnClickListener {
+        sendButton?.setOnClickListener {
             handleSend(zone, callbacks)
         }
+        applyAttachmentState()
+        updateSendEnabled()
     }
 
     /** Force-cancel the sheet (used by the host's back-button handler). */
@@ -142,6 +152,7 @@ class CalDavTaskSheet {
         noteInput = null
         dueSummaryText = null
         attachRecognizedCheck = null
+        sendButton = null
         taskContext = null
         chipViews.clear()
         root?.let { host?.removeView(it) }
@@ -182,7 +193,37 @@ class CalDavTaskSheet {
         }
     }
 
+    /** Called by the host when full-page OCR finishes or fails after the sheet is already open. */
+    fun updateAttachmentText(text: String?) {
+        val ctx = taskContext ?: return
+        taskContext = ctx.copy(
+            attachmentText = text?.trim()?.ifBlank { null },
+            attachmentPending = false,
+        )
+        attachRecognizedCheck?.visibility = if (!taskContext?.attachmentText.isNullOrBlank()) View.VISIBLE else View.GONE
+        applyAttachmentState()
+        updateSendEnabled()
+    }
+
+    private fun applyAttachmentState() {
+        val check = attachRecognizedCheck ?: return
+        val ctx = taskContext
+        check.text = when {
+            ctx?.attachmentPending == true && check.isChecked -> "Attach full page text (recognizing...)"
+            ctx?.attachmentPending == true -> "Attach full page text"
+            !ctx?.attachmentText.isNullOrBlank() -> "Attach full page text"
+            else -> "Attach full page text"
+        }
+    }
+
+    private fun updateSendEnabled() {
+        val pendingChecked = taskContext?.attachmentPending == true && attachRecognizedCheck?.isChecked == true
+        sendButton?.isEnabled = !pendingChecked
+        sendButton?.alpha = if (pendingChecked) 0.45f else 1.0f
+    }
+
     private fun handleSend(zone: ZoneId, callbacks: Callbacks) {
+        if (taskContext?.attachmentPending == true && attachRecognizedCheck?.isChecked == true) return
         val rawSummary = summaryInput?.text?.toString().orEmpty()
         val decision = CalDavTaskSheetLogic.validateSummary(rawSummary)
         if (decision !is SummaryDecision.Valid) {
@@ -209,7 +250,7 @@ class CalDavTaskSheet {
             description = note,
             // LAST-MODIFIED defaults to DTSTAMP in the builder; STATUS defaults NEEDS-ACTION.
             url = ctx?.webUrl,
-            recognizedText = ctx?.let { CalDavTaskSheetLogic.recognizedTextToAttach(it.recognizedText, attachRecognized) },
+            recognizedText = CalDavTaskSheetLogic.attachmentTextToAttach(ctx?.attachmentText, attachRecognized),
             provenance = ctx?.provenance,
         )
         hide()

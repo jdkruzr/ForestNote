@@ -84,21 +84,22 @@ class CalDavTaskSheetLogicTest {
         assertEquals("buy milk", CalDavTaskSheetLogic.pillLabel("buy milk", maxLen = 40))
     }
 
-    // --- recognizedTextToAttach() (Feature 2 opt-in) -----------------------------
+    // --- attachmentTextToAttach() -------------------------------------------------
 
     @Test
-    fun `recognized text is attached only when the user opts in`() {
+    fun `page attachment text is attached only when checked`() {
         assertEquals(
             "buy milk for the week",
-            CalDavTaskSheetLogic.recognizedTextToAttach("buy milk for the week", attach = true),
+            CalDavTaskSheetLogic.attachmentTextToAttach("buy milk for the week", attach = true),
         )
-        assertNull(CalDavTaskSheetLogic.recognizedTextToAttach("buy milk for the week", attach = false))
+        assertNull(CalDavTaskSheetLogic.attachmentTextToAttach("buy milk for the week", attach = false))
     }
 
     @Test
-    fun `recognized text is trimmed and blank text yields null even when attached`() {
-        assertEquals("hi", CalDavTaskSheetLogic.recognizedTextToAttach("  hi  ", attach = true))
-        assertNull(CalDavTaskSheetLogic.recognizedTextToAttach("   ", attach = true))
-        assertNull(CalDavTaskSheetLogic.recognizedTextToAttach("", attach = true))
+    fun `page attachment text is trimmed and blank text yields null even when checked`() {
+        assertEquals("hi", CalDavTaskSheetLogic.attachmentTextToAttach("  hi  ", attach = true))
+        assertNull(CalDavTaskSheetLogic.attachmentTextToAttach("   ", attach = true))
+        assertNull(CalDavTaskSheetLogic.attachmentTextToAttach("", attach = true))
+        assertNull(CalDavTaskSheetLogic.attachmentTextToAttach(null, attach = true))
     }
 }

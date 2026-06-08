@@ -707,7 +707,10 @@ class MainActivity : Activity() {
                             .show()
                     }
                     is RecognizeFlowLogic.Decision.PromptDownload -> {
-                        promptModelDownload(decision.langTag) { runRecognize(strokes, screenBounds, decision.langTag, onText) }
+                        promptModelDownload(
+                            decision.langTag,
+                            onReady = { runRecognize(strokes, screenBounds, decision.langTag, onText) },
+                        )
                     }
                     is RecognizeFlowLogic.Decision.ProceedToRecognize -> {
                         runRecognize(strokes, screenBounds, decision.langTag, onText)
@@ -721,7 +724,7 @@ class MainActivity : Activity() {
      * Confirm + run the one-time MLKit model download for [langTag]. On success, calls
      * [onReady]; on failure, surfaces a defensive error dialog.
      */
-    private fun promptModelDownload(langTag: String, onReady: () -> Unit) {
+    private fun promptModelDownload(langTag: String, onReady: () -> Unit, onCancel: () -> Unit = {}) {
         val display = RecognitionModelManager.displayName(langTag)
         AlertDialog.Builder(this)
             .setTitle("Download recognition model")
@@ -748,7 +751,7 @@ class MainActivity : Activity() {
                     )
                 }
             }
-            .setNegativeButton("Cancel", null)
+            .setNegativeButton("Cancel") { _, _ -> onCancel() }
             .show()
     }
 
@@ -767,7 +770,10 @@ class MainActivity : Activity() {
             val result = recognizer.recognize(strokes, langTag)
             when (val ui = RecognizeFlowLogic.describeResult(result)) {
                 is RecognizeFlowLogic.ResultUi.Show -> onText(ui.text, screenBounds)
-                is RecognizeFlowLogic.ResultUi.Retry -> promptModelDownload(ui.langTag) { runRecognize(strokes, screenBounds, ui.langTag, onText) }
+                is RecognizeFlowLogic.ResultUi.Retry -> promptModelDownload(
+                    ui.langTag,
+                    onReady = { runRecognize(strokes, screenBounds, ui.langTag, onText) },
+                )
                 is RecognizeFlowLogic.ResultUi.Error -> {
                     AlertDialog.Builder(this@MainActivity)
                         .setTitle("Recognition failed")
@@ -837,7 +843,8 @@ class MainActivity : Activity() {
                 host = host,
                 prefillSummary = prefill,
                 context = CalDavTaskSheet.TaskContext(
-                    recognizedText = prefill,
+                    attachmentText = null,
+                    attachmentPending = haveIds,
                     provenance = provenance,
                     webUrl = webUrl,
                 ),
@@ -867,7 +874,47 @@ class MainActivity : Activity() {
                         onCancel = { fileLogger.log("CalDAV", "task creation cancelled") },
                     ),
                 )
+                if (haveIds) startTodoFullPageOcr(pgId)
             }
+    }
+
+    /**
+     * Full-page OCR for lasso → To-do. The sheet is already open with the lasso text as
+     * SUMMARY; this asynchronously fills the optional ATTACH with the active page text.
+     */
+    private fun startTodoFullPageOcr(pageId: String) {
+        val langTag = DeviceOcrScheduler.DEFAULT_LANG
+        syncScope.launch {
+            if (!modelManager.isDownloaded(langTag)) {
+                promptModelDownload(
+                    langTag,
+                    onReady = { startTodoFullPageOcr(pageId) },
+                    onCancel = { caldavTaskSheet.updateAttachmentText(null) },
+                )
+                return@launch
+            }
+            val strokes = runCatching { store.loadStrokesForPageSync(pageId) }
+                .onFailure { fileLogger.log("CalDAV", "failed to load strokes for todo page OCR: ${it.message}") }
+                .getOrDefault(emptyList())
+            val result = recognizer.recognize(strokes, langTag)
+            val recognized = result.getOrElse { e ->
+                fileLogger.log("CalDAV", "todo page OCR failed page=$pageId err=${e.message}")
+                if (e is RecognizerError.ModelMissing) {
+                    promptModelDownload(
+                        langTag,
+                        onReady = { startTodoFullPageOcr(pageId) },
+                        onCancel = { caldavTaskSheet.updateAttachmentText(null) },
+                    )
+                } else {
+                    caldavTaskSheet.updateAttachmentText(null)
+                }
+                return@launch
+            }
+            store.savePageTextFromClientSync(pageId, recognized.text, DeviceOcrScheduler.modelLabel(langTag))
+            if (activePageId == pageId) refreshOcrInDialog()
+            syncController.syncNow()
+            caldavTaskSheet.updateAttachmentText(recognized.text)
+        }
     }
 
 
