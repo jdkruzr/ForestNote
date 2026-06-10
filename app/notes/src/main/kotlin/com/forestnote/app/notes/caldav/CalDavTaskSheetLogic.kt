@@ -56,16 +56,6 @@ object CalDavTaskSheetLogic {
     fun pillLabel(text: String, maxLen: Int): String =
         if (text.length <= maxLen) text else text.take(maxLen - 1) + "…"
 
-    /**
-     * The page-text value to attach. Returns the full-page OCR text only when the
-     * user leaves "Attach full page text" checked; null otherwise (or when blank).
-     * VTodoBuilder carries a
-     * non-null value as an inline `text/plain` ATTACH and omits a null/blank one.
-     */
-    fun attachmentTextToAttach(attachmentText: String?, attach: Boolean): String? =
-        if (attach) attachmentText?.trim()?.ifBlank { null } else null
-
-    /** Back-compat alias for older tests/callers that still use the lasso-text name. */
-    fun recognizedTextToAttach(recognizedText: String, attach: Boolean): String? =
-        attachmentTextToAttach(recognizedText, attach)
+    fun attachmentToAttach(attachment: VTodoAttachment?, attach: Boolean): VTodoAttachment? =
+        if (attach && attachment?.bytes?.isNotEmpty() == true) attachment else null
 }

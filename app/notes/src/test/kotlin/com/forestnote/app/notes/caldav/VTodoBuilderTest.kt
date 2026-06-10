@@ -287,13 +287,17 @@ class VTodoBuilderTest {
     }
 
     @Test
-    fun `recognized text emits an inline-binary text-plain ATTACH with FILENAME and FMTTYPE`() {
-        val recognized = "buy milk, eggs; and bread"
+    fun `binary attachment emits inline-binary ATTACH with FILENAME and FMTTYPE`() {
+        val bytes = byteArrayOf(0x01, 0x23, 0x45, 0x67)
         val input = VTodoInput(
             uid = "u-attach",
             dtstampUtc = Instant.parse("2026-05-30T09:00:00Z"),
             summary = "shopping",
-            recognizedText = recognized,
+            attachment = VTodoAttachment(
+                bytes = bytes,
+                filename = "forestnote-page.jpg",
+                fmtType = "image/jpeg",
+            ),
         )
 
         val body = VTodoBuilder.build(input)
@@ -301,22 +305,22 @@ class VTodoBuilderTest {
 
         // UltraBridge keys inline-attachment de-bloat on ENCODING=BASE64 (or VALUE=BINARY)
         // and reads the human hint from FILENAME first; FMTTYPE surfaces in MCP get_task.
-        assertTrue(attachLine.contains("FMTTYPE=text/plain"), "got: $attachLine")
-        assertTrue(attachLine.contains("FILENAME=recognized-text.txt"), "got: $attachLine")
+        assertTrue(attachLine.contains("FMTTYPE=image/jpeg"), "got: $attachLine")
+        assertTrue(attachLine.contains("FILENAME=forestnote-page.jpg"), "got: $attachLine")
         assertTrue(attachLine.contains("ENCODING=BASE64"), "got: $attachLine")
         assertTrue(attachLine.contains("VALUE=BINARY"), "got: $attachLine")
-        val decoded = String(java.util.Base64.getDecoder().decode(attachLine.substringAfter(":")), Charsets.UTF_8)
-        assertEquals(recognized, decoded)
+        val decoded = java.util.Base64.getDecoder().decode(attachLine.substringAfter(":"))
+        assertTrue(bytes.contentEquals(decoded), "decoded bytes did not round-trip")
     }
 
     @Test
-    fun `recognized text rides as base64 ATTACH (not TEXT-escaped) while notebook name stays escaped`() {
-        val recognized = "line one;\ntwo, three"
+    fun `binary attachment rides as base64 ATTACH while notebook name stays escaped`() {
+        val bytes = "line one;\ntwo, three".toByteArray(Charsets.UTF_8)
         val input = VTodoInput(
             uid = "u-esc",
             dtstampUtc = Instant.parse("2026-05-30T09:00:00Z"),
             summary = "x",
-            recognizedText = recognized,
+            attachment = VTodoAttachment(bytes = bytes, filename = "page.jpg", fmtType = "image/jpeg"),
             provenance = VTodoProvenance(notebookName = "Proj; A, B"),
         )
 
@@ -325,8 +329,8 @@ class VTodoBuilderTest {
         // ATTACH is inline base64 binary — the payload is NOT TEXT-escaped; the raw bytes
         // (including ';' ',' and the newline) round-trip through base64 verbatim.
         val attachValue = unfold(body).split("\r\n").first { it.startsWith("ATTACH") }.substringAfter(":")
-        val decoded = String(java.util.Base64.getDecoder().decode(attachValue), Charsets.UTF_8)
-        assertEquals(recognized, decoded)
+        val decoded = java.util.Base64.getDecoder().decode(attachValue)
+        assertTrue(bytes.contentEquals(decoded), "decoded bytes did not round-trip")
 
         // X-FORESTNOTE-* values are still TEXT-escaped (UltraBridge un-escapes via .Text()).
         assertTrue(
@@ -336,19 +340,19 @@ class VTodoBuilderTest {
     }
 
     @Test
-    fun `blank url and blank recognized text are omitted`() {
+    fun `blank url and empty attachment are omitted`() {
         val input = VTodoInput(
             uid = "u-blank",
             dtstampUtc = Instant.parse("2026-05-30T09:00:00Z"),
             summary = "x",
             url = "   ",
-            recognizedText = "",
+            attachment = VTodoAttachment(bytes = byteArrayOf(), filename = "page.jpg", fmtType = "image/jpeg"),
         )
 
         val body = VTodoBuilder.build(input)
 
         assertTrue(!body.contains("URL:"), "blank url must be omitted; got:\n$body")
-        assertTrue(!body.contains("ATTACH"), "blank recognized text must omit ATTACH; got:\n$body")
+        assertTrue(!body.contains("ATTACH"), "empty attachment must omit ATTACH; got:\n$body")
     }
 
     /** RFC 5545 §3.1 unfold: drop CRLF + the single leading space on continuation lines. */

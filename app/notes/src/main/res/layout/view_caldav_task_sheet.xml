@@ -149,16 +149,13 @@
                 android:textColor="@color/black"
                 android:textSize="16sp" />
 
-            <!-- Feature 2: when checked, the full page recognized handwriting is
-                 carried as an inline text/plain VTODO ATTACH (third-party task apps surface
-                 attachments; preserved even if the user trims SUMMARY). Default on when
-                 full-page OCR is available or pending. -->
+            <!-- Source page image attachment. Default on when the page image is available or pending. -->
             <CheckBox
                 android:id="@+id/check_caldav_attach_recognized"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
-                android:text="Attach full page text"
+                android:text="Attach page image"
                 android:textColor="@color/black"
                 android:textSize="16sp" />
         </LinearLayout>

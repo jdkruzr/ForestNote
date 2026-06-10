@@ -38,22 +38,34 @@ data class VTodoInput(
      * not TEXT, so it is not escaped (our ULID/query values carry no TEXT specials).
      */
     val url: String? = null,
-    /**
-     * The full original recognized handwriting text, carried when the user opts in.
-     * Emitted as an inline `text/plain` ATTACH (RFC 5545 §3.8.1.1,
-     * `ENCODING=BASE64;VALUE=BINARY`) rather than COMMENT — third-party task apps
-     * surface attachments but ignore COMMENT, and DESCRIPTION belongs to the user's
-     * own note. UltraBridge de-bloats the inline bytes to its content store on ingest
-     * (keys on `ENCODING=BASE64`) and serves them at a signed URL; FILENAME/FMTTYPE
-     * round-trip into MCP `task.Attachments`. Distinct from [description] (the user's
-     * free-form note). `null`/blank omits the ATTACH.
-     */
-    val recognizedText: String? = null,
+    /** Optional inline binary attachment. `null` or empty data omits ATTACH. */
+    val attachment: VTodoAttachment? = null,
     /** ForestNote provenance (`X-FORESTNOTE-*`). `null` omits the whole block. */
     val provenance: VTodoProvenance? = null,
     /** Identifies the app emitting this VTODO. Servers display this in some UIs. */
     val prodId: String = "-//ForestNote//EN",
 )
+
+data class VTodoAttachment(
+    val bytes: ByteArray,
+    val filename: String,
+    val fmtType: String,
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is VTodoAttachment) return false
+        return bytes.contentEquals(other.bytes) &&
+            filename == other.filename &&
+            fmtType == other.fmtType
+    }
+
+    override fun hashCode(): Int {
+        var result = bytes.contentHashCode()
+        result = 31 * result + filename.hashCode()
+        result = 31 * result + fmtType.hashCode()
+        return result
+    }
+}
 
 /** VTODO `STATUS` enumerated value. */
 enum class VTodoStatus(val wire: String) {
@@ -140,14 +152,12 @@ object VTodoBuilder {
             // Native deep-link is a URI — emitted raw (blob-only; UltraBridge stores it opaquely).
             p.nativeUrl?.takeIf { it.isNotBlank() }?.let { lines += "X-FORESTNOTE-NATIVE-URL:$it" }
         }
-        // Recognized handwriting rides as an inline text/plain ATTACH (base64), NOT
-        // COMMENT — third-party task apps surface attachments but ignore COMMENT. Base64
-        // is iCal-clean (no TEXT escaping needed); foldLine wraps the long value at 75
-        // octets. UltraBridge keys inline de-bloat on ENCODING=BASE64 and reads the
-        // filename hint from FILENAME. Emitted last so the readable props stay grouped.
-        input.recognizedText?.takeIf { it.isNotBlank() }?.let {
-            val b64 = Base64.getEncoder().encodeToString(it.toByteArray(Charsets.UTF_8))
-            lines += "ATTACH;FMTTYPE=text/plain;FILENAME=$RECOGNIZED_TEXT_FILENAME;ENCODING=BASE64;VALUE=BINARY:$b64"
+        // Inline binary ATTACH. UltraBridge de-bloats this to its attachment store
+        // on ingest and serves it back through a signed URL / reconstructed CalDAV
+        // ATTACH. Emitted last so the readable task props stay grouped.
+        input.attachment?.takeIf { it.bytes.isNotEmpty() }?.let {
+            val b64 = Base64.getEncoder().encodeToString(it.bytes)
+            lines += "ATTACH;FMTTYPE=${escapeParam(it.fmtType)};FILENAME=${escapeParam(it.filename)};ENCODING=BASE64;VALUE=BINARY:$b64"
         }
         lines += "END:VTODO"
         lines += "END:VCALENDAR"
@@ -204,9 +214,6 @@ object VTodoBuilder {
 
     private const val MAX_OCTETS = 75
 
-    /** Filename hint on the recognized-text ATTACH (UltraBridge reads FILENAME first). */
-    private const val RECOGNIZED_TEXT_FILENAME = "recognized-text.txt"
-
     /**
      * RFC 5545 §3.3.11 TEXT escapes. Apply to SUMMARY/DESCRIPTION values
      * before line folding (folding measures the escaped octets).
@@ -222,4 +229,10 @@ object VTodoBuilder {
             }
         }
     }
+
+    private fun escapeParam(s: String): String =
+        s.replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace(";", "\\;")
+            .replace(",", "\\,")
 }

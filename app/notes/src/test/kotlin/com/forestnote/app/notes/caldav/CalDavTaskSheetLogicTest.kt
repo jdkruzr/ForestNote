@@ -84,22 +84,24 @@ class CalDavTaskSheetLogicTest {
         assertEquals("buy milk", CalDavTaskSheetLogic.pillLabel("buy milk", maxLen = 40))
     }
 
-    // --- attachmentTextToAttach() -------------------------------------------------
+    // --- attachmentToAttach() -----------------------------------------------------
 
     @Test
-    fun `page attachment text is attached only when checked`() {
-        assertEquals(
-            "buy milk for the week",
-            CalDavTaskSheetLogic.attachmentTextToAttach("buy milk for the week", attach = true),
-        )
-        assertNull(CalDavTaskSheetLogic.attachmentTextToAttach("buy milk for the week", attach = false))
+    fun `page attachment is attached only when checked`() {
+        val attachment = VTodoAttachment(byteArrayOf(1, 2, 3), "page.jpg", "image/jpeg")
+
+        assertEquals(attachment, CalDavTaskSheetLogic.attachmentToAttach(attachment, attach = true))
+        assertNull(CalDavTaskSheetLogic.attachmentToAttach(attachment, attach = false))
     }
 
     @Test
-    fun `page attachment text is trimmed and blank text yields null even when checked`() {
-        assertEquals("hi", CalDavTaskSheetLogic.attachmentTextToAttach("  hi  ", attach = true))
-        assertNull(CalDavTaskSheetLogic.attachmentTextToAttach("   ", attach = true))
-        assertNull(CalDavTaskSheetLogic.attachmentTextToAttach("", attach = true))
-        assertNull(CalDavTaskSheetLogic.attachmentTextToAttach(null, attach = true))
+    fun `null or empty page attachment yields null even when checked`() {
+        assertNull(CalDavTaskSheetLogic.attachmentToAttach(null, attach = true))
+        assertNull(
+            CalDavTaskSheetLogic.attachmentToAttach(
+                VTodoAttachment(byteArrayOf(), "page.jpg", "image/jpeg"),
+                attach = true,
+            ),
+        )
     }
 }

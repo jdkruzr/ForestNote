@@ -2,6 +2,7 @@ package com.forestnote.app.notes.ocr
 
 import android.util.Log
 import com.forestnote.app.notes.NotebookStore
+import com.forestnote.app.notes.recognize.FullPageOcr
 import com.forestnote.app.notes.recognize.RecognitionModelManager
 import com.forestnote.app.notes.recognize.Recognizer
 import com.forestnote.app.notes.recognize.RecognizerError
@@ -48,7 +49,7 @@ class DeviceOcrScheduler(
                     val strokes = runCatching { store.loadStrokesForPageSync(pageId) }
                         .onFailure { Log.w(TAG, "failed to load page strokes for device OCR", it) }
                         .getOrDefault(emptyList())
-                    val result = recognizer.recognize(strokes, langTag)
+                    val result = FullPageOcr.recognizePage(strokes, langTag, recognizer)
                     val recognized = result.getOrNull()
                     if (recognized == null) {
                         val e = result.exceptionOrNull()

@@ -38,8 +38,10 @@ import com.forestnote.app.notes.caldav.OkHttpCalDavClient
 import com.forestnote.app.notes.caldav.SecureCredentialsStore
 import com.forestnote.app.notes.caldav.SettingsCredsView
 import com.forestnote.app.notes.caldav.TryOutcome
+import com.forestnote.app.notes.caldav.VTodoAttachment
 import com.forestnote.app.notes.caldav.VTodoProvenance
 import com.forestnote.app.notes.ocr.DeviceOcrScheduler
+import com.forestnote.app.notes.recognize.FullPageOcr
 import com.forestnote.app.notes.recognize.MlKitRecognizer
 import com.forestnote.app.notes.recognize.RecognitionModelManager
 import com.forestnote.app.notes.recognize.RecognizedText
@@ -51,6 +53,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import java.io.FileWriter
 import java.io.PrintWriter
 import java.util.Date
@@ -843,8 +847,9 @@ class MainActivity : Activity() {
                 host = host,
                 prefillSummary = prefill,
                 context = CalDavTaskSheet.TaskContext(
-                    attachmentText = null,
+                    attachment = null,
                     attachmentPending = haveIds,
+                    attachmentStatus = if (haveIds) "rendering page" else null,
                     provenance = provenance,
                     webUrl = webUrl,
                 ),
@@ -874,47 +879,125 @@ class MainActivity : Activity() {
                         onCancel = { fileLogger.log("CalDAV", "task creation cancelled") },
                     ),
                 )
-                if (haveIds) startTodoFullPageOcr(pgId)
+                if (haveIds) startTodoPagePreparation(pgId)
             }
     }
 
     /**
-     * Full-page OCR for lasso → To-do. The sheet is already open with the lasso text as
-     * SUMMARY; this asynchronously fills the optional ATTACH with the active page text.
+     * Page preparation for lasso → To-do. The sheet is already open with the lasso text
+     * as SUMMARY; this fills the optional ATTACH with a JPEG of the source page. OCR still
+     * runs afterward for local page search only; it is deliberately not attached to tasks.
      */
-    private fun startTodoFullPageOcr(pageId: String) {
+    private fun startTodoPagePreparation(pageId: String) {
         val langTag = DeviceOcrScheduler.DEFAULT_LANG
         syncScope.launch {
+            fileLogger.log("CalDAV", "todo page prep start page=$pageId")
+            caldavTaskSheet.updateAttachmentProgress("loading page")
+            val strokes = runCatching { store.loadStrokesForPageSync(pageId) }
+                .onFailure { fileLogger.log("CalDAV", "failed to load strokes for todo page prep: ${it.message}") }
+                .getOrDefault(emptyList())
+            fileLogger.log("CalDAV", "todo page prep loaded strokes page=$pageId count=${strokes.size}")
+
+            caldavTaskSheet.updateAttachmentProgress("rendering page")
+            val jpeg = runCatching {
+                withContext(Dispatchers.Default) { PageImageRenderer.renderJpeg(strokes) }
+            }.onFailure {
+                fileLogger.log("CalDAV", "todo page image render failed page=$pageId err=${it.message}")
+            }.getOrNull()
+            caldavTaskSheet.updateAttachment(
+                jpeg?.takeIf { it.isNotEmpty() }?.let {
+                    VTodoAttachment(
+                        bytes = it,
+                        filename = TODO_PAGE_IMAGE_FILENAME,
+                        fmtType = TODO_PAGE_IMAGE_MIME,
+                    )
+                },
+            )
+            if (jpeg != null) {
+                fileLogger.log("CalDAV", "todo page image ready page=$pageId bytes=${jpeg.size}")
+            }
+
             if (!modelManager.isDownloaded(langTag)) {
+                fileLogger.log("CalDAV", "todo page OCR skipped for local search; model missing page=$pageId lang=$langTag")
                 promptModelDownload(
                     langTag,
-                    onReady = { startTodoFullPageOcr(pageId) },
-                    onCancel = { caldavTaskSheet.updateAttachmentText(null) },
+                    onReady = { startTodoLocalSearchOcr(pageId) },
                 )
                 return@launch
             }
-            val strokes = runCatching { store.loadStrokesForPageSync(pageId) }
-                .onFailure { fileLogger.log("CalDAV", "failed to load strokes for todo page OCR: ${it.message}") }
-                .getOrDefault(emptyList())
-            val result = recognizer.recognize(strokes, langTag)
+            runTodoLocalSearchOcr(pageId, strokes, langTag)
+        }
+    }
+
+    private fun startTodoLocalSearchOcr(pageId: String) {
+        val langTag = DeviceOcrScheduler.DEFAULT_LANG
+        syncScope.launch {
+            val result = withTimeoutOrNull(TODO_PAGE_OCR_TIMEOUT_MS) {
+                runFullPageDeviceOcr(
+                    pageId = pageId,
+                    langTag = langTag,
+                    logTag = "CalDAV",
+                    logContext = "todo page local-search OCR",
+                )
+            } ?: run {
+                fileLogger.log("CalDAV", "todo page OCR timed out page=$pageId")
+                return@launch
+            }
             val recognized = result.getOrElse { e ->
                 fileLogger.log("CalDAV", "todo page OCR failed page=$pageId err=${e.message}")
                 if (e is RecognizerError.ModelMissing) {
                     promptModelDownload(
                         langTag,
-                        onReady = { startTodoFullPageOcr(pageId) },
-                        onCancel = { caldavTaskSheet.updateAttachmentText(null) },
+                        onReady = { startTodoLocalSearchOcr(pageId) },
                     )
-                } else {
-                    caldavTaskSheet.updateAttachmentText(null)
                 }
                 return@launch
             }
-            store.savePageTextFromClientSync(pageId, recognized.text, DeviceOcrScheduler.modelLabel(langTag))
-            if (activePageId == pageId) refreshOcrInDialog()
-            syncController.syncNow()
-            caldavTaskSheet.updateAttachmentText(recognized.text)
+            saveFullPageDeviceOcr(pageId, langTag, recognized)
+            fileLogger.log("CalDAV", "todo page OCR complete page=$pageId chars=${recognized.text.length}")
         }
+    }
+
+    private suspend fun runTodoLocalSearchOcr(
+        pageId: String,
+        strokes: List<com.forestnote.core.ink.Stroke>,
+        langTag: String,
+    ) {
+        val result = withTimeoutOrNull(TODO_PAGE_OCR_TIMEOUT_MS) {
+            fileLogger.log("CalDAV", "todo page local-search OCR loaded strokes page=$pageId count=${strokes.size}")
+            FullPageOcr.recognizePage(strokes, langTag, recognizer)
+        } ?: run {
+            fileLogger.log("CalDAV", "todo page OCR timed out page=$pageId")
+            return
+        }
+        val recognized = result.getOrElse { e ->
+            fileLogger.log("CalDAV", "todo page OCR failed page=$pageId err=${e.message}")
+            return
+        }
+        saveFullPageDeviceOcr(pageId, langTag, recognized)
+        fileLogger.log("CalDAV", "todo page OCR complete page=$pageId chars=${recognized.text.length}")
+    }
+
+    private suspend fun runFullPageDeviceOcr(
+        pageId: String,
+        langTag: String,
+        logTag: String,
+        logContext: String,
+        beforeRecognize: () -> Unit = {},
+        onProgress: (String) -> Unit = {},
+    ): Result<RecognizedText> {
+        val strokes = runCatching { store.loadStrokesForPageSync(pageId) }
+            .onFailure { fileLogger.log(logTag, "failed to load strokes for $logContext: ${it.message}") }
+            .getOrDefault(emptyList())
+        fileLogger.log(logTag, "$logContext loaded strokes page=$pageId count=${strokes.size}")
+        beforeRecognize()
+        return FullPageOcr.recognizePage(strokes, langTag, recognizer, onProgress)
+    }
+
+    private suspend fun saveFullPageDeviceOcr(pageId: String, langTag: String, recognized: RecognizedText) {
+        store.savePageTextFromClientSync(pageId, recognized.text, DeviceOcrScheduler.modelLabel(langTag))
+        if (activePageId == pageId) refreshOcrInDialog()
+        syncController.syncNow()
     }
 
 
@@ -1171,10 +1254,12 @@ class MainActivity : Activity() {
                 return@launch
             }
             if (activePageId == pageId && ocrTextDialog.isShowing) ocrTextDialog.showDeviceRunning()
-            val strokes = runCatching { store.loadStrokesForPageSync(pageId) }
-                .onFailure { fileLogger.log("OCR", "failed to load strokes for device OCR: ${it.message}") }
-                .getOrDefault(emptyList())
-            val result = recognizer.recognize(strokes, langTag)
+            val result = runFullPageDeviceOcr(
+                pageId = pageId,
+                langTag = langTag,
+                logTag = "OCR",
+                logContext = "device OCR",
+            )
             val recognized = result.getOrElse { e ->
                 if (e !is RecognizerError.ModelMissing) {
                     AlertDialog.Builder(this@MainActivity)
@@ -1185,9 +1270,7 @@ class MainActivity : Activity() {
                 }
                 return@launch
             }
-            store.savePageTextFromClientSync(pageId, recognized.text, DeviceOcrScheduler.modelLabel(langTag))
-            if (activePageId == pageId) refreshOcrInDialog()
-            syncController.syncNow()
+            saveFullPageDeviceOcr(pageId, langTag, recognized)
         }
     }
 
@@ -1886,6 +1969,12 @@ class MainActivity : Activity() {
 
         // How long the Send-side optimistic try waits before falling back to "Task queued".
         const val OPTIMISTIC_SEND_TIMEOUT_MS = 500L
+
+        const val TODO_PAGE_IMAGE_FILENAME = "forestnote-page.jpg"
+        const val TODO_PAGE_IMAGE_MIME = "image/jpeg"
+
+        // Full-page MLKit local-search OCR should not be able to run forever.
+        const val TODO_PAGE_OCR_TIMEOUT_MS = 180_000L
 
         // X-FORESTNOTE-SOURCE value for tasks created from a lasso → To-do gesture.
         // Frozen contract with UltraBridge (filterable as ?source=lasso).
