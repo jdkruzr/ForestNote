@@ -17,11 +17,9 @@ import kotlin.test.assertTrue
  * join can: mint the site_id (capture goes live), pull first, drop the untouched bootstrap notebook
  * if the server delivered real content, then backfill the local rows.
  *
- * Phase 8 note: backfill now runs through the RhizomeSync adapter, which captures EVERY capturable
- * row each call — it does NOT skip rows that arrived via a pull (the old `lacksMeta` optimization is
- * gone). That is idempotent under the server's row-level LWW (a re-captured row carries a higher HLC
- * `op_ts` and re-asserts identical data), just not idempotent in outbox COUNT — so these tests no
- * longer assert a stable pending-ops size across repeated backfills.
+ * Full backfill still captures every capturable row for local-only enable/schema generation. The
+ * pull-first join path uses a separate untracked-row backfill so rows that arrived via the pull do
+ * not get reauthored under the new device site.
  */
 class JoinHandshakeTest {
 
@@ -88,6 +86,24 @@ class JoinHandshakeTest {
         // (the death-spiral bug: stacked duplicate backfills run op_seq away and bloat the relay).
         repo.backfillOutbox()
         assertEquals(afterFirst, repo.pendingOps().size, "second backfill at the same version is a no-op")
+        repo.close()
+    }
+
+    @Test
+    fun `backfillUntrackedOutbox skips rows pulled during join`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver) { 1000L }
+        val localBootstrap = repo.currentNotebookId()
+        val remoteNb = "00000000000000000000000RMB"
+        val remotePg = "00000000000000000000000RMP"
+        repo.mintSiteId()
+        repo.applySyncOps(listOf(nbOp(remoteNb, 1, 3000, "Remote"), pageOp(remotePg, remoteNb, 2, 3000)))
+
+        repo.backfillUntrackedOutbox()
+        val pending = repo.pendingOps()
+
+        assertTrue(pending.any { it.pk == localBootstrap }, "pre-sync local bootstrap row is captured")
+        assertTrue(pending.none { it.pk == remoteNb || it.pk == remotePg }, "pulled rows already have provenance and are skipped")
         repo.close()
     }
 

@@ -737,6 +737,7 @@ class NotebookStore(
     // Join-handshake bridges (used by SyncController.enableAndJoin).
     suspend fun syncMintSiteId(): String = onDb { it.mintSiteId() }
     suspend fun syncBackfillOutbox() = onDb { it.backfillOutbox() }
+    suspend fun syncBackfillUntrackedOutbox() = onDb { it.backfillUntrackedOutbox() }
     suspend fun syncIsPristineBootstrap(): Boolean = onDb { it.isPristineBootstrap() }
     suspend fun syncCurrentNotebookId(): String = onDb { it.currentNotebookId() }
     suspend fun syncNotebookIds(): List<String> = onDb { it.listNotebooks().map { nb -> nb.id } }

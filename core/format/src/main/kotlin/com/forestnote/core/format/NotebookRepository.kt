@@ -1270,8 +1270,8 @@ class NotebookRepository private constructor(
     /**
      * Mint + persist this install's `site_id` through the RhizomeSync adapter (capture goes live from
      * here), WITHOUT backfilling. Idempotent — returns the existing site_id if already minted. The
-     * join handshake mints first, pulls, then [backfillOutbox]s, so a fresh device doesn't upload
-     * before it sees the server. The id lives in the adapter's `rhizome_sync_state` (D7); legacy
+     * join handshake mints first, pulls, then [backfillUntrackedOutbox]s, so a fresh device doesn't
+     * upload before it sees the server. The id lives in the adapter's `rhizome_sync_state` (D7); legacy
      * `sync_state.site_id` is no longer authoritative.
      */
     fun mintSiteId(): String {
@@ -1302,6 +1302,19 @@ class NotebookRepository private constructor(
         val state = db.notebookQueries.getSyncState().executeAsOneOrNull()
         if (state != null && state.backfill_version >= SYNC_BACKFILL_VERSION) return
         runBlocking { syncStore.backfill() }
+        db.notebookQueries.setBackfillVersion(SYNC_BACKFILL_VERSION.toLong())
+    }
+
+    /**
+     * Join-only backfill after the initial server pull. Relayed rows now have Rhizome row provenance,
+     * so this captures only genuinely local pre-sync rows and avoids re-authoring the server library
+     * under the new device site.
+     */
+    fun backfillUntrackedOutbox() {
+        if (runBlocking { syncStore.siteId() } == null) return
+        val state = db.notebookQueries.getSyncState().executeAsOneOrNull()
+        if (state != null && state.backfill_version >= SYNC_BACKFILL_VERSION) return
+        runBlocking { syncStore.backfillUntracked() }
         db.notebookQueries.setBackfillVersion(SYNC_BACKFILL_VERSION.toLong())
     }
 

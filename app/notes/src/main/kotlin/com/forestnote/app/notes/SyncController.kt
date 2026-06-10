@@ -93,8 +93,8 @@ class SyncController(
     /**
      * Enable sync and run the pull-first join handshake: mint the site_id (capture goes live),
      * pull the server library, drop the untouched bootstrap notebook if the server delivered real
-     * content, then backfill + push the genuinely-local rows. If no server is configured yet, just
-     * enables capture + backfill locally so content uploads once a server is set.
+     * content, then backfill + push rows that were genuinely local before join. If no server is
+     * configured yet, just enables capture + backfill locally so content uploads once a server is set.
      */
     suspend fun enableAndJoin(): SyncResult = mutex.withLock {
         val wasPristine = store.syncIsPristineBootstrap()
@@ -117,7 +117,7 @@ class SyncController(
             log("enableAndJoin: discarding untouched bootstrap notebook $bootstrapId")
             store.syncDiscardBootstrapNotebook(bootstrapId)
         }
-        store.syncBackfillOutbox()
+        store.syncBackfillUntrackedOutbox()
         val push = engine.syncOnce() // push the backfilled local content
         if (push is SyncResult.Success) {
             store.syncMarkJoined() // the full handshake completed — future sessions are plain syncs

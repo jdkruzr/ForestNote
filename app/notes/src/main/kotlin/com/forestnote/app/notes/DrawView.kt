@@ -65,7 +65,7 @@ class DrawView @JvmOverloads constructor(
     companion object {
         // Page-template ink (B3). Lines at a muted gray; dots a touch darker so they
         // read at the same weight (on-device tuning).
-        private val TEMPLATE_LINE_COLOR = Color.parseColor("#FFB0B0B0")
+        private val TEMPLATE_LINE_COLOR = Color.parseColor("#FF909090")
         private val TEMPLATE_DOT_COLOR = Color.parseColor("#FF8A8A8A")
 
         // Text-box placement defaults (virtual units; short axis = 10,000).
