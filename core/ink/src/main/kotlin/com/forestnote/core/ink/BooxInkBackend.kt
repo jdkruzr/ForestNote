@@ -110,6 +110,8 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
      */
     private val pendingPoints = ArrayList<TouchPoint>(2048)
     private var listFired = false
+    private val pendingErasePoints = ArrayList<TouchPoint>(2048)
+    private var eraseListFired = false
 
     /** Reconciles run serialized off the UI thread (each suspends firmware render + sleeps). */
     private val reconcileExecutor = Executors.newSingleThreadExecutor()
@@ -388,6 +390,9 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             th.closeRawDrawing()
             th.setStrokeWidth(liveStrokeWidthPx())
             th.setLimitRect(mutableListOf(limit)).setExcludeRect(currentExcludeRects()).openRawDrawing()
+            th.enableSideBtnErase(true)
+            th.setBrushRawDrawingEnabled(true)
+            th.setEraserRawDrawingEnabled(true, RAW_ERASER_WIDTH)
             applyPen()
             // Do NOT pin SCHEME_SCRIBBLE + setEpdTurbo globally: the spike did, but with no UI to
             // refresh it never noticed that pinning the whole panel into firmware-scribble mode
@@ -540,13 +545,39 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             }
         }
 
-        // Erasing + hover: still no-ops. Step 1 routes erase through normal MotionEvent dispatch
-        // (raw drawing released for the eraser tool), so the firmware erase channel isn't engaged
-        // yet — a later step may adopt it (e.g. the pen's flip-end hardware eraser).
-        override fun onBeginRawErasing(b: Boolean, point: TouchPoint?) {}
-        override fun onRawErasingTouchPointMoveReceived(point: TouchPoint?) {}
-        override fun onEndRawErasing(b: Boolean, point: TouchPoint?) {}
-        override fun onRawErasingTouchPointListReceived(list: TouchPointList?) {}
+        override fun onBeginRawErasing(b: Boolean, point: TouchPoint?) {
+            strokeInProgress = true
+            mainHandler.removeCallbacks(unfreezeRunnable)
+            surfaceView?.post { onPenDown?.invoke() }
+            pendingErasePoints.clear()
+            eraseListFired = false
+            point?.let { pendingErasePoints.add(TouchPoint(it)) }
+            Log.d(TAG, "raw erasing begin")
+        }
+
+        override fun onRawErasingTouchPointMoveReceived(point: TouchPoint?) {
+            point?.let { pendingErasePoints.add(TouchPoint(it)) }
+        }
+
+        override fun onEndRawErasing(b: Boolean, point: TouchPoint?) {
+            if (!eraseListFired) {
+                point?.let { pendingErasePoints.add(TouchPoint(it)) }
+                ingestErase(pendingErasePoints.toList())
+            }
+            strokeInProgress = false
+            if (excludeReapplyPending) {
+                excludeReapplyPending = false
+                surfaceView?.post { reapplyExcludeRects() }
+            }
+            Log.d(TAG, "raw erasing end")
+        }
+
+        override fun onRawErasingTouchPointListReceived(list: TouchPointList?) {
+            val pts = list?.points ?: return
+            eraseListFired = true
+            ingestErase(pts)
+            Log.d(TAG, "raw erasing list size=${pts.size}")
+        }
         override fun onPenActive(point: TouchPoint?) {}
     }
 
@@ -581,6 +612,15 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
                     s.accept(sample, phase)
                 }
             }
+        }
+    }
+
+    private fun ingestErase(points: List<TouchPoint>) {
+        if (points.isEmpty()) return
+        val samples = points.mapNotNull { sampleOf(it) }
+        if (samples.isEmpty()) return
+        surfaceView?.post {
+            sink?.erase(samples, Tool.StrokeEraser)
         }
     }
 
@@ -781,6 +821,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
 
     private companion object {
         const val TAG = "BooxInkBackend"
+        const val RAW_ERASER_WIDTH = 5
 
         /** Sentinel exclude rect (1px at the origin) used to "clear" excludes — see [currentExcludeRects]. */
         private val NO_OP_EXCLUDE = Rect(0, 0, 1, 1)

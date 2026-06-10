@@ -35,6 +35,13 @@ interface StrokeSink {
      */
     fun accept(sample: InkSample, phase: InkPhase)
 
+    /**
+     * Ingest a complete hardware/firmware eraser gesture. Input-owning backends
+     * can call this when the platform reports eraser points outside Android's
+     * normal MotionEvent TOOL_TYPE_ERASER path.
+     */
+    fun erase(samples: List<InkSample>, tool: Tool = Tool.StrokeEraser) {}
+
     /** Abandon the in-progress stroke without finalizing or persisting it. */
     fun cancel()
 }

@@ -1414,6 +1414,10 @@ class DrawView @JvmOverloads constructor(
             backend?.commitInkStroke(bmp, loc, rect)
         }
 
+        override fun erase(samples: List<InkSample>, tool: Tool) {
+            handleFirmwareErase(samples, tool)
+        }
+
         override fun cancel() {
             currentStroke = null
             hasDirty = false
@@ -1487,11 +1491,7 @@ class DrawView @JvmOverloads constructor(
 
         // Eraser width in screen pixels. Both variants use a wide 40f tip; they differ in
         // behavior (StrokeEraser wipes whole strokes, PixelEraser rubs out pixels), not size.
-        val eraserWidth = when (tool) {
-            is Tool.StrokeEraser -> 40f
-            is Tool.PixelEraser -> 40f
-            else -> 24f
-        }
+        val eraserWidth = eraserWidthFor(tool)
         eraserPaint.strokeWidth = eraserWidth
 
         when (event.actionMasked) {
@@ -1549,6 +1549,47 @@ class DrawView @JvmOverloads constructor(
             }
         }
         return true
+    }
+
+    private fun handleFirmwareErase(samples: List<InkSample>, tool: Tool) {
+        if (samples.isEmpty()) return
+        val eraserWidth = eraserWidthFor(tool)
+        eraserPaint.strokeWidth = eraserWidth
+        ensureBitmap()
+        val canvas = writingCanvas ?: return
+
+        val first = samples.first()
+        prevScreenX = transform.toScreenX(first.vx)
+        prevScreenY = transform.toScreenY(first.vy)
+        eraserPathVirtual.clear()
+        eraserPathVirtual.add(first.vx to first.vy)
+
+        for (sample in samples.drop(1)) {
+            val x = transform.toScreenX(sample.vx)
+            val y = transform.toScreenY(sample.vy)
+            canvas.drawLine(prevScreenX, prevScreenY, x, y, eraserPaint)
+
+            val pad = (eraserWidth / 2 + 2).toInt()
+            invalidate(
+                (min(prevScreenX, x).toInt() - pad).coerceAtLeast(0),
+                (min(prevScreenY, y).toInt() - pad).coerceAtLeast(0),
+                (max(prevScreenX, x).toInt() + pad).coerceAtMost(width),
+                (max(prevScreenY, y).toInt() + pad).coerceAtMost(height)
+            )
+
+            eraserPathVirtual.add(sample.vx to sample.vy)
+            prevScreenX = x
+            prevScreenY = y
+        }
+
+        reconcileAfterErase(tool, eraserWidth)
+        postDelayed({ invalidate() }, 900)
+    }
+
+    private fun eraserWidthFor(tool: Tool): Float = when (tool) {
+        is Tool.StrokeEraser -> 40f
+        is Tool.PixelEraser -> 40f
+        else -> 24f
     }
 
     /**
