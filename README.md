@@ -73,4 +73,4 @@ the per-module `CLAUDE.md` files are the closest thing to a design reference.
 
 ## License
 
-[MIT](LICENSE) © 2026 jdkruzr
+[Apache 2.0](LICENSE) © 2026 jdkruzr. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
