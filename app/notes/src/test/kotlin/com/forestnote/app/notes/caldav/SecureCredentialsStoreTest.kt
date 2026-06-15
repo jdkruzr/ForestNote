@@ -3,6 +3,7 @@ package com.forestnote.app.notes.caldav
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * [SecureCredentialsStore] holds two credential sets behind a [KeyValueBackend]
@@ -79,6 +80,14 @@ class SecureCredentialsStoreTest {
         assertNull(store.caldavCreds())
     }
 
+    // --- warm-up -------------------------------------------------------------------
+
+    @Test
+    fun `warmUp delegates to the backend so startup can pre-resolve init off-thread`() {
+        store.warmUp()
+        assertTrue(backend.warmedUp)
+    }
+
     // --- migration ----------------------------------------------------------------
 
     @Test
@@ -123,7 +132,10 @@ class SecureCredentialsStoreTest {
 /** Trivial in-memory [KeyValueBackend] for tests. */
 private class InMemoryKeyValueBackend : KeyValueBackend {
     private val map = mutableMapOf<String, String>()
+    var warmedUp = false
+        private set
     override fun getString(key: String): String? = map[key]
     override fun putString(key: String, value: String) { map[key] = value }
     override fun remove(key: String) { map.remove(key) }
+    override fun warmUp() { warmedUp = true }
 }

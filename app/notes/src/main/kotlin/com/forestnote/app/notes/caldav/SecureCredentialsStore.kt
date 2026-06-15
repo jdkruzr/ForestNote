@@ -23,6 +23,17 @@ interface KeyValueBackend {
 
     /** Removes `key` entirely (so [getString] returns null afterward). */
     fun remove(key: String)
+
+    /**
+     * Force any deferred initialization to happen NOW, on the calling thread.
+     * For [EncryptedPrefsCredentialsBackend] that means resolving the
+     * `EncryptedSharedPreferences` lazy — Keystore master-key unwrap plus Tink
+     * keyset load/create — which on a first launch costs hundreds of ms. Call this
+     * once on a background thread at startup so the first real [getString] from the
+     * main thread (sync resume, lasso → To-do, the boot migration) doesn't stall.
+     * Default is a no-op for cheap in-memory backends.
+     */
+    fun warmUp() {}
 }
 
 /**
@@ -46,6 +57,13 @@ data class SettingsCredsView(
  *   - `setSyncCreds(null)` / `setCaldavCreds(null)` remove the underlying keys
  */
 class SecureCredentialsStore(private val backend: KeyValueBackend) {
+
+    /**
+     * Pre-resolve the backend's deferred initialization off the main thread. See
+     * [KeyValueBackend.warmUp]. Safe to call once at startup; idempotent (the
+     * backend's lazy resolves at most once regardless of how many callers race).
+     */
+    fun warmUp() = backend.warmUp()
 
     // --- sync ---------------------------------------------------------------------
 

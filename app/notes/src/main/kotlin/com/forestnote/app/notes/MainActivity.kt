@@ -185,6 +185,12 @@ class MainActivity : Activity() {
         secureCreds = SecureCredentialsStore(
             EncryptedPrefsCredentialsBackend(this, log = { fileLogger.log("ESP", it) })
         )
+        // Resolve the EncryptedSharedPreferences keyset NOW on a throwaway background
+        // thread. That lazy init (Keystore unwrap + Tink keyset load/create) is otherwise
+        // paid on the main thread by whichever credential read fires first — SyncController
+        // resume(), the lasso → To-do tap, or the boot migration below — and on first launch
+        // that's a multi-hundred-ms UI stall. Mirrors the FontCatalog startup-scan thread.
+        Thread({ secureCreds.warmUp() }, "esp-warmup").start()
 
         // OkHttp transport for the CalDAV VTODO PUT. One client per app lifetime (connection pooling).
         // Threaded into the drainer (built below), NOT NotebookStore — the store owns the durable

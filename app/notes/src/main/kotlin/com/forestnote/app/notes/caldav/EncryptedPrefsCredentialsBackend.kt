@@ -1,6 +1,7 @@
 package com.forestnote.app.notes.caldav
 
 import android.content.Context
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
@@ -41,6 +42,27 @@ class EncryptedPrefsCredentialsBackend(
         }
     }
 
+    /**
+     * Force the [prefs] lazy to resolve now — Keystore master-key unwrap plus the
+     * Tink keyset load (or, on first-ever launch, keyset CREATE, the expensive case).
+     * Called off the main thread at startup so no UI-thread credential read pays the
+     * cost. Logs the elapsed time so the on-device debug loop can quantify the stall
+     * we moved off the main thread. Never throws (the lazy itself is try/caught).
+     */
+    override fun warmUp() {
+        val startNanos = System.nanoTime()
+        val ready = prefs != null
+        val elapsedMs = (System.nanoTime() - startNanos) / 1_000_000
+        val msg = "warmUp: prefs ${if (ready) "ready" else "unavailable"} in ${elapsedMs}ms"
+        // warmUp() fires at the very top of onCreate, BEFORE the async loadSettings
+        // callback enables the FileLogger — so the injected `log` is usually still
+        // gated off here. Logcat is the reliable sink for this once-per-launch timing
+        // (capturable via root logcat on the dev device); the lambda still catches it
+        // on the rare path where logging was already enabled.
+        Log.i(TAG, msg)
+        log(msg)
+    }
+
     override fun getString(key: String): String? = try {
         prefs?.getString(key, null)
     } catch (t: Throwable) {
@@ -66,5 +88,6 @@ class EncryptedPrefsCredentialsBackend(
 
     companion object {
         private const val PREFS_NAME = "forestnote_secrets"
+        private const val TAG = "ForestNoteESP"
     }
 }
