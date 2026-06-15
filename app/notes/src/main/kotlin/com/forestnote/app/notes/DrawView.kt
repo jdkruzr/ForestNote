@@ -400,6 +400,18 @@ class DrawView @JvmOverloads constructor(
         strokeWidth = 1f
     }
 
+    // Cached template layer (perf). The template (dots/ruled/grid) is a pure function of
+    // templateType + templatePitchMm + transform + view size, but [composeStaticBitmap]
+    // runs on every rebuild path (erase, undo, box edit, lasso commit, load, page switch).
+    // For DOT/GRID the grid loop is the dominant cost — tens of thousands of drawCircle/
+    // drawLine calls per compose — so we render it ONCE into this bitmap and blit it instead,
+    // rebuilding only when an input changes ([templateCacheDirty]) or the view resizes. Costs
+    // one extra full-page ARGB_8888 bitmap while a non-BLANK template is active (freed for
+    // BLANK); acceptable for the single-active-page model.
+    private var templateBitmap: Bitmap? = null
+    private var templateCanvas: Canvas? = null
+    private var templateCacheDirty = true
+
     // Touch state tracking
     private var prevScreenX = 0f
     private var prevScreenY = 0f
@@ -463,6 +475,8 @@ class DrawView @JvmOverloads constructor(
 
     fun setTransform(transform: PageTransform) {
         this.transform = transform
+        // pitchPx (and thus the template geometry) is derived from the transform.
+        templateCacheDirty = true
     }
 
     /**
@@ -474,6 +488,7 @@ class DrawView @JvmOverloads constructor(
         if (template == templateType && pitchMm == templatePitchMm) return
         templateType = template
         templatePitchMm = pitchMm
+        templateCacheDirty = true
         redrawBitmap()
     }
 
@@ -1776,9 +1791,36 @@ class DrawView @JvmOverloads constructor(
      * converted to px via [PageTransform.pitchPx]; positions come from the pure
      * [TemplateGeometry.lineOffsets].
      */
-    private fun drawTemplateToBitmap() {
+    /**
+     * Ensure [templateBitmap] holds the current template layer, rendering it only when the cache
+     * is dirty or the view size changed. BLANK frees the cache (nothing to draw). The expensive
+     * grid loop in [renderTemplate] runs here at most once per template/pitch/transform/size change
+     * — NOT on every [composeStaticBitmap].
+     */
+    private fun ensureTemplateBitmap() {
+        if (templateType == PageTemplate.BLANK) {
+            templateBitmap = null
+            templateCanvas = null
+            return
+        }
+        val w = width
+        val h = height
+        if (w <= 0 || h <= 0) return
+        val sizeChanged = templateBitmap?.let { it.width != w || it.height != h } ?: true
+        if (sizeChanged) {
+            templateBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            templateCanvas = Canvas(templateBitmap!!)
+            templateCacheDirty = true
+        }
+        if (templateCacheDirty) {
+            templateBitmap!!.eraseColor(Color.TRANSPARENT)
+            renderTemplate(templateCanvas!!)
+            templateCacheDirty = false
+        }
+    }
+
+    private fun renderTemplate(canvas: Canvas) {
         if (templateType == PageTemplate.BLANK) return
-        val canvas = writingCanvas ?: return
         val w = width.toFloat()
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
@@ -1844,7 +1886,8 @@ class DrawView @JvmOverloads constructor(
     private fun composeStaticBitmap() {
         val canvas = writingCanvas ?: return
         writingBitmap?.eraseColor(Color.TRANSPARENT)
-        drawTemplateToBitmap()
+        ensureTemplateBitmap()
+        templateBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
         for (box in textBoxes) if (box.zBand == ZBand.BOTTOM && box.id.isStaticallyDrawn()) drawTextBox(canvas, box)
         for (stroke in completedStrokes) drawStrokeToBitmap(stroke)
         for (box in textBoxes) if (box.zBand == ZBand.TOP && box.id.isStaticallyDrawn()) drawTextBox(canvas, box)
