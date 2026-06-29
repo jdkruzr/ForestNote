@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Full-screen Library overlay (library-and-tools C3a–C5). Opaque white + clickable so it
-     covers the editor and swallows touches (mirrors view_settings.xml). A header row (icon+
-     caption cells, matching the editor toolbar convention) over a 1px rule, then a
-     RecyclerView card grid. Header cells, left→right: Settings, Up (back, gone until in a
-     folder), breadcrumb, count, then Select / Recycle (greyed until later phases) + Folder /
-     Notebook (active). Each action is a vertical cell (the cell is the hitbox; the inner
-     ImageButton is non-clickable so taps fall through), the same pattern as toolbar.xml. -->
+<!-- Full-screen Library overlay (library-and-tools C3a-C5). Opaque white + clickable so it
+     covers the editor and swallows touches (mirrors view_settings.xml). Two compact header
+     rows keep every action visible on narrow Boox screens: Library + global actions on top,
+     then counts/breadcrumb + selection/create actions below. Each action is a vertical cell
+     (the cell is the hitbox; the inner ImageButton is non-clickable so taps fall through),
+     the same pattern as toolbar.xml. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/library_root"
     android:layout_width="match_parent"
@@ -154,159 +153,15 @@
                 android:paddingBottom="2dp" />
         </LinearLayout>
 
-        <!-- Vertical rule between the global cluster (Settings/Sync/Search) and the
-             selection cluster (Select/Recycle). 1dp black, top/bottom inset 8dp so it reads
-             as a deliberate group divider on e-ink rather than a full-height bar. -->
-        <View
-            android:layout_width="1dp"
-            android:layout_height="match_parent"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="8dp"
-            android:layout_marginStart="4dp"
-            android:layout_marginEnd="4dp"
-            android:background="@color/black" />
-
-        <!-- Select (multi-select; greyed until a later phase) -->
-        <LinearLayout
-            android:id="@+id/btn_library_select"
-            android:layout_width="72dp"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:paddingStart="0dp"
-            android:paddingEnd="0dp"
-            android:contentDescription="Select"
-            android:enabled="false"
-            android:alpha="0.3">
-            <ImageButton
-                android:layout_width="wrap_content"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:src="@drawable/ic_select"
-                android:clickable="false"
-                android:focusable="false"
-                android:importantForAccessibility="no"
-                android:background="@null"
-                android:scaleType="fitCenter" />
-            <TextView
-                android:id="@+id/text_library_select_caption"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Select"
-                android:textSize="9sp"
-                android:textColor="@color/black"
-                android:maxLines="1"
-                android:paddingBottom="2dp" />
-        </LinearLayout>
-
-        <!-- Recycle Bin: visible but disabled (greyed, non-clickable) until phase E3 wires the
-             actual bin view. D3 deletes are hard deletes — soft delete + the bin land in area E. -->
-        <LinearLayout
-            android:id="@+id/btn_library_recycle_bin"
-            android:layout_width="72dp"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:paddingStart="0dp"
-            android:paddingEnd="0dp"
-            android:contentDescription="Recycle bin"
-            android:enabled="false"
-            android:alpha="0.3">
-            <ImageButton
-                android:layout_width="wrap_content"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:src="@drawable/ic_delete"
-                android:clickable="false"
-                android:focusable="false"
-                android:importantForAccessibility="no"
-                android:background="@null"
-                android:scaleType="fitCenter" />
-            <TextView
-                android:id="@+id/text_recycle_bin_caption"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Recycle"
-                android:textSize="9sp"
-                android:textColor="@color/black"
-                android:maxLines="1"
-                android:paddingBottom="2dp" />
-        </LinearLayout>
-
-        <!-- New folder -->
-        <LinearLayout
-            android:id="@+id/btn_library_add_folder"
-            android:layout_width="72dp"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:paddingStart="0dp"
-            android:paddingEnd="0dp"
-            android:clickable="true"
-            android:focusable="true"
-            android:contentDescription="New folder"
-            android:background="?attr/selectableItemBackground">
-            <ImageButton
-                android:layout_width="wrap_content"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:src="@drawable/ic_create_folder"
-                android:clickable="false"
-                android:focusable="false"
-                android:importantForAccessibility="no"
-                android:background="@null"
-                android:scaleType="fitCenter" />
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Folder ▾"
-                android:textSize="9sp"
-                android:textColor="@color/black"
-                android:maxLines="1"
-                android:paddingBottom="2dp" />
-        </LinearLayout>
-
-        <!-- New notebook -->
-        <LinearLayout
-            android:id="@+id/btn_library_add_notebook"
-            android:layout_width="72dp"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:paddingStart="0dp"
-            android:paddingEnd="0dp"
-            android:clickable="true"
-            android:focusable="true"
-            android:contentDescription="New notebook"
-            android:background="?attr/selectableItemBackground">
-            <ImageButton
-                android:layout_width="wrap_content"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:src="@drawable/ic_add"
-                android:clickable="false"
-                android:focusable="false"
-                android:importantForAccessibility="no"
-                android:background="@null"
-                android:scaleType="fitCenter" />
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Notebook ▾"
-                android:textSize="9sp"
-                android:textColor="@color/black"
-                android:maxLines="1"
-                android:paddingBottom="2dp" />
-        </LinearLayout>
     </LinearLayout>
 
-    <!-- Row B: library-wide counts (leftmost), then a thin divider, then the folder-path
-         breadcrumb. The breadcrumb has its own row so a deep path can grow without
-         affecting the toolbar above. -->
+    <!-- Row B: library-wide counts, then a thin divider, then the folder-path breadcrumb
+         and the Library management actions. On narrow screens the breadcrumb gives way
+         before any action falls off the right edge. -->
     <LinearLayout
         android:id="@+id/library_breadcrumb_row"
         android:layout_width="match_parent"
-        android:layout_height="40dp"
+        android:layout_height="44dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingStart="12dp"
@@ -400,23 +255,150 @@
         </LinearLayout>
 
         <!-- Breadcrumb itself. BreadcrumbView fills this:
-               * At root: a dimmed italic placeholder ("↳ Library root") so the user can
+               * At root: a dimmed italic placeholder ("Root") so the user can
                  see at a glance that this row is where folder paths appear.
                * In a folder: the path segments (no leading "Library" — the toolbar title
                  + Up button serve that role). -->
         <LinearLayout
             android:id="@+id/breadcrumb_container"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="match_parent"
+            android:layout_weight="1"
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:paddingEnd="4dp" />
 
-        <!-- Trailing spacer: keeps everything left-packed when the breadcrumb is short. -->
-        <View
-            android:layout_width="0dp"
+        <!-- Select (multi-select). -->
+        <LinearLayout
+            android:id="@+id/btn_library_select"
+            android:layout_width="60dp"
             android:layout_height="match_parent"
-            android:layout_weight="1" />
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:contentDescription="Select"
+            android:enabled="false"
+            android:alpha="0.3">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_select"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:id="@+id/text_library_select_caption"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Select"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
+
+        <!-- Recycle Bin. The count badge is filled in by LibraryView.reload(). -->
+        <LinearLayout
+            android:id="@+id/btn_library_recycle_bin"
+            android:layout_width="60dp"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:contentDescription="Recycle bin"
+            android:enabled="false"
+            android:alpha="0.3">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_delete"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:id="@+id/text_recycle_bin_caption"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Recycle"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
+
+        <!-- New folder -->
+        <LinearLayout
+            android:id="@+id/btn_library_add_folder"
+            android:layout_width="60dp"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="New folder"
+            android:background="?attr/selectableItemBackground">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_create_folder"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Folder"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
+
+        <!-- New notebook -->
+        <LinearLayout
+            android:id="@+id/btn_library_add_notebook"
+            android:layout_width="60dp"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="New notebook"
+            android:background="?attr/selectableItemBackground">
+            <ImageButton
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_add"
+                android:clickable="false"
+                android:focusable="false"
+                android:importantForAccessibility="no"
+                android:background="@null"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Notebook"
+                android:textSize="9sp"
+                android:textColor="@color/black"
+                android:maxLines="1"
+                android:paddingBottom="2dp" />
+        </LinearLayout>
     </LinearLayout>
 
     <View

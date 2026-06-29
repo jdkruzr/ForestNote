@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Test
+import java.io.IOException
 import java.util.concurrent.Executors
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -51,8 +52,8 @@ class SyncControllerTest {
         cols = buildJsonObject { put("created_at", 3000); put("deleted_at", null as String?); put("folder_id", null as String?); put("name", name); put("sort_order", 0) }
     )
 
-    private fun ok(acceptedThrough: Long, cursor: Long, ops: List<WireOp> = emptyList()) =
-        SyncOutcome.Ok(SyncResponse(acceptedThrough = acceptedThrough, ops = ops, cursor = cursor, hasMore = false))
+    private fun ok(acceptedThrough: Long, cursor: Long, ops: List<WireOp> = emptyList(), hasMore: Boolean = false) =
+        SyncOutcome.Ok(SyncResponse(acceptedThrough = acceptedThrough, ops = ops, cursor = cursor, hasMore = hasMore))
 
     @Test
     fun `pristine device joining a populated server discards its bootstrap notebook`() = runBlocking {
@@ -100,6 +101,31 @@ class SyncControllerTest {
         assertTrue(store.syncJoined(), "the completed handshake marks the device joined")
         assertEquals(2, ok.requests.size, "pull + push")
         assertTrue(ok.requests[1].ops.isNotEmpty(), "the backfilled bootstrap content is pushed on the push pass")
+        store.shutdown()
+    }
+
+    @Test
+    fun `interrupted first pull discards empty bootstrap before retry`() = runBlocking {
+        val store = newStore()
+        store.updateSettings({ it.copy(syncServerUrl = "https://ub.example.org", syncUsername = "u", syncPassword = "p") }, {})
+        val bootstrapId = store.syncCurrentNotebookId()
+        val remoteId = "00000000000000000000000RMB"
+        val transport = ScriptedTransport(
+            listOf(
+                ok(acceptedThrough = 0, cursor = 5, ops = listOf(relayedNotebook(remoteId, "Real")), hasMore = true),
+                SyncOutcome.TransportError(IOException("dns"))
+            )
+        )
+        val controller = SyncController(store, CoroutineScope(Dispatchers.Unconfined), transportFactory = { transport })
+
+        val result = controller.enableAndJoin()
+
+        assertTrue(result is SyncResult.Retryable, "the interrupted pull still reports retryable")
+        assertFalse(store.syncJoined(), "join is not complete until a full pull and push succeed")
+        val ids = store.syncNotebookIds()
+        assertTrue(remoteId in ids, "the partially pulled notebook remains")
+        assertTrue(bootstrapId !in ids, "the empty untracked bootstrap is removed before a retry can upload it")
+        assertTrue(store.syncLocalStore().pendingOps().isEmpty(), "no post-pull backfill runs after the interrupted pull")
         store.shutdown()
     }
 

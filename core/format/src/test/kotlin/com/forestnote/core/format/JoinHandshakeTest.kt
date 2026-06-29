@@ -145,4 +145,38 @@ class JoinHandshakeTest {
         assertTrue(repo.pendingOps().none { it.pk == bootstrap }, "the discarded notebook was never uploaded")
         repo.close()
     }
+
+    @Test
+    fun `discardPristineUntrackedBootstrapIfServerContent removes interrupted join bootstrap`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver) { 1000L }
+        val bootstrap = repo.currentNotebookId()
+        repo.mintSiteId()
+        val remoteNb = "00000000000000000000000RMB"
+        val remotePg = "00000000000000000000000RMP"
+        repo.applySyncOps(listOf(nbOp(remoteNb, 1, 3000, "Real"), pageOp(remotePg, remoteNb, 2, 3000)))
+
+        assertTrue(repo.discardPristineUntrackedBootstrapIfServerContent(bootstrap))
+
+        assertTrue(repo.listNotebooks().none { it.id == bootstrap }, "the empty untracked bootstrap is gone")
+        assertEquals(remoteNb, repo.currentNotebookId(), "active is re-pointed to pulled content")
+        repo.close()
+    }
+
+    @Test
+    fun `discardPristineUntrackedBootstrapIfServerContent keeps a used local notebook`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver) { 1000L }
+        val bootstrap = repo.currentNotebookId()
+        repo.saveStroke(stroke(1))
+        repo.mintSiteId()
+        val remoteNb = "00000000000000000000000RMB"
+        val remotePg = "00000000000000000000000RMP"
+        repo.applySyncOps(listOf(nbOp(remoteNb, 1, 3000, "Real"), pageOp(remotePg, remoteNb, 2, 3000)))
+
+        assertFalse(repo.discardPristineUntrackedBootstrapIfServerContent(bootstrap))
+
+        assertTrue(repo.listNotebooks().any { it.id == bootstrap }, "local content is preserved")
+        repo.close()
+    }
 }

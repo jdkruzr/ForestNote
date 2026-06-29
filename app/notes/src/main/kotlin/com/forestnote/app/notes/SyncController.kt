@@ -2,7 +2,6 @@ package com.forestnote.app.notes
 
 import com.forestnote.core.format.ForestNoteRegistry
 import com.forestnote.core.sync.SyncBackoff
-import com.forestnote.core.sync.SyncJoinPlan
 import io.rhizome.core.SyncConfig
 import io.rhizome.core.SyncEngine
 import io.rhizome.core.SyncResult
@@ -97,10 +96,9 @@ class SyncController(
      * configured yet, just enables capture + backfill locally so content uploads once a server is set.
      */
     suspend fun enableAndJoin(): SyncResult = mutex.withLock {
-        val wasPristine = store.syncIsPristineBootstrap()
         val bootstrapId = store.syncCurrentNotebookId()
         val site = store.syncMintSiteId() // capture active from here
-        log("enableAndJoin: site_id=$site pristine=$wasPristine bootstrap=$bootstrapId")
+        log("enableAndJoin: site_id=$site bootstrap=$bootstrapId")
 
         val cfg = config() ?: run {
             store.syncBackfillOutbox()
@@ -111,12 +109,9 @@ class SyncController(
         _status.value = SyncStatus.Syncing
 
         val pull = engine.syncOnce()
+        discardJoinBootstrapIfServerContent(bootstrapId)
         if (pull !is SyncResult.Success) { log("enableAndJoin: pull failed ($pull)"); return@withLock finish(pull) }
 
-        if (SyncJoinPlan.shouldDiscardBootstrap(wasPristine, bootstrapId, store.syncNotebookIds())) {
-            log("enableAndJoin: discarding untouched bootstrap notebook $bootstrapId")
-            store.syncDiscardBootstrapNotebook(bootstrapId)
-        }
         store.syncBackfillUntrackedOutbox()
         val push = engine.syncOnce() // push the backfilled local content
         if (push is SyncResult.Success) {
@@ -125,6 +120,12 @@ class SyncController(
             log("enableAndJoin: join complete")
         }
         finish(push)
+    }
+
+    private suspend fun discardJoinBootstrapIfServerContent(bootstrapId: String) {
+        if (store.syncDiscardPristineUntrackedBootstrapIfServerContent(bootstrapId)) {
+            log("enableAndJoin: discarded pristine untracked bootstrap notebook $bootstrapId")
+        }
     }
 
     /** (Re)start the periodic timer. [intervalMinutes] <= 0 stops it (no background sync). */

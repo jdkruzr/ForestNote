@@ -742,6 +742,10 @@ class NotebookStore(
     suspend fun syncCurrentNotebookId(): String = onDb { it.currentNotebookId() }
     suspend fun syncNotebookIds(): List<String> = onDb { it.listNotebooks().map { nb -> nb.id } }
     suspend fun syncDiscardBootstrapNotebook(id: String) = onDb { it.discardBootstrapNotebook(id) }
+    suspend fun syncDiscardPristineUntrackedBootstrapIfServerContent(id: String): Boolean =
+        onDb { it.discardPristineUntrackedBootstrapIfServerContent(id) }.also { discarded ->
+            if (discarded) _remoteApplied.value += 1
+        }
     suspend fun syncJoined(): Boolean = onDb { it.syncJoined() }
     suspend fun syncMarkJoined() = onDb { it.setSyncJoined(true) }
     /** Re-backfill once if this joined device is behind the current synced-schema generation. */

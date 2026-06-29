@@ -20,10 +20,9 @@ class BreadcrumbView(
     fun render(path: List<FolderMeta>) {
         container.removeAllViews()
         if (path.isEmpty()) {
-            // At root — render a dimmed italic placeholder so the user sees at a glance
+            // At root, render a dimmed italic placeholder so the user sees at a glance
             // that this row is the folder-path breadcrumb area. The "Library" title in
-            // the toolbar row above already names where we are; this just announces the
-            // feature ("folder paths appear here when you open one").
+            // the toolbar row above already names where we are.
             container.addView(rootPlaceholder())
             return
         }
@@ -39,9 +38,10 @@ class BreadcrumbView(
     }
 
     private fun rootPlaceholder(): TextView = TextView(container.context).apply {
-        text = "↳ Library root"
+        text = "Root"
         gravity = Gravity.CENTER_VERTICAL
         textSize = BREADCRUMB_TEXT_SP
+        maxLines = 1
         setTypeface(typeface, android.graphics.Typeface.ITALIC)
         alpha = 0.5f
     }
@@ -73,8 +73,7 @@ class BreadcrumbView(
         }
 
     private companion object {
-        // "A little larger" than the ~14sp system default. Picked so the root segment
-        // reads as a screen title without crowding the new dedicated breadcrumb row.
-        const val BREADCRUMB_TEXT_SP = 18f
+        // A little larger than the ~14sp system default without crowding narrow devices.
+        const val BREADCRUMB_TEXT_SP = 16f
     }
 }

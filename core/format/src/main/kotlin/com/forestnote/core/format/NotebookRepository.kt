@@ -124,6 +124,7 @@ class NotebookRepository private constructor(
 
     companion object {
         private const val DEFAULT_FILENAME = "default.forestnote"
+        private const val DEFAULT_NOTEBOOK_NAME = "Notebook 1"
 
         /**
          * Gate for text-box sync. ENABLED (Phase 6 cutover, 2026-05-27): the UltraBridge server
@@ -234,7 +235,7 @@ class NotebookRepository private constructor(
         var notebooks = db.notebookQueries.listNotebooks().executeAsList()
         if (notebooks.isEmpty()) {
             val nid = Ulid.generate()
-            db.notebookQueries.insertNotebook(nid, "Notebook 1", 0, now, now, null)
+            db.notebookQueries.insertNotebook(nid, DEFAULT_NOTEBOOK_NAME, 0, now, now, null)
             notebooks = db.notebookQueries.listNotebooks().executeAsList()
         }
         val state = db.notebookQueries.getAppState().executeAsOneOrNull()
@@ -1404,6 +1405,38 @@ class NotebookRepository private constructor(
             persistActive()
         }
     }
+
+    /**
+     * Recover an interrupted first join. A pull can apply real server rows, then fail before
+     * [SyncController] reaches the final "discard bootstrap + mark joined" phase. On the next attempt
+     * the library is no longer globally pristine, but the original bootstrap is still an empty,
+     * untracked local row. Drop only that narrow shape: default name, one empty page, no Rhizome row
+     * provenance for the notebook/page, and at least one other live notebook already present.
+     */
+    fun discardPristineUntrackedBootstrapIfServerContent(notebookId: String): Boolean {
+        val notebooks = db.notebookQueries.listNotebooks().executeAsList()
+        val nb = notebooks.firstOrNull { it.id == notebookId } ?: return false
+        if (notebooks.none { it.id != notebookId }) return false
+        if (nb.name != DEFAULT_NOTEBOOK_NAME) return false
+        if (hasRhizomeMeta("notebook", notebookId)) return false
+
+        val pages = db.notebookQueries.listPagesForNotebook(notebookId).executeAsList()
+        if (pages.size != 1) return false
+        val pageId = pages.first().id
+        if (hasRhizomeMeta("page", pageId)) return false
+        if (db.notebookQueries.countStrokesForPage(pageId).executeAsOne() != 0L) return false
+        if (rawCount("SELECT count(*) AS c FROM text_box WHERE page_id = ? AND deleted_at IS NULL", pageId) != 0L) return false
+        if (rawCount("SELECT count(*) AS c FROM page_text_from_client WHERE id = ? AND deleted_at IS NULL", pageId) != 0L) return false
+
+        discardBootstrapNotebook(notebookId)
+        return true
+    }
+
+    private fun hasRhizomeMeta(table: String, pk: String): Boolean =
+        rawCount("SELECT count(*) AS c FROM rhizome_row_meta WHERE tbl = ? AND pk = ?", table, pk) > 0L
+
+    private fun rawCount(sql: String, vararg args: String): Long =
+        syncHandle.query(sql, args.toList()) { it.getLong("c") ?: 0L }.singleOrNull() ?: 0L
 
     /**
      * Capture one full-row UPSERT op for [table]/[pk] through the RhizomeSync adapter (Phase 8). The
