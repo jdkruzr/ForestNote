@@ -79,6 +79,13 @@ class ViwoodsBackend : InkBackend {
         controller?.setDisplayMode(sdkMode)
     }
 
+    override fun refreshUiFrame(host: View) {
+        if (host.width <= 0 || host.height <= 0) return
+        setDisplayMode(DisplayMode.FULL_REFRESH)
+        host.invalidate()
+        host.postDelayed({ setDisplayMode(DisplayMode.FAST) }, UI_FRAME_GC_SETTLE_MS)
+    }
+
     override fun startStroke(bitmap: Bitmap, viewLocation: IntArray) {
         updateBitmapAndLocation(bitmap, viewLocation)
         val activeController = ensureController() ?: return
@@ -268,6 +275,7 @@ class ViwoodsBackend : InkBackend {
     companion object {
         private const val TAG = "ForestNoteViwoods"
         private const val STATUS_FILE = "forestnote_viwoods_status.txt"
+        private const val UI_FRAME_GC_SETTLE_MS = 350L
         private val ENOTE_SETTING_CLASSES = arrayOf(
             "android.os.enote.ENoteSetting",
             "android.p000os.enote.ENoteSetting",

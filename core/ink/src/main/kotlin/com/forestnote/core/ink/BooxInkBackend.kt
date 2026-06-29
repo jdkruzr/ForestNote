@@ -99,6 +99,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     /** Device max stylus pressure — varies per unit (4095 vs 4096), so always queried, never hardcoded. */
     private var maxPressure = 4095f
     private var colorDevice = false
+    private var explicitCommitRefresh = false
 
     /**
      * Per-move accumulation, the FALLBACK ingest for firmware where the batch
@@ -213,7 +214,13 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         } catch (t: Throwable) {
             Log.w(TAG, "isColorDevice failed, assuming mono", t)
         }
-        Log.i(TAG, "init: maxPressure=$maxPressure colorDevice=$colorDevice model=${Build.MODEL}")
+        explicitCommitRefresh = Build.VERSION.SDK_INT <= Build.VERSION_CODES.TIRAMISU ||
+            Build.MODEL.contains("TabUltra", ignoreCase = true)
+        Log.i(
+            TAG,
+            "init: maxPressure=$maxPressure colorDevice=$colorDevice model=${Build.MODEL} " +
+                "sdk=${Build.VERSION.SDK_INT} explicitCommitRefresh=$explicitCommitRefresh"
+        )
         return true
     }
 
@@ -470,9 +477,24 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         }
     }
 
-    /** Firmware live-ink width in screen px from the active pen's max width (virtual → px). */
+    /**
+     * Firmware live-ink width in screen px.
+     *
+     * The app-rendered stroke replays the full pressure curve, while Onyx raw drawing accepts one
+     * width and applies its own brush dynamics. Using our absolute max made the live stroke visibly
+     * thicker than the committed bitmap on Tab Ultra firmware, so feed the firmware a representative
+     * curve width instead. Fixed-width variants remain unchanged because wMin == wMax.
+     */
     private fun liveStrokeWidthPx(): Float =
-        transform?.toScreenSize(pen.wMax.toFloat()) ?: pen.wMax.toFloat()
+        PressureCurve.width(liveStrokeReferencePressure(), pen.wMin, pen.wMax)
+            .let { transform?.toScreenSize(it) ?: it }
+
+    private fun liveStrokeReferencePressure(): Int =
+        when {
+            pen.wMax <= NARROW_LIVE_STROKE_MAX_WIDTH -> NARROW_LIVE_STROKE_REFERENCE_PRESSURE
+            pen.wMax >= WIDE_LIVE_STROKE_MIN_WIDTH -> WIDE_LIVE_STROKE_REFERENCE_PRESSURE
+            else -> LIVE_STROKE_REFERENCE_PRESSURE
+        }
 
     private fun applyPen() {
         try {
@@ -734,7 +756,8 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         // UN-FREEZE (debounced) — defer the render-only toggle until writing goes idle, so it never
         // interrupts active writing; each pen-up cancels + re-arms it.
         mainHandler.removeCallbacks(unfreezeRunnable)
-        mainHandler.postDelayed(unfreezeRunnable, UNFREEZE_IDLE_MS)
+        val idleDelay = if (explicitCommitRefresh) EXPLICIT_REFRESH_UNFREEZE_IDLE_MS else UNFREEZE_IDLE_MS
+        mainHandler.postDelayed(unfreezeRunnable, idleDelay)
     }
 
     /**
@@ -772,6 +795,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         val src = Rect(canvasRect)
         if (!src.intersect(0, 0, bitmap.width, bitmap.height)) return
         val dst = Rect(src.left, src.top + canvasTopOffset, src.right, src.bottom + canvasTopOffset)
+        var posted = false
         val canvas = try {
             surface.holder.lockCanvas(dst)
         } catch (t: Throwable) {
@@ -783,8 +807,38 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         } finally {
             try {
                 surface.holder.unlockCanvasAndPost(canvas)
+                posted = true
             } catch (t: Throwable) {
                 Log.w(TAG, "unlockCanvasAndPost(region) failed", t)
+            }
+        }
+        if (posted) refreshCommitRegion(surface, dst)
+    }
+
+    private fun refreshCommitRegion(surface: SurfaceView, region: Rect) {
+        if (!explicitCommitRefresh || region.isEmpty) return
+        try {
+            EpdController.refreshScreenRegion(
+                surface,
+                region.left,
+                region.top,
+                region.width(),
+                region.height(),
+                UpdateMode.HAND_WRITING_REPAINT_MODE
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "explicit commit refresh handwriting mode failed; trying REGAL", t)
+            try {
+                EpdController.refreshScreenRegion(
+                    surface,
+                    region.left,
+                    region.top,
+                    region.width(),
+                    region.height(),
+                    UpdateMode.REGAL
+                )
+            } catch (fallback: Throwable) {
+                Log.w(TAG, "explicit commit refresh REGAL fallback failed", fallback)
             }
         }
     }
@@ -793,6 +847,15 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
 
     override fun cleanNextReconcile() {
         cleanNextReconcile = true
+    }
+
+    override fun refreshUiFrame(host: View) {
+        if (host.width <= 0 || host.height <= 0) return
+        try {
+            EpdController.refreshScreen(host, UpdateMode.GC)
+        } catch (t: Throwable) {
+            Log.w(TAG, "refreshUiFrame GC failed", t)
+        }
     }
 
     override fun onResumeReacquire() {
@@ -833,5 +896,23 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
          * writing works almost immediately.
          */
         private const val UNFREEZE_IDLE_MS = 700L
+
+        /**
+         * On Android 13 / Tab Ultra firmware, the render-off pulse itself is visible as the
+         * "last strokes redraw late" symptom when it runs immediately after handwriting. The explicit
+         * per-stroke region refresh commits ink quickly; keep the un-freeze as delayed housekeeping.
+         */
+        private const val EXPLICIT_REFRESH_UNFREEZE_IDLE_MS = 8000L
+
+        /** Mid-pressure width used to approximate app-rendered stroke thickness in Onyx live ink. */
+        private const val LIVE_STROKE_REFERENCE_PRESSURE = 500
+
+        /** Narrow Onyx fountain strokes render comparatively fat, so bias their live width lighter. */
+        private const val NARROW_LIVE_STROKE_REFERENCE_PRESSURE = 250
+        private const val NARROW_LIVE_STROKE_MAX_WIDTH = 24
+
+        /** Wide committed strokes resolve a little heavier, so bias their live width up slightly. */
+        private const val WIDE_LIVE_STROKE_REFERENCE_PRESSURE = 600
+        private const val WIDE_LIVE_STROKE_MIN_WIDTH = 50
     }
 }

@@ -335,6 +335,9 @@ class NotebookRepository private constructor(
     }
 
     private fun persistActive() {
+        if (currentNotebookId.isNotBlank() && currentPageId.isNotBlank()) {
+            db.notebookQueries.setNotebookLastPage(currentPageId, currentNotebookId)
+        }
         db.notebookQueries.upsertAppState(currentNotebookId, currentPageId)
     }
 
@@ -417,7 +420,7 @@ class NotebookRepository private constructor(
         persistActive()
     }
 
-    /** Switch the active notebook, loading its active/first page (AC4.2, AC4.3). */
+    /** Switch the active notebook, loading its remembered/first page (AC4.2, AC4.3). */
     fun switchNotebook(notebookId: String) {
         currentNotebookId = notebookId
         var pages = db.notebookQueries.listPagesForNotebook(notebookId).executeAsList()
@@ -429,7 +432,10 @@ class NotebookRepository private constructor(
             db.notebookQueries.setPageTemplate(seedTemplate, seedPitch, pid)
             pages = db.notebookQueries.listPagesForNotebook(notebookId).executeAsList()
         }
-        currentPageId = pages.first().id
+        val remembered = db.notebookQueries.rememberedPageIdForNotebook(notebookId).executeAsOneOrNull()?.last_page_id
+        currentPageId = remembered
+            ?.takeIf { id -> pages.any { it.id == id } }
+            ?: pages.first().id
         persistActive()
     }
 
@@ -449,6 +455,7 @@ class NotebookRepository private constructor(
             val pid = Ulid.generate()
             db.notebookQueries.insertPage(pid, nid, 0, now)
             db.notebookQueries.setPageTemplate(seedTemplate, seedPitch, pid)
+            db.notebookQueries.setNotebookLastPage(pid, nid)
             enqueueOp("notebook", nid, now)
             enqueueOp("page", pid, now)
         }

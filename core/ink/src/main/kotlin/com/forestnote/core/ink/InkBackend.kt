@@ -40,6 +40,16 @@ interface InkBackend {
     fun setDisplayMode(mode: DisplayMode)
 
     /**
+     * Ask the device to do a ghost-clearing refresh of the currently visible Android UI.
+     *
+     * This is deliberately separate from [resetOverlay]: full-screen app UI overlays (Library,
+     * Settings, CalDAV sheet, text editing) live in the normal View hierarchy, while Viwoods'
+     * writing overlay can composite above that hierarchy. Transition refreshes for those screens
+     * must refresh [host] itself rather than pushing the editor bitmap through the writing layer.
+     */
+    fun refreshUiFrame(host: View) {}
+
+    /**
      * Called on every pen-down. Provides the offscreen bitmap and its
      * screen-space position, and lets display-accelerator backends begin
      * any per-stroke native writing transaction.

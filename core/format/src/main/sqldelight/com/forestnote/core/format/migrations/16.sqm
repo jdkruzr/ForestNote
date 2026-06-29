@@ -1,0 +1,6 @@
+-- v16 -> v17: remember the last opened page per notebook.
+--
+-- This is local-only UI/navigation state. It is deliberately absent from
+-- ForestNoteRegistry so the Rhizome/UltraBridge synced schema hash does not
+-- change; app_state.active_page_id remains the global cold-launch resume point.
+ALTER TABLE notebook ADD COLUMN last_page_id TEXT;

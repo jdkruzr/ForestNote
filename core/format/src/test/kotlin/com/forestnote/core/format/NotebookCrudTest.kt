@@ -264,7 +264,7 @@ class NotebookCrudTest {
         repo.close()
     }
 
-    /** AC4.2: switchNotebook sets the active notebook and its first page. */
+    /** AC4.2: switchNotebook sets the active notebook and its first page when none was remembered. */
     @Test
     fun switchNotebookSetsActiveAndFirstPage() {
         val repo = NotebookRepository.forTesting(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY))
@@ -275,6 +275,24 @@ class NotebookCrudTest {
         assertEquals(b, repo.currentNotebookId(), "active notebook is B")
         val firstPageOfB = repo.listPagesForCurrentNotebook().first().id
         assertEquals(firstPageOfB, repo.currentPageId(), "active page is B's first page")
+
+        repo.close()
+    }
+
+    @Test
+    fun switchNotebookRestoresLastPageForThatNotebook() {
+        val repo = NotebookRepository.forTesting(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY))
+        val a = repo.currentNotebookId()
+        val firstPageOfA = repo.currentPageId()
+        val secondPageOfA = repo.createPage()
+        val b = repo.createNotebook("B")
+
+        repo.switchPage(secondPageOfA)
+        repo.switchNotebook(b)
+        repo.switchNotebook(a)
+
+        assertEquals(secondPageOfA, repo.currentPageId(), "notebook A reopens on its remembered page")
+        assertFalse(firstPageOfA == repo.currentPageId(), "notebook A did not fall back to its first page")
 
         repo.close()
     }

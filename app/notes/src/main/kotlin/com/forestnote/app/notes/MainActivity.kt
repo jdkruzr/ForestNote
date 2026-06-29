@@ -385,6 +385,7 @@ class MainActivity : Activity() {
             // callback runs after onCreate returns, so it's set by the time we get here.)
             toolBar.loadPenWidths(PenWidthSettings.decode(settings.penWidthLevels))
             drawView.activePenWidthLevel = toolBar.activePenWidthLevel()
+            backend.updatePen(PenParams.of(drawView.activePenVariant, drawView.activePenWidthLevel))
             // Seed the active text-box style (font + size) from settings.
             toolBar.loadTextStyle(settings.textFontName, settings.textFontSizeV)
             drawView.activeTextFontName = settings.textFontName
@@ -645,6 +646,7 @@ class MainActivity : Activity() {
             return
         }
         val host = findViewById<ViewGroup>(android.R.id.content)
+        if (backend.ownsInput()) backend.setInputSuspended(true)
         textBoxEditOverlay.show(
             host = host,
             box = box,
@@ -657,16 +659,19 @@ class MainActivity : Activity() {
                 onCommit = { updated, text ->
                     drawView.commitOverlayBox(updated, text)
                     textBoxEditOverlay.hide()
-                    drawView.gcRefresh()             // single clean refresh post-dismiss
+                    if (backend.ownsInput()) backend.setInputSuspended(false)
+                    refreshEditorTransition()        // single clean refresh post-dismiss
                     onCommitted?.invoke()
                 },
                 onCancel = { boxId, wasNew ->
                     if (wasNew) drawView.discardPendingNewBox(boxId)
                     textBoxEditOverlay.hide()
-                    drawView.gcRefresh()
+                    if (backend.ownsInput()) backend.setInputSuspended(false)
+                    refreshEditorTransition()
                 },
             ),
         )
+        refreshUiTransition()
     }
 
     /**
@@ -849,6 +854,7 @@ class MainActivity : Activity() {
                 nativeUrl = if (haveIds) ForestNoteLink.native(nbId, pgId) else null,
             )
             val webUrl = if (haveIds) ForestNoteLink.web(settings.syncServerUrl, nbId, pgId) else null
+            if (backend.ownsInput()) backend.setInputSuspended(true)
             caldavTaskSheet.show(
                 host = host,
                 prefillSummary = prefill,
@@ -867,6 +873,8 @@ class MainActivity : Activity() {
                             // lasso polygon + selection in one chokepoint. (Cancel leaves the
                             // selection intact so the user can retry.)
                             toolBar.selectTool(Tool.Pen)
+                            if (backend.ownsInput()) backend.setInputSuspended(false)
+                            refreshEditorTransition(post = true)
                             fileLogger.log("CalDAV", "enqueue uid=${input.uid} sum=\"${input.summary.take(60)}\" due=${input.due}")
                             // Persist first so a crash mid-PUT still keeps the task. Then race the
                             // drainer against a short timeout: if it sends in time, toast "Task created";
@@ -882,9 +890,14 @@ class MainActivity : Activity() {
                                 }
                             }
                         },
-                        onCancel = { fileLogger.log("CalDAV", "task creation cancelled") },
+                        onCancel = {
+                            if (backend.ownsInput()) backend.setInputSuspended(false)
+                            refreshEditorTransition(post = true)
+                            fileLogger.log("CalDAV", "task creation cancelled")
+                        },
                     ),
                 )
+                refreshUiTransition()
                 if (haveIds) startTodoPagePreparation(pgId)
             }
     }
@@ -1127,7 +1140,7 @@ class MainActivity : Activity() {
         drawView.clearAll()
         store.switchNotebook(notebookId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
-            drawView.gcRefresh()
+            refreshEditorTransition()
             refreshPageIndicator() // chains refreshOcrButtonState
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
@@ -1148,7 +1161,7 @@ class MainActivity : Activity() {
         drawView.clearAll()
         store.switchNotebookToPage(notebookId, pageId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
-            drawView.gcRefresh()
+            refreshEditorTransition()
             refreshPageIndicator() // chains refreshOcrButtonState
         }
         store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
@@ -1213,7 +1226,7 @@ class MainActivity : Activity() {
                     recognizedFromDevice = device,
                     onRefresh = { refreshOcrInDialog() },
                     onRunDevice = { runDeviceOcrForActivePage() },
-                    onRedrawNeeded = { drawView.gcRefresh() }
+                    onRedrawNeeded = { refreshEditorTransition() }
                 )
             }
         }
@@ -1317,6 +1330,7 @@ class MainActivity : Activity() {
             onBulkMove = { ids -> showMoveTargetDialog(ids) },
             onBulkDelete = { ids -> confirmBulkDelete(ids) }
         ))
+        refreshUiTransition()
         deviceOcrScheduler.enqueueNotebook(activeNotebookId)
         // Sync-on-close: returning to the Library (i.e. "closing" the notebook you were editing) is
         // the moment matching the Settings label "Sync when returning to Library". Fire the dirty-gate
@@ -1352,6 +1366,31 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun refreshUiTransition(post: Boolean = true) {
+        if (!isEInk) return
+        val host = findViewById<View>(android.R.id.content)
+        val refresh = { backend.refreshUiFrame(host) }
+        if (post) host.post(refresh) else refresh()
+    }
+
+    private fun refreshEditorTransition(post: Boolean = false) {
+        if (!isEInk) return
+        val refresh = {
+            if (backend.ownsInput()) backend.cleanNextReconcile()
+            drawView.gcRefresh()
+        }
+        if (post) drawView.post(refresh) else refresh()
+    }
+
+    private fun refreshVisibleTransition(post: Boolean = true) {
+        if (libraryView.isShowing || settingsView.isShowing || recycleBinView.isShowing ||
+            textBoxEditOverlay.isShowing || caldavTaskSheet.isShowing) {
+            refreshUiTransition(post)
+        } else {
+            refreshEditorTransition(post)
+        }
+    }
+
     /**
      * Dismiss the Library overlay and return to the editor, GC-refreshing so the overlay leaves no
      * ghost. If the editor was never painted this session (we launched straight into the Library),
@@ -1369,9 +1408,9 @@ class MainActivity : Activity() {
             // active notebook's strokes in. Safe now — DrawView is the topmost View again.
             drawView.clearAll()
             loadEditor()
-            drawView.post { drawView.gcRefresh() }
+            refreshEditorTransition(post = true)
         } else {
-            drawView.gcRefresh()
+            refreshEditorTransition()
         }
         // syncIfDirty kicks the NotebookStore executor off the main thread, so it can't
         // race the queued gcRefresh — the GC posts to the UI thread, this dispatches to
@@ -1435,12 +1474,14 @@ class MainActivity : Activity() {
         if (recycleBinView.isShowing) return
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
         recycleBinView.show(content, store) { closeRecycleBin() }
+        refreshUiTransition()
     }
 
     /** Dismiss the Recycle Bin and refresh the Library (restored items / badge). */
     private fun closeRecycleBin() {
         recycleBinView.hide()
         if (libraryView.isShowing) libraryView.reload()
+        refreshVisibleTransition()
         syncIfDirty()
     }
 
@@ -1499,13 +1540,19 @@ class MainActivity : Activity() {
     /** Show the full-screen Settings overlay over the editor (B2). */
     private fun openSettings() {
         if (settingsView.isShowing) return
+        if (backend.ownsInput()) backend.setInputSuspended(true)
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
         settingsView.show(content, store, modelManager, secureCreds, caldavDrainer) { closeSettings() }
+        refreshUiTransition()
     }
 
     /** Dismiss the Settings overlay and return to the editor. */
     private fun closeSettings() {
         settingsView.hide()
+        if (backend.ownsInput() && !libraryView.isShowing && !recycleBinView.isShowing) {
+            backend.setInputSuspended(false)
+        }
+        refreshVisibleTransition()
         // Re-resolve + repaint the active page's template in case the default changed (B3).
         refreshPageIndicator()
         // Pick up a flipped Debug Logs toggle without needing a relaunch.
@@ -1611,6 +1658,8 @@ class MainActivity : Activity() {
         // CalDAV task sheet sits above the editor too; Back cancels without sending.
         if (caldavTaskSheet.isShowing) {
             caldavTaskSheet.requestCancel()
+            if (backend.ownsInput()) backend.setInputSuspended(false)
+            refreshEditorTransition(post = true)
             return
         }
         if (recycleBinView.isShowing) {
@@ -1822,6 +1871,7 @@ class MainActivity : Activity() {
         // Stop the CalDAV drainer's periodic timer (in-flight PUT is allowed to finish).
         caldavDrainer.pause()
         if (isEInk) {
+            refreshUiTransition(post = false)
             // Release WritingBufferQueue so other apps (WiNote etc.) can use it
             backend.release()
         }
@@ -1885,8 +1935,8 @@ class MainActivity : Activity() {
         // are up. Stray AlertDialogs are covered implicitly: an open AlertDialog holds window focus
         // away from this Activity, so `regained` only flips when the dialog has already closed.
         if (libraryView.isShowing || settingsView.isShowing || recycleBinView.isShowing ||
-            ocrTextDialog.isShowing || textBoxEditOverlay.isShowing) return
-        drawView.post { drawView.gcRefresh() }
+            ocrTextDialog.isShowing || textBoxEditOverlay.isShowing || caldavTaskSheet.isShowing) return
+        refreshEditorTransition(post = true)
     }
 
     /**

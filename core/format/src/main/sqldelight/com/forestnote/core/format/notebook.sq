@@ -24,6 +24,7 @@ CREATE TABLE notebook (
     created_at INTEGER NOT NULL,
     modified_at INTEGER NOT NULL DEFAULT 0,  -- bumped on every ink mutation; backfilled = created_at
     folder_id TEXT REFERENCES folder(id),    -- NULL = root (no folder)
+    last_page_id TEXT,                       -- LOCAL-ONLY: last page opened in this notebook
     -- Soft-delete (Recycle Bin, AC7). NULL deleted_at = live. A standalone notebook delete
     -- has NULL deleted_batch_id/deleted_root_id; a folder-cascade delete stamps both.
     deleted_at INTEGER,
@@ -222,6 +223,12 @@ UPDATE notebook SET folder_id = ? WHERE id = ?;
 
 touchNotebook:
 UPDATE notebook SET modified_at = ? WHERE id = ?;
+
+setNotebookLastPage:
+UPDATE notebook SET last_page_id = ? WHERE id = ?;
+
+rememberedPageIdForNotebook:
+SELECT last_page_id FROM notebook_live WHERE id = ?;
 
 selectNotebookModifiedAt:
 SELECT modified_at FROM notebook_live WHERE id = ?;
