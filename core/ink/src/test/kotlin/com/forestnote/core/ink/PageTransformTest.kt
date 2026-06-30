@@ -41,8 +41,8 @@ class PageTransformTest {
         // Landscape orientation: width > height
         transform.update(1920, 1440)
 
-        // Short axis is 1440, so scale should be 1440 / 10000 = 0.144
-        val expectedScale = 1440f / PageTransform.VIRTUAL_SHORT_AXIS
+        // The stable portrait notebook page fits by height on a landscape viewport.
+        val expectedScale = 1440f / PageTransform.VIRTUAL_LONG_AXIS
         assertEquals(expectedScale, transform.scale, 0.001f)
     }
 
@@ -56,14 +56,12 @@ class PageTransformTest {
     }
 
     @Test
-    fun longAxisScalesProportionallyToShortAxis() {
+    fun longAxisStaysStableAcrossViewportShapes() {
         val transform = PageTransform()
-        // 1440x1920 portrait: aspect ratio = 1920/1440 = 4/3
-        transform.update(1440, 1920)
+        transform.update(824, 1648)
 
-        // Virtual long axis should maintain the same aspect ratio
-        val expectedVirtualLongAxis = (1920f / transform.scale).toInt()
-        assertEquals(expectedVirtualLongAxis, transform.virtualLongAxis)
+        assertEquals(PageTransform.VIRTUAL_LONG_AXIS, transform.virtualLongAxis)
+        assertEquals(824f / PageTransform.VIRTUAL_SHORT_AXIS, transform.scale, 0.001f)
     }
 
     @Test
@@ -128,16 +126,70 @@ class PageTransformTest {
     fun pitchPxConvertsMillimetresUsingPpi() {
         val transform = PageTransform()
         transform.ppi = 100f
-        // 25.4mm = 1 inch = ppi pixels.
+        transform.update(1000, 1500)
+
         assertEquals(100f, transform.pitchPx(25.4f), 0.001f)
         assertEquals(50f, transform.pitchPx(12.7f), 0.001f)
     }
 
     @Test
-    fun pitchPxScalesLinearlyWithPpi() {
+    fun templatePitchVirtualUsesFitScaleSoScreenPitchMatchesPpi() {
         val transform = PageTransform()
-        transform.ppi = 293f // the AiPaper Mini's true PPI
-        assertEquals(293f / 25.4f * 5f, transform.pitchPx(5f), 0.001f)
+        transform.ppi = 293f
+        transform.update(824, 1648)
+
+        val pitchVirtual = transform.templatePitchVirtual(7f)
+
+        assertEquals(7f / 25.4f * 293f, pitchVirtual * transform.fitScale, 0.001f)
+    }
+
+    @Test
+    fun zoomScalesCoordinatesAndPitch() {
+        val transform = PageTransform()
+        transform.ppi = 100f
+        transform.update(1000, 1500)
+        transform.setZoom(2f, preserveCenter = false)
+
+        assertEquals(0.2f, transform.scale, 0.001f)
+        assertEquals(1000f, transform.toScreenX(5000), 0.001f)
+        assertEquals(200f, transform.pitchPx(25.4f), 0.001f)
+    }
+
+    @Test
+    fun panMovesViewportAndRoundTripsCoordinates() {
+        val transform = PageTransform()
+        transform.update(1000, 1500)
+        transform.setZoom(2f, preserveCenter = false)
+        transform.panByScreen(250f, 500f)
+
+        assertEquals(1250, transform.toVirtualX(0f))
+        assertEquals(2500, transform.toVirtualY(0f))
+        assertEquals(0f, transform.toScreenX(1250), 0.001f)
+        assertEquals(0f, transform.toScreenY(2500), 0.001f)
+    }
+
+    @Test
+    fun panClampsToPageBounds() {
+        val transform = PageTransform()
+        transform.update(1000, 1500)
+        transform.setZoom(2f, preserveCenter = false)
+        transform.panByScreen(100_000f, 100_000f)
+
+        assertEquals(5000, transform.toVirtualX(0f))
+        assertEquals(5833, transform.toVirtualY(0f))
+    }
+
+    @Test
+    fun templateOffsetsArePageAnchoredUnderPan() {
+        val transform = PageTransform()
+        transform.ppi = 100f
+        transform.update(1000, 1500)
+        transform.setZoom(2f, preserveCenter = false)
+        transform.panByScreen(250f, 0f)
+
+        val offsets = transform.templateOffsetsX(25.4f)
+
+        assertEquals(listOf(150f, 350f, 550f, 750f, 950f), offsets.take(5).map { kotlin.math.round(it) })
     }
 
     @Test
@@ -172,9 +224,8 @@ class PageTransformTest {
         val portrait4K = PageTransform()
         portrait4K.update(2880, 3840)
 
-        // Both should have same aspect ratio and virtual dimensions
-        assertEquals(PageTransform.VIRTUAL_SHORT_AXIS.toDouble(), (portraitStandard.virtualLongAxis * 1440 / 1920).toDouble(), 1.0)
-        assertEquals(PageTransform.VIRTUAL_SHORT_AXIS.toDouble(), (portrait4K.virtualLongAxis * 2880 / 3840).toDouble(), 1.0)
+        assertEquals(PageTransform.VIRTUAL_LONG_AXIS, portraitStandard.virtualLongAxis)
+        assertEquals(PageTransform.VIRTUAL_LONG_AXIS, portrait4K.virtualLongAxis)
 
         // Converting the same virtual coordinate should give proportional screen coordinates
         val virtualX = 5000

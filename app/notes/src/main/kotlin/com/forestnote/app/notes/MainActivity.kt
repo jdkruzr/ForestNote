@@ -275,11 +275,10 @@ class MainActivity : Activity() {
         drawView = findViewById(R.id.draw_view)
         val toolBarRoot: View = findViewById(R.id.toolbar)
 
-        // Physical PPI for mm→px template pitch (B3). The AiPaper Mini under-reports
-        // DisplayMetrics.xdpi (~146) and its densityDpi (320) is a bucket — neither is
-        // the true ~293 PPI panel (verified by measuring template pitch on-glass). Use
-        // the measured constant on e-ink; fall back to xdpi on generic devices.
-        pageTransform.ppi = if (isEInk) AIPAPER_MINI_PPI else resources.displayMetrics.xdpi
+        // Physical PPI for mm→px template pitch (B3). Some e-ink devices misreport
+        // DisplayMetrics.xdpi, so keep the measured e-ink fallback that existing pages
+        // were authored against; generic displays can use xdpi.
+        pageTransform.ppi = if (isEInk) EINK_TEMPLATE_PPI else resources.displayMetrics.xdpi
 
         // Configure DrawView
         drawView.apply {
@@ -390,6 +389,7 @@ class MainActivity : Activity() {
             toolBar.loadTextStyle(settings.textFontName, settings.textFontSizeV)
             drawView.activeTextFontName = settings.textFontName
             drawView.activeTextFontSize = settings.textFontSizeV
+            drawView.setEditorZoomSetting(settings.editorZoom)
             // Refresh the synchronous launch cache so the next cold start makes the right
             // call without consulting the DB. (Idempotent if unchanged.)
             launchPrefs.edit().putString(KEY_START_VIEW, settings.startView.name).apply()
@@ -1079,6 +1079,7 @@ class MainActivity : Activity() {
     private fun goToPage(pageId: String) {
         textBoxEditOverlay.commitIfShowing() // persist any in-progress text edit before leaving the page
         drawView.clearAll()
+        drawView.resetViewportForPage()
         store.switchPage(pageId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()       // clears e-ink ghosting on switch (AC6.4)
@@ -1120,6 +1121,7 @@ class MainActivity : Activity() {
     private fun reloadCurrentPage() {
         textBoxEditOverlay.commitIfShowing()
         drawView.clearAll()
+        drawView.resetViewportForPage()
         store.load { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             drawView.fullRefresh()
@@ -1138,6 +1140,7 @@ class MainActivity : Activity() {
         editorLoaded = true
         editorOpenedFromLibrary = true // navigated in from the Library → Back returns there (#29)
         drawView.clearAll()
+        drawView.resetViewportForPage()
         store.switchNotebook(notebookId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             refreshEditorTransition()
@@ -1159,6 +1162,7 @@ class MainActivity : Activity() {
         editorLoaded = true
         editorOpenedFromLibrary = true // navigated in from the Library → Back returns there (#29)
         drawView.clearAll()
+        drawView.resetViewportForPage()
         store.switchNotebookToPage(notebookId, pageId) { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             refreshEditorTransition()
@@ -1174,6 +1178,7 @@ class MainActivity : Activity() {
      */
     private fun loadEditor() {
         editorLoaded = true
+        drawView.resetViewportForPage()
         store.load { strokes ->
             drawView.mergeLoadedStrokes(strokes)
             refreshPageIndicator() // chains refreshOcrButtonState
@@ -1839,13 +1844,33 @@ class MainActivity : Activity() {
             .show()
     }
 
-    /** Page picker: list pages, switch on tap; New Page / Delete Current Page (when >1). */
+    /** Page/viewport menu: zoom controls, list pages, switch on tap; New/Delete page actions. */
     private fun showPagePicker() {
         store.listPages { pages, activeId ->
-            val labels = Array(pages.size) { i -> "Page ${i + 1}" }
+            val rows = mutableListOf<Pair<String, () -> Unit>>()
+            rows += "Zoom in" to {
+                val zoom = drawView.zoomIn()
+                persistEditorZoom(zoom)
+            }
+            rows += "Zoom out" to {
+                val zoom = drawView.zoomOut()
+                persistEditorZoom(zoom)
+            }
+            rows += "Fit page" to {
+                val zoom = drawView.fitPage()
+                persistEditorZoom(zoom)
+            }
+            rows += "Auto zoom" to {
+                drawView.autoZoom()
+                persistEditorZoom(EditorZoomPolicy.AUTO_SETTING)
+            }
+            pages.forEachIndexed { i, page ->
+                rows += "Page ${i + 1}" to { goToPage(page.id) }
+            }
+            val labels = rows.map { it.first }.toTypedArray()
             val builder = AlertDialog.Builder(this)
-                .setTitle("Pages")
-                .setItems(labels) { _, which -> goToPage(pages[which].id) }
+                .setTitle("Pages · Zoom ${zoomPercent(drawView.currentZoom())}")
+                .setItems(labels) { _, which -> rows[which].second.invoke() }
                 .setPositiveButton("New Page") { _, _ ->
                     store.createPage { newId -> goToPage(newId) }
                 }
@@ -1858,6 +1883,12 @@ class MainActivity : Activity() {
             builder.show()
         }
     }
+
+    private fun persistEditorZoom(zoom: Float) {
+        store.updateSettings({ it.copy(editorZoom = zoom) })
+    }
+
+    private fun zoomPercent(zoom: Float): String = "${(zoom * 100f).toInt()}%"
 
     override fun onPause() {
         super.onPause()
@@ -2015,10 +2046,9 @@ class MainActivity : Activity() {
     }
 
     private companion object {
-        // AiPaper Mini true panel PPI = sqrt(1440²+1920²)/8.2" ≈ 293. The device
-        // misreports density (densityDpi=320, xdpi≈146), so neither is usable for
-        // physical mm sizing — use this measured constant for template pitch.
-        const val AIPAPER_MINI_PPI = 293f
+        // Historical e-ink template calibration. The AiPaper Mini reported density incorrectly;
+        // this value is also close to the Boox panels currently under test.
+        const val EINK_TEMPLATE_PPI = 293f
 
         // Base for code-generated pitch RadioButton ids in the page-template dialog.
         const val PITCH_ID_BASE = 0x71_00_01

@@ -49,7 +49,7 @@ import kotlin.math.min
  *
  * Manages:
  * - Offscreen bitmap for accumulating stroke segments
- * - Touch input filtering by tool type (stylus/eraser draw, finger ignored)
+ * - Touch input filtering by tool type (stylus/eraser draw, two fingers pan while zoomed)
  * - PageTransform for virtual ↔ screen coordinate conversion
  * - InkBackend delegation for fast ink rendering
  * - Stroke collection, rendering, and persistence
@@ -75,7 +75,7 @@ class DrawView @JvmOverloads constructor(
 
         /**
          * Pure function: Check if a tool type should be accepted for drawing.
-         * Stylus and eraser are accepted, finger is rejected (AC1.3).
+         * Stylus and eraser are accepted. Two-finger input is handled separately for viewport panning.
          */
         fun shouldAcceptToolType(toolType: Int): Boolean {
             return when (toolType) {
@@ -210,6 +210,11 @@ class DrawView @JvmOverloads constructor(
     /** Active pen width level (A10); set by MainActivity on width pick / variant switch / launch. */
     var activePenWidthLevel: PenWidthLevel = PenWidthLevel.DEFAULT
     var onStrokeSaved: ((Stroke) -> Unit)? = null
+
+    private var editorZoomSetting: Float = EditorZoomPolicy.AUTO_SETTING
+    private var fingerPanning = false
+    private var lastFingerX = 0f
+    private var lastFingerY = 0f
 
     // ===== Lasso selection state (A6) — kept off the fast-ink writing buffer =====
     private val lassoPoints = mutableListOf<LassoSelectionLogic.Point>()
@@ -426,6 +431,7 @@ class DrawView @JvmOverloads constructor(
         super.onSizeChanged(w, h, oldw, oldh)
         // Update transform with actual screen dimensions so coordinate conversion is accurate
         transform.update(w, h)
+        applyEditorZoomSetting(recompose = false, preserveCenter = false)
         // Ensure bitmap matches new size
         ensureBitmap()
         // Re-lay the full static composite for the new scale (template even with no ink).
@@ -490,6 +496,54 @@ class DrawView @JvmOverloads constructor(
         templatePitchMm = pitchMm
         templateCacheDirty = true
         redrawBitmap()
+    }
+
+    fun setEditorZoomSetting(setting: Float) {
+        editorZoomSetting = setting
+        applyEditorZoomSetting(recompose = true, preserveCenter = true)
+    }
+
+    fun resetViewportForPage() {
+        applyEditorZoomSetting(recompose = true, preserveCenter = false)
+    }
+
+    fun currentZoom(): Float = transform.zoom
+
+    fun zoomIn(): Float {
+        val next = (transform.zoom * EditorZoomPolicy.STEP)
+            .coerceIn(EditorZoomPolicy.MIN_ZOOM, EditorZoomPolicy.MAX_ZOOM)
+        setEditorZoomSetting(next)
+        return transform.zoom
+    }
+
+    fun zoomOut(): Float {
+        val next = (transform.zoom / EditorZoomPolicy.STEP)
+            .coerceIn(EditorZoomPolicy.MIN_ZOOM, EditorZoomPolicy.MAX_ZOOM)
+        setEditorZoomSetting(next)
+        return transform.zoom
+    }
+
+    fun fitPage(): Float {
+        setEditorZoomSetting(EditorZoomPolicy.MIN_ZOOM)
+        return transform.zoom
+    }
+
+    fun autoZoom(): Float {
+        setEditorZoomSetting(EditorZoomPolicy.AUTO_SETTING)
+        return transform.zoom
+    }
+
+    private fun applyEditorZoomSetting(recompose: Boolean, preserveCenter: Boolean) {
+        if (width <= 0 || height <= 0) return
+        transform.setZoom(
+            EditorZoomPolicy.resolve(editorZoomSetting, transform.fitScale),
+            minZoom = EditorZoomPolicy.MIN_ZOOM,
+            maxZoom = EditorZoomPolicy.MAX_ZOOM,
+            preserveCenter = preserveCenter,
+        )
+        backend?.updatePen(PenParams.of(activePenVariant, activePenWidthLevel))
+        templateCacheDirty = true
+        if (recompose) redrawBitmap()
     }
 
     /**
@@ -638,6 +692,9 @@ class DrawView @JvmOverloads constructor(
         // The TextBoxEditOverlay (when up) covers the whole activity and swallows touches via its
         // own clickable root, so canvas touches during editing are impossible by construction —
         // the legacy "commit-on-canvas-touch" auto-commit hook is gone.
+        if (event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER) {
+            return handleFingerPan(event)
+        }
         // Tool-type filtering (AC1.3): stylus/eraser draw, finger ignored
         if (!shouldAcceptToolType(event.getToolType(0))) {
             return false
@@ -652,6 +709,47 @@ class DrawView @JvmOverloads constructor(
             MotionEvent.TOOL_TYPE_ERASER -> handleEraser(event)
             else -> false
         }
+    }
+
+    private fun handleFingerPan(event: MotionEvent): Boolean {
+        if (transform.zoom <= EditorZoomPolicy.MIN_ZOOM) {
+            fingerPanning = false
+            return false
+        }
+        if (event.pointerCount < 2) {
+            if (event.actionMasked == MotionEvent.ACTION_UP ||
+                event.actionMasked == MotionEvent.ACTION_CANCEL
+            ) {
+                fingerPanning = false
+            }
+            return true
+        }
+        val centerX = (event.getX(0) + event.getX(1)) / 2f
+        val centerY = (event.getY(0) + event.getY(1)) / 2f
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                fingerPanning = true
+                lastFingerX = centerX
+                lastFingerY = centerY
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!fingerPanning) {
+                    fingerPanning = true
+                    lastFingerX = centerX
+                    lastFingerY = centerY
+                    return true
+                }
+                transform.panByScreen(lastFingerX - centerX, lastFingerY - centerY)
+                lastFingerX = centerX
+                lastFingerY = centerY
+                templateCacheDirty = true
+                redrawBitmap()
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+                fingerPanning = false
+            }
+        }
+        return true
     }
 
     private fun handleStylus(event: MotionEvent): Boolean {
@@ -1239,8 +1337,7 @@ class DrawView @JvmOverloads constructor(
             fontSizeV = updatedBox.fontSize,
             text = trimmed,
         )
-        // toVirtualX is a pure scale inverse, so it doubles as a px→virtual size converter.
-        val heightV = transform.toVirtualX(heightPx.toFloat()).toInt().coerceAtLeast(updatedBox.fontSize)
+        val heightV = transform.toVirtualSize(heightPx.toFloat()).coerceAtLeast(updatedBox.fontSize)
         val final = updatedBox.copy(text = trimmed, height = heightV)
 
         val idx = textBoxes.indexOfFirst { it.id == final.id }
@@ -1621,8 +1718,7 @@ class DrawView @JvmOverloads constructor(
         val strokesSnapshot = completedStrokes.toList()
         val pathSnapshot = eraserPathVirtual.toList()
         // Eraser radius: half the eraser width, screen px -> virtual units.
-        // PageTransform is a pure scale, so toVirtualX doubles as a size converter.
-        val virtualRadius = transform.toVirtualX(eraserWidthScreen / 2f).coerceAtLeast(1)
+        val virtualRadius = transform.toVirtualSize(eraserWidthScreen / 2f).coerceAtLeast(1)
         val wholeStrokes = tool is Tool.StrokeEraser
         eraserPathVirtual.clear()
 
@@ -1788,8 +1884,7 @@ class DrawView @JvmOverloads constructor(
      * Draw the page template onto the offscreen bitmap, under the ink. Dot = dots at
      * grid intersections; Ruled = horizontal lines; Grid = horizontal + vertical.
      * BLANK draws nothing (the v1 plain-white look). Pitch is a physical mm value
-     * converted to px via [PageTransform.pitchPx]; positions come from the pure
-     * [TemplateGeometry.lineOffsets].
+     * converted to zoomed, page-anchored screen px via [PageTransform].
      */
     /**
      * Ensure [templateBitmap] holds the current template layer, rendering it only when the cache
@@ -1825,9 +1920,8 @@ class DrawView @JvmOverloads constructor(
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
-        val pitchPx = transform.pitchPx(templatePitchMm.toFloat())
-        val xs = TemplateGeometry.lineOffsets(w, pitchPx)
-        val ys = TemplateGeometry.lineOffsets(h, pitchPx)
+        val xs = transform.templateOffsetsX(templatePitchMm.toFloat())
+        val ys = transform.templateOffsetsY(templatePitchMm.toFloat())
 
         when (templateType) {
             PageTemplate.DOT -> {

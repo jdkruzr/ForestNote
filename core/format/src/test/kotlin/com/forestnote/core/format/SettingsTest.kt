@@ -96,4 +96,16 @@ class SettingsTest {
         assertEquals(mapOf("FOUNTAIN" to "6", "HIGHLIGHTER" to "7"), decoded.penWidthLevels)
         assertEquals(original, decoded)
     }
+
+    @Test
+    fun editorZoomDefaultsToAutoAndRoundTrips() {
+        assertEquals(0f, Settings().editorZoom)
+
+        val pre = json.decodeFromString(Settings.serializer(), """{}""")
+        assertEquals(0f, pre.editorZoom)
+
+        val original = Settings(editorZoom = 1.75f)
+        val decoded = json.decodeFromString(Settings.serializer(), json.encodeToString(Settings.serializer(), original))
+        assertEquals(1.75f, decoded.editorZoom)
+    }
 }

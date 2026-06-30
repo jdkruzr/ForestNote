@@ -74,6 +74,8 @@ data class Settings(
     val textFontName: String = "",
     /** Active text-box font size in virtual units (short axis = 10,000). */
     val textFontSizeV: Int = 240,
+    /** Per-device editor viewport zoom. 0f means auto based on screen size. */
+    val editorZoom: Float = 0f,
 ) {
     companion object {
         /**
