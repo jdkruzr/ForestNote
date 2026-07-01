@@ -123,16 +123,6 @@ class PageTransformTest {
     }
 
     @Test
-    fun pitchPxConvertsMillimetresUsingPpi() {
-        val transform = PageTransform()
-        transform.ppi = 100f
-        transform.update(1000, 1500)
-
-        assertEquals(100f, transform.pitchPx(25.4f), 0.001f)
-        assertEquals(50f, transform.pitchPx(12.7f), 0.001f)
-    }
-
-    @Test
     fun templatePitchVirtualUsesFitScaleSoScreenPitchMatchesPpi() {
         val transform = PageTransform()
         transform.ppi = 293f
@@ -144,7 +134,22 @@ class PageTransformTest {
     }
 
     @Test
-    fun zoomScalesCoordinatesAndPitch() {
+    fun templatePitchVirtualIsZoomIndependent() {
+        // The template lives in page space; its pitch in virtual units is a property of the page
+        // (fitScale + ppi), NOT of zoom — zoom scaling falls out when the layer is projected.
+        val transform = PageTransform()
+        transform.ppi = 293f
+        transform.update(824, 1648)
+
+        val atFit = transform.templatePitchVirtual(7f)
+        transform.setZoom(3f, preserveCenter = false)
+        val atZoom = transform.templatePitchVirtual(7f)
+
+        assertEquals(atFit, atZoom, 0.001f)
+    }
+
+    @Test
+    fun zoomScalesCoordinates() {
         val transform = PageTransform()
         transform.ppi = 100f
         transform.update(1000, 1500)
@@ -152,7 +157,6 @@ class PageTransformTest {
 
         assertEquals(0.2f, transform.scale, 0.001f)
         assertEquals(1000f, transform.toScreenX(5000), 0.001f)
-        assertEquals(200f, transform.pitchPx(25.4f), 0.001f)
     }
 
     @Test
@@ -180,16 +184,16 @@ class PageTransformTest {
     }
 
     @Test
-    fun templateOffsetsArePageAnchoredUnderPan() {
+    fun updateHonorsPerNotebookLongAxis() {
+        // A note created on a 1:2 device (e.g. Palma 824x1648 → longAxis 20000) keeps that shape
+        // even when shown on a 3:4 viewport: uniform fitScale (min) letterboxes, never distorts.
         val transform = PageTransform()
-        transform.ppi = 100f
-        transform.update(1000, 1500)
-        transform.setZoom(2f, preserveCenter = false)
-        transform.panByScreen(250f, 0f)
+        transform.update(1440, 1920, longAxis = 20_000)
 
-        val offsets = transform.templateOffsetsX(25.4f)
-
-        assertEquals(listOf(150f, 350f, 550f, 750f, 950f), offsets.take(5).map { kotlin.math.round(it) })
+        assertEquals(20_000, transform.virtualLongAxis)
+        // Fits by the long axis here (1920/20000 = 0.096 < 1440/10000 = 0.144) → letterboxed sides.
+        assertEquals(1920f / 20_000f, transform.fitScale, 0.0001f)
+        assertEquals(transform.fitScale, transform.scale, 0.0001f)
     }
 
     @Test

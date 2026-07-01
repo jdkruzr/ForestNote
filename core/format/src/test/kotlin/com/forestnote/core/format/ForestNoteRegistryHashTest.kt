@@ -5,17 +5,19 @@ import kotlin.test.assertEquals
 
 /**
  * Live-cutover guard: the RhizomeSync [ForestNoteRegistry] must reproduce ForestNote's production
- * schema-hash v3 byte-for-byte. Real devices + data sync on v3, so a drift here is silent
+ * schema hash byte-for-byte. Real devices + data sync on this hash, so a drift here is silent
  * data-corruption risk — it fails loudly. Mirrors UltraBridge's `internal/syncstore/parity_test.go`
- * and the Go server's `registry.ForestNote()`. (The one-time byte-parity check against the
- * hand-rolled SyncMerge/SyncWire retired with those classes in the Phase 8 cutover.)
+ * and the Go server's `registry.ForestNote()`; all three MUST agree.
+ *
+ * v4 adds `notebook.aspect_long_axis` (per-notebook page aspect ratio). The prior v3
+ * (`724411eb…`) stays in UltraBridge's `AcceptsSchemaHash` grace window for one release.
  */
 class ForestNoteRegistryHashTest {
 
-    private val v3 = "724411eb845ad3487393a77cb5559690e69332c35fdb5ee3e85c1767bf71f3fe"
+    private val v4 = "74e6b5d790c919290d0e1fca3462800a5dc4abb288042dda2b48d4eb0482bbf2"
 
     @Test
-    fun registryReproducesV3Hash() {
-        assertEquals(v3, ForestNoteRegistry.registry.schemaHash())
+    fun registryReproducesV4Hash() {
+        assertEquals(v4, ForestNoteRegistry.registry.schemaHash())
     }
 }

@@ -1,7 +1,5 @@
 package com.forestnote.core.ink
 
-import kotlin.math.ceil
-
 /**
  * Bidirectional mapping between virtual page coordinates and screen pixels.
  *
@@ -62,22 +60,29 @@ class PageTransform {
     var ppi: Float = 160f
 
     /**
-     * Update the transform when view dimensions change.
-     * Call this in View.onSizeChanged().
+     * Update the transform when view dimensions (or the active page shape) change.
+     * Call this in View.onSizeChanged() and whenever the active notebook's long-axis changes.
+     *
+     * The page is a stable virtual rectangle `VIRTUAL_SHORT_AXIS × longAxis`. [fitScale] fits it
+     * into the view with a UNIFORM scale (`min`), so the page is never distorted — it letterboxes
+     * when the view aspect differs from the page aspect. [longAxis] is per-notebook (captured from
+     * the creating device); it defaults to the legacy 3:4 [VIRTUAL_LONG_AXIS] for notes with no
+     * stored aspect.
      *
      * @param widthPx View width in pixels
      * @param heightPx View height in pixels
+     * @param longAxis Virtual units along the page's long axis (per-notebook; default = legacy 3:4)
      */
-    fun update(widthPx: Int, heightPx: Int) {
+    fun update(widthPx: Int, heightPx: Int, longAxis: Int = VIRTUAL_LONG_AXIS) {
         screenWidth = widthPx
         screenHeight = heightPx
+        virtualLongAxis = longAxis
 
         fitScale = minOf(
             widthPx.toFloat() / VIRTUAL_SHORT_AXIS,
-            heightPx.toFloat() / VIRTUAL_LONG_AXIS,
+            heightPx.toFloat() / longAxis,
         )
         scale = fitScale * zoom
-        virtualLongAxis = VIRTUAL_LONG_AXIS
         clampViewport()
     }
 
@@ -93,14 +98,15 @@ class PageTransform {
     /** Convert virtual y to screen pixels. */
     fun toScreenY(virtualY: Float): Float = (virtualY - viewportY) * scale
 
-    /** Convert a real-world template pitch to virtual units at fit scale. */
+    /**
+     * Convert a real-world template pitch (mm) to virtual page units. Uses [fitScale] + [ppi] so the
+     * pitch is a fixed property of the page (zoom-independent); the template layer is then projected
+     * to screen through this transform like ink, so zoom scaling falls out for free.
+     */
     fun templatePitchVirtual(mm: Float): Float {
         if (fitScale <= 0f) return 0f
         return (mm / 25.4f * ppi) / fitScale
     }
-
-    /** Convert a notebook-page millimetre measurement to zoomed screen pixels. */
-    fun pitchPx(mm: Float): Float = templatePitchVirtual(mm) * scale
 
     /** Convert virtual width/distance to screen pixels. */
     fun toScreenSize(virtualSize: Int): Float = virtualSize * scale
@@ -148,14 +154,6 @@ class PageTransform {
         clampViewport()
     }
 
-    /** Screen-space offsets for page-anchored template grid lines along the X axis. */
-    fun templateOffsetsX(mm: Float): List<Float> =
-        templateOffsets(virtualExtent = VIRTUAL_SHORT_AXIS.toFloat(), origin = viewportX, screenExtent = screenWidth.toFloat(), mm = mm, horizontal = true)
-
-    /** Screen-space offsets for page-anchored template grid lines along the Y axis. */
-    fun templateOffsetsY(mm: Float): List<Float> =
-        templateOffsets(virtualExtent = virtualLongAxis.toFloat(), origin = viewportY, screenExtent = screenHeight.toFloat(), mm = mm, horizontal = false)
-
     private fun visibleVirtualWidth(): Float = if (scale <= 0f) 0f else screenWidth / scale
 
     private fun visibleVirtualHeight(): Float = if (scale <= 0f) 0f else screenHeight / scale
@@ -171,27 +169,6 @@ class PageTransform {
         val maxY = (virtualLongAxis - visibleVirtualHeight()).coerceAtLeast(0f)
         viewportX = viewportX.coerceIn(0f, maxX)
         viewportY = viewportY.coerceIn(0f, maxY)
-    }
-
-    private fun templateOffsets(
-        virtualExtent: Float,
-        origin: Float,
-        screenExtent: Float,
-        mm: Float,
-        horizontal: Boolean,
-    ): List<Float> {
-        if (mm <= 0f || screenExtent <= 0f || fitScale <= 0f || scale <= 0f) return emptyList()
-        val pitchVirtual = templatePitchVirtual(mm)
-        if (pitchVirtual <= 0f) return emptyList()
-        val visibleEnd = origin + screenExtent / scale
-        var line = ceil(origin / pitchVirtual) * pitchVirtual
-        if (line <= 0f) line += pitchVirtual
-        val offsets = ArrayList<Float>()
-        while (line < visibleEnd && line < virtualExtent) {
-            offsets.add(if (horizontal) toScreenX(line) else toScreenY(line))
-            line += pitchVirtual
-        }
-        return offsets
     }
 
     /** Convert screen pressure (0.0-1.0) to millipressure (0-1000). */

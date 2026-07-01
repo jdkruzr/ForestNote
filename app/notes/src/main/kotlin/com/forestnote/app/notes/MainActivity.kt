@@ -1045,7 +1045,11 @@ class MainActivity : Activity() {
         // switches, notebook switches, and Library opens.
         store.listNotebooks { notebooks, activeId ->
             activeNotebookId = activeId
-            activeNotebookName = notebooks.firstOrNull { it.id == activeId }?.name.orEmpty()
+            val activeNotebook = notebooks.firstOrNull { it.id == activeId }
+            activeNotebookName = activeNotebook?.name.orEmpty()
+            // Apply the active notebook's page aspect (per-notebook; null = legacy 3:4) so the page
+            // renders at its native shape — letterboxed, never distorted — on this device. Idempotent.
+            drawView.setNotebookLongAxis(activeNotebook?.aspectLongAxis ?: PageTransform.VIRTUAL_LONG_AXIS)
         }
         store.listPages { pages, activeId ->
             pageIds = pages.map { it.id }
@@ -1073,6 +1077,22 @@ class MainActivity : Activity() {
                 )
             }
         }
+    }
+
+    /**
+     * The creating device's page long-axis in virtual units, captured at notebook creation so the
+     * note keeps its native aspect on every device. Short axis is the fixed VIRTUAL_SHORT_AXIS;
+     * long axis = round(SHORT * maxDim / minDim) of the drawing canvas (so a new note fills the
+     * writing surface on this device). Falls back to the display's real size before the canvas is
+     * laid out, and to the legacy 3:4 default if neither is available.
+     */
+    private fun deviceAspectLongAxis(): Int {
+        val w = if (drawView.width > 0) drawView.width else resources.displayMetrics.widthPixels
+        val h = if (drawView.height > 0) drawView.height else resources.displayMetrics.heightPixels
+        val minDim = minOf(w, h)
+        val maxDim = maxOf(w, h)
+        if (minDim <= 0) return PageTransform.VIRTUAL_LONG_AXIS
+        return Math.round(PageTransform.VIRTUAL_SHORT_AXIS.toFloat() * maxDim / minDim)
     }
 
     /** Swap to another page: clear canvas, load its ink, refresh overlay + indicator. */
@@ -1726,8 +1746,11 @@ class MainActivity : Activity() {
                 .setPositiveButton("Create") { _, _ ->
                     val name = input.text.toString().trim().ifEmpty { "Untitled" }
                     // Created from the Library (or editor): open the new notebook, hiding the
-                    // Library if it's showing (no-op when invoked from the editor).
-                    store.createNotebook(name, parentFolderId) { newId -> libraryView.hide(); goToNotebook(newId) }
+                    // Library if it's showing (no-op when invoked from the editor). Capture this
+                    // device's page aspect now so the note keeps its native shape on every device.
+                    store.createNotebook(name, parentFolderId, deviceAspectLongAxis()) { newId ->
+                        libraryView.hide(); goToNotebook(newId)
+                    }
                 }
                 .setNegativeButton("Cancel", null)
                 .show()

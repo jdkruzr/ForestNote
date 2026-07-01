@@ -25,6 +25,18 @@ class TemplateGeometryTest {
     }
 
     @Test
+    fun pageSpaceUsageProducesInteriorGridInVirtualUnits() {
+        // The template layer now calls lineOffsets in VIRTUAL page units: a page short axis of
+        // 10000 with a 400-unit virtual pitch yields 24 interior lines (400..9600), the far edge
+        // (10000) excluded as the page border. This is the contract DrawView.renderTemplateLayer
+        // relies on for zoom/pan-free, page-clipped grids.
+        val offsets = TemplateGeometry.lineOffsets(10_000f, 400f)
+        assertEquals(24, offsets.size)
+        assertEquals(400f, offsets.first())
+        assertEquals(9_600f, offsets.last())
+    }
+
+    @Test
     fun pitchLargerThanExtentYieldsNoLines() {
         assertTrue(TemplateGeometry.lineOffsets(20f, 25f).isEmpty())
     }

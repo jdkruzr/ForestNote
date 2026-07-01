@@ -51,6 +51,9 @@ object ForestNoteRegistry {
                     ts("created_at"),
                     ts("deleted_at", nullable = true),
                     ColumnDef("folder_id", Text, nullable = true),
+                    // Per-notebook page aspect (v4): virtual long-axis captured from the creating
+                    // device. Synced so a note keeps its native shape across devices. NULL = legacy.
+                    ColumnDef("aspect_long_axis", IntCol, nullable = true),
                 ),
             ),
             TableDef(

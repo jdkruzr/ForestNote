@@ -24,6 +24,10 @@ CREATE TABLE notebook (
     created_at INTEGER NOT NULL,
     modified_at INTEGER NOT NULL DEFAULT 0,  -- bumped on every ink mutation; backfilled = created_at
     folder_id TEXT REFERENCES folder(id),    -- NULL = root (no folder)
+    -- SYNCED (in ForestNoteRegistry; bumped the wire hash v3 -> v4): virtual units along the page
+    -- long axis, captured from the creating device's canvas so the note keeps its native aspect on
+    -- every device (letterboxed, never distorted). NULL = legacy note -> the 3:4 default (13333).
+    aspect_long_axis INTEGER,
     last_page_id TEXT,                       -- LOCAL-ONLY: last page opened in this notebook
     -- Soft-delete (Recycle Bin, AC7). NULL deleted_at = live. A standalone notebook delete
     -- has NULL deleted_batch_id/deleted_root_id; a folder-cascade delete stamps both.
@@ -213,7 +217,7 @@ listNotebooks:
 SELECT * FROM notebook_live ORDER BY sort_order ASC, created_at ASC;
 
 insertNotebook:
-INSERT INTO notebook(id, name, sort_order, created_at, modified_at, folder_id) VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO notebook(id, name, sort_order, created_at, modified_at, folder_id, aspect_long_axis) VALUES (?, ?, ?, ?, ?, ?, ?);
 
 renameNotebook:
 UPDATE notebook SET name = ? WHERE id = ?;

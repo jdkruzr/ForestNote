@@ -68,6 +68,13 @@ class DrawView @JvmOverloads constructor(
         private val TEMPLATE_LINE_COLOR = Color.parseColor("#FF909090")
         private val TEMPLATE_DOT_COLOR = Color.parseColor("#FF8A8A8A")
 
+        // Template line weight + dot radius in SCREEN px. Held CONSTANT across zoom (the template
+        // is a page-space layer projected each compose, but these are applied post-projection so
+        // the grid never thickens). 2px, NOT a 1px hairline: a true 1-device-px line frequently
+        // fails to render on e-ink panels (on-glass finding) — tune here if a panel needs more.
+        private const val TEMPLATE_LINE_PX = 2f
+        private const val TEMPLATE_DOT_RADIUS_PX = 2.25f
+
         // Text-box placement defaults (virtual units; short axis = 10,000).
         private const val DEFAULT_TEXT_SIZE_V = 240    // ~17sp on the Mini
         private const val DEFAULT_TEXT_WIDTH_V = 3200  // ~a third of the short axis
@@ -215,6 +222,12 @@ class DrawView @JvmOverloads constructor(
     private var fingerPanning = false
     private var lastFingerX = 0f
     private var lastFingerY = 0f
+
+    // The active notebook's page long-axis in virtual units (per-notebook aspect, captured from the
+    // creating device). Defaults to the legacy 3:4 page; MainActivity sets it on notebook/page load
+    // via [setNotebookLongAxis]. Drives PageTransform.update so the page letterboxes (never distorts)
+    // when shown on a device whose aspect differs from the note's.
+    private var currentNotebookLongAxis: Int = PageTransform.VIRTUAL_LONG_AXIS
 
     // ===== Lasso selection state (A6) — kept off the fast-ink writing buffer =====
     private val lassoPoints = mutableListOf<LassoSelectionLogic.Point>()
@@ -402,20 +415,14 @@ class DrawView @JvmOverloads constructor(
         isAntiAlias = true
         color = TEMPLATE_LINE_COLOR
         style = Paint.Style.FILL
-        strokeWidth = 1f
+        strokeWidth = TEMPLATE_LINE_PX
     }
 
-    // Cached template layer (perf). The template (dots/ruled/grid) is a pure function of
-    // templateType + templatePitchMm + transform + view size, but [composeStaticBitmap]
-    // runs on every rebuild path (erase, undo, box edit, lasso commit, load, page switch).
-    // For DOT/GRID the grid loop is the dominant cost — tens of thousands of drawCircle/
-    // drawLine calls per compose — so we render it ONCE into this bitmap and blit it instead,
-    // rebuilding only when an input changes ([templateCacheDirty]) or the view resizes. Costs
-    // one extra full-page ARGB_8888 bitmap while a non-BLANK template is active (freed for
-    // BLANK); acceptable for the single-active-page model.
-    private var templateBitmap: Bitmap? = null
-    private var templateCanvas: Canvas? = null
-    private var templateCacheDirty = true
+    // The template (dots/ruled/grid) is a page-space layer: its grid positions live in virtual page
+    // units and are projected to screen through [transform] in [renderTemplateLayer] every compose,
+    // exactly like ink. Zoom and pan are therefore "free" — no cached raster, no per-pan/zoom
+    // re-rasterization, and the grid is clipped to the page rect so it never bleeds into a letterbox
+    // margin. Line/dot counts at the 5–10mm pitches are tiny, so drawing per-compose is cheap.
 
     // Touch state tracking
     private var prevScreenX = 0f
@@ -429,8 +436,9 @@ class DrawView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        // Update transform with actual screen dimensions so coordinate conversion is accurate
-        transform.update(w, h)
+        // Update transform with actual screen dimensions + the active notebook's page shape so
+        // coordinate conversion (and letterboxing) is accurate.
+        transform.update(w, h, currentNotebookLongAxis)
         applyEditorZoomSetting(recompose = false, preserveCenter = false)
         // Ensure bitmap matches new size
         ensureBitmap()
@@ -481,8 +489,8 @@ class DrawView @JvmOverloads constructor(
 
     fun setTransform(transform: PageTransform) {
         this.transform = transform
-        // pitchPx (and thus the template geometry) is derived from the transform.
-        templateCacheDirty = true
+        // The template is projected through the transform every compose, so there's nothing to
+        // invalidate here — the next composeStaticBitmap picks up the new transform.
     }
 
     /**
@@ -494,13 +502,27 @@ class DrawView @JvmOverloads constructor(
         if (template == templateType && pitchMm == templatePitchMm) return
         templateType = template
         templatePitchMm = pitchMm
-        templateCacheDirty = true
         redrawBitmap()
     }
 
     fun setEditorZoomSetting(setting: Float) {
         editorZoomSetting = setting
         applyEditorZoomSetting(recompose = true, preserveCenter = true)
+    }
+
+    /**
+     * Set the active notebook's page long-axis (virtual units; per-notebook aspect captured from the
+     * creating device). Re-runs the transform for the new page shape so the page letterboxes without
+     * distortion, then recomposes. Idempotent; a no-op before the view is laid out (onSizeChanged
+     * picks up the stored value).
+     */
+    fun setNotebookLongAxis(longAxis: Int) {
+        val resolved = if (longAxis > 0) longAxis else PageTransform.VIRTUAL_LONG_AXIS
+        if (resolved == currentNotebookLongAxis && transform.virtualLongAxis == resolved) return
+        currentNotebookLongAxis = resolved
+        if (width <= 0 || height <= 0) return
+        transform.update(width, height, resolved)
+        applyEditorZoomSetting(recompose = true, preserveCenter = false)
     }
 
     fun resetViewportForPage() {
@@ -542,7 +564,6 @@ class DrawView @JvmOverloads constructor(
             preserveCenter = preserveCenter,
         )
         backend?.updatePen(PenParams.of(activePenVariant, activePenWidthLevel))
-        templateCacheDirty = true
         if (recompose) redrawBitmap()
     }
 
@@ -742,7 +763,6 @@ class DrawView @JvmOverloads constructor(
                 transform.panByScreen(lastFingerX - centerX, lastFingerY - centerY)
                 lastFingerX = centerX
                 lastFingerY = centerY
-                templateCacheDirty = true
                 redrawBitmap()
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
@@ -1881,67 +1901,66 @@ class DrawView @JvmOverloads constructor(
      * Used during stroke restoration.
      */
     /**
-     * Draw the page template onto the offscreen bitmap, under the ink. Dot = dots at
-     * grid intersections; Ruled = horizontal lines; Grid = horizontal + vertical.
-     * BLANK draws nothing (the v1 plain-white look). Pitch is a physical mm value
-     * converted to zoomed, page-anchored screen px via [PageTransform].
+     * Draw the page template as a page-space layer behind the ink. Grid positions live in virtual
+     * page units ([TemplateGeometry.lineOffsets]) and are projected to screen through [transform]
+     * each compose — exactly like ink — so zoom and pan are "free" (no cached raster, no per-frame
+     * re-rasterization). Dot = dots at grid intersections; Ruled = horizontal lines; Grid = both;
+     * BLANK draws nothing (the v1 plain-white look). The whole layer is clipped to the page
+     * rectangle so ruling never bleeds into a letterbox margin, and line/dot weight is a constant
+     * screen size ([TEMPLATE_LINE_PX]/[TEMPLATE_DOT_RADIUS_PX]) that does NOT scale with zoom.
      */
-    /**
-     * Ensure [templateBitmap] holds the current template layer, rendering it only when the cache
-     * is dirty or the view size changed. BLANK frees the cache (nothing to draw). The expensive
-     * grid loop in [renderTemplate] runs here at most once per template/pitch/transform/size change
-     * — NOT on every [composeStaticBitmap].
-     */
-    private fun ensureTemplateBitmap() {
-        if (templateType == PageTemplate.BLANK) {
-            templateBitmap = null
-            templateCanvas = null
-            return
-        }
-        val w = width
-        val h = height
-        if (w <= 0 || h <= 0) return
-        val sizeChanged = templateBitmap?.let { it.width != w || it.height != h } ?: true
-        if (sizeChanged) {
-            templateBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            templateCanvas = Canvas(templateBitmap!!)
-            templateCacheDirty = true
-        }
-        if (templateCacheDirty) {
-            templateBitmap!!.eraseColor(Color.TRANSPARENT)
-            renderTemplate(templateCanvas!!)
-            templateCacheDirty = false
-        }
-    }
-
-    private fun renderTemplate(canvas: Canvas) {
+    private fun renderTemplateLayer(canvas: Canvas) {
         if (templateType == PageTemplate.BLANK) return
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w <= 0f || h <= 0f) return
+        val shortAxis = PageTransform.VIRTUAL_SHORT_AXIS
+        val longAxis = transform.virtualLongAxis
+        val pitchVirtual = transform.templatePitchVirtual(templatePitchMm.toFloat())
+        if (pitchVirtual <= 0f) return
 
-        val xs = transform.templateOffsetsX(templatePitchMm.toFloat())
-        val ys = transform.templateOffsetsY(templatePitchMm.toFloat())
+        // Page rectangle in screen space — clip the grid to the page so the letterbox stays blank.
+        val left = transform.toScreenX(0)
+        val top = transform.toScreenY(0)
+        val right = transform.toScreenX(shortAxis)
+        val bottom = transform.toScreenY(longAxis)
+        if (right <= left || bottom <= top) return
 
+        val xs = TemplateGeometry.lineOffsets(shortAxis.toFloat(), pitchVirtual)
+        val ys = TemplateGeometry.lineOffsets(longAxis.toFloat(), pitchVirtual)
+
+        val saved = canvas.save()
+        canvas.clipRect(left, top, right, bottom)
         when (templateType) {
             PageTemplate.DOT -> {
-                // Dots read fainter than lines at the same gray, so go a touch darker
-                // and larger (on-device tuning) — without affecting the line templates.
+                // Dots read fainter than lines at the same gray, so go a touch darker (on-device
+                // tuning) — without affecting the line templates.
                 templatePaint.color = TEMPLATE_DOT_COLOR
-                val r = 2.25f
-                for (x in xs) for (y in ys) canvas.drawCircle(x, y, r, templatePaint)
+                for (x in xs) {
+                    val sx = transform.toScreenX(x)
+                    for (y in ys) canvas.drawCircle(sx, transform.toScreenY(y), TEMPLATE_DOT_RADIUS_PX, templatePaint)
+                }
             }
             PageTemplate.RULED -> {
                 templatePaint.color = TEMPLATE_LINE_COLOR
-                for (y in ys) canvas.drawLine(0f, y, w, y, templatePaint)
+                templatePaint.strokeWidth = TEMPLATE_LINE_PX
+                for (y in ys) {
+                    val sy = transform.toScreenY(y)
+                    canvas.drawLine(left, sy, right, sy, templatePaint)
+                }
             }
             PageTemplate.GRID -> {
                 templatePaint.color = TEMPLATE_LINE_COLOR
-                for (y in ys) canvas.drawLine(0f, y, w, y, templatePaint)
-                for (x in xs) canvas.drawLine(x, 0f, x, h, templatePaint)
+                templatePaint.strokeWidth = TEMPLATE_LINE_PX
+                for (y in ys) {
+                    val sy = transform.toScreenY(y)
+                    canvas.drawLine(left, sy, right, sy, templatePaint)
+                }
+                for (x in xs) {
+                    val sx = transform.toScreenX(x)
+                    canvas.drawLine(sx, top, sx, bottom, templatePaint)
+                }
             }
             PageTemplate.BLANK -> {} // unreachable (guarded above)
         }
+        canvas.restoreToCount(saved)
     }
 
     private fun drawStrokeToBitmap(stroke: Stroke) {
@@ -1980,8 +1999,7 @@ class DrawView @JvmOverloads constructor(
     private fun composeStaticBitmap() {
         val canvas = writingCanvas ?: return
         writingBitmap?.eraseColor(Color.TRANSPARENT)
-        ensureTemplateBitmap()
-        templateBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
+        renderTemplateLayer(canvas)
         for (box in textBoxes) if (box.zBand == ZBand.BOTTOM && box.id.isStaticallyDrawn()) drawTextBox(canvas, box)
         for (stroke in completedStrokes) drawStrokeToBitmap(stroke)
         for (box in textBoxes) if (box.zBand == ZBand.TOP && box.id.isStaticallyDrawn()) drawTextBox(canvas, box)

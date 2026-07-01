@@ -22,7 +22,13 @@ data class NotebookMeta(
     val id: String,
     val name: String,
     val createdAt: Long,
-    val modifiedAt: Long
+    val modifiedAt: Long,
+    /**
+     * Virtual units along the page long axis (per-notebook aspect, captured from the creating
+     * device). NULL = a legacy notebook with no stored aspect → callers treat it as the 3:4
+     * default (PageTransform.VIRTUAL_LONG_AXIS).
+     */
+    val aspectLongAxis: Int? = null,
 )
 
 /**
@@ -235,7 +241,9 @@ class NotebookRepository private constructor(
         var notebooks = db.notebookQueries.listNotebooks().executeAsList()
         if (notebooks.isEmpty()) {
             val nid = Ulid.generate()
-            db.notebookQueries.insertNotebook(nid, DEFAULT_NOTEBOOK_NAME, 0, now, now, null)
+            // Bootstrap notebook gets a NULL aspect → legacy 3:4 default; a real shape is captured
+            // only when the user creates a notebook from a device with a known canvas size.
+            db.notebookQueries.insertNotebook(nid, DEFAULT_NOTEBOOK_NAME, 0, now, now, null, null)
             notebooks = db.notebookQueries.listNotebooks().executeAsList()
         }
         val state = db.notebookQueries.getAppState().executeAsOneOrNull()
@@ -377,7 +385,7 @@ class NotebookRepository private constructor(
 
     fun listNotebooks(): List<NotebookMeta> =
         db.notebookQueries.listNotebooks().executeAsList()
-            .map { NotebookMeta(it.id, it.name, it.created_at, it.modified_at) }
+            .map { NotebookMeta(it.id, it.name, it.created_at, it.modified_at, it.aspect_long_axis?.toInt()) }
 
     /** Notebooks directly inside [folderId] (null = root) with page counts, for the Library grid. */
     fun listNotebookCardsInFolder(folderId: String?): List<NotebookCard> =
@@ -444,13 +452,13 @@ class NotebookRepository private constructor(
      * Create a notebook appended at sort_order = max+1, with one initial page (AC2.1).
      * [folderId] places it inside a folder (C4); null = root (the editor's default).
      */
-    fun createNotebook(name: String, folderId: String? = null): String {
+    fun createNotebook(name: String, folderId: String? = null, aspectLongAxis: Int? = null): String {
         val nid = Ulid.generate()
         val now = clock()
         val so = db.notebookQueries.nextNotebookSortOrder().executeAsOne()
         val (seedTemplate, seedPitch) = defaultTemplateSeed()
         db.transaction {
-            db.notebookQueries.insertNotebook(nid, name, so, now, now, folderId)
+            db.notebookQueries.insertNotebook(nid, name, so, now, now, folderId, aspectLongAxis?.toLong())
             // A notebook always has at least one page; its first page is seeded with the
             // global default (concrete), since it has no predecessor to copy (B4).
             val pid = Ulid.generate()

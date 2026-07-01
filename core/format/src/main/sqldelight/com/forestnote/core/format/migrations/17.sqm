@@ -1,0 +1,11 @@
+-- v17 -> v18: per-notebook page aspect ratio.
+--
+-- aspect_long_axis is the virtual-unit length of the page long axis, captured from the creating
+-- device's canvas at notebook creation and kept fixed forever so the note renders at its native
+-- aspect on every device (letterboxed, never distorted). NULL = a legacy notebook authored before
+-- this column existed -> read as the 3:4 default (PageTransform.VIRTUAL_LONG_AXIS = 13333).
+--
+-- UNLIKE the recent local-only columns, this one IS synced: it is declared in ForestNoteRegistry,
+-- so adding it bumps the Rhizome/UltraBridge wire schema hash v3 -> v4 (coordinated change across
+-- ForestNote + rhizome + UltraBridge; existing devices do a one-shot cursor=0 re-pull).
+ALTER TABLE notebook ADD COLUMN aspect_long_axis INTEGER;

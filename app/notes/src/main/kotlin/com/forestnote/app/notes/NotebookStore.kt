@@ -477,11 +477,12 @@ class NotebookStore(
 
     /**
      * Create a notebook (with one initial page) inside [folderId] (null = root); posts the
-     * new notebook id. Does not switch.
+     * new notebook id. Does not switch. [aspectLongAxis] is the creating device's page long-axis
+     * in virtual units (null = legacy 3:4), captured so the note keeps its native aspect everywhere.
      */
-    fun createNotebook(name: String, folderId: String? = null, onCreated: (newNotebookId: String) -> Unit) {
+    fun createNotebook(name: String, folderId: String? = null, aspectLongAxis: Int? = null, onCreated: (newNotebookId: String) -> Unit) {
         executor.execute {
-            val id = runCatching { repo?.createNotebook(name, folderId) ?: "" }
+            val id = runCatching { repo?.createNotebook(name, folderId, aspectLongAxis) ?: "" }
                 .onFailure { android.util.Log.e(TAG, "failed to create notebook", it) }
                 .getOrDefault("")
             poster { onCreated(id) }
