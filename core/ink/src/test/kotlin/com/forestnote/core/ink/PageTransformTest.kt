@@ -123,22 +123,42 @@ class PageTransformTest {
     }
 
     @Test
-    fun templatePitchVirtualUsesFitScaleSoScreenPitchMatchesPpi() {
+    fun templatePitchVirtualIsFixedVirtualUnitsPerMm() {
+        // Pitch is a fixed page-space quantity (mm × VIRTUAL_UNITS_PER_MM), independent of any device.
         val transform = PageTransform()
-        transform.ppi = 293f
         transform.update(824, 1648)
 
-        val pitchVirtual = transform.templatePitchVirtual(7f)
+        assertEquals(560f, transform.templatePitchVirtual(7f), 0.001f)
+        assertEquals(400f, transform.templatePitchVirtual(5f), 0.001f)
+        assertEquals(800f, transform.templatePitchVirtual(10f), 0.001f)
+    }
 
-        assertEquals(7f / 25.4f * 293f, pitchVirtual * transform.fitScale, 0.001f)
+    @Test
+    fun templatePitchVirtualIsDeviceIndependent() {
+        // The same page pitch must resolve to identical virtual units on any panel/aspect, so the
+        // ruled lines land at the same virtual coordinates as the (device-independent) ink.
+        val mini = PageTransform()
+        mini.update(824, 1648, longAxis = 20_000)
+
+        val other = PageTransform()
+        other.update(1440, 1920) // different size AND aspect
+
+        assertEquals(mini.templatePitchVirtual(7f), other.templatePitchVirtual(7f), 0.001f)
+    }
+
+    @Test
+    fun templatePitchVirtualWorksBeforeLayout() {
+        // No update() yet — pitch no longer depends on layout (fitScale), so it is already correct.
+        val transform = PageTransform()
+
+        assertEquals(560f, transform.templatePitchVirtual(7f), 0.001f)
     }
 
     @Test
     fun templatePitchVirtualIsZoomIndependent() {
-        // The template lives in page space; its pitch in virtual units is a property of the page
-        // (fitScale + ppi), NOT of zoom — zoom scaling falls out when the layer is projected.
+        // The template lives in page space; its pitch in virtual units is a property of the page,
+        // NOT of zoom — zoom scaling falls out when the layer is projected.
         val transform = PageTransform()
-        transform.ppi = 293f
         transform.update(824, 1648)
 
         val atFit = transform.templatePitchVirtual(7f)
@@ -149,9 +169,39 @@ class PageTransformTest {
     }
 
     @Test
+    fun pageRectScreenLetterboxesToFit() {
+        val transform = PageTransform()
+        transform.update(1000, 1500, longAxis = 12_556)
+
+        val rect = transform.pageRectScreen()
+        assertEquals(0f, rect.left, 0.001f)
+        assertEquals(0f, rect.top, 0.001f)
+        assertEquals(1000f, rect.right, 0.001f)   // fits by short axis: 10000 * 0.1
+        assertEquals(1255.6f, rect.bottom, 0.01f) // 12556 * 0.1 → bottom letterbox is blank
+    }
+
+    @Test
+    fun pageRectScreenExceedsScreenWhenZoomed() {
+        val transform = PageTransform()
+        transform.update(1000, 1500, longAxis = 12_556)
+        transform.setZoom(2f, preserveCenter = false)
+
+        val rect = transform.pageRectScreen()
+        assertEquals(0f, rect.left, 0.001f)
+        assertTrue(rect.right > transform.screenWidth) // page wider than the viewport → caller clips
+    }
+
+    @Test
+    fun pageRectScreenBeforeLayoutDoesNotCrash() {
+        val transform = PageTransform()
+        val rect = transform.pageRectScreen()
+        assertEquals(0f, rect.left, 0.001f)
+        assertEquals(0f, rect.top, 0.001f)
+    }
+
+    @Test
     fun zoomScalesCoordinates() {
         val transform = PageTransform()
-        transform.ppi = 100f
         transform.update(1000, 1500)
         transform.setZoom(2f, preserveCenter = false)
 

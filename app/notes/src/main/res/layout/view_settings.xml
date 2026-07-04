@@ -93,11 +93,17 @@
 
                 <TextView style="@style/SettingsLabel" android:text="Pitch" />
 
-                <RadioGroup
-                    android:id="@+id/rg_pitch"
-                    android:layout_width="wrap_content"
+                <HorizontalScrollView
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal" />
+                    android:scrollbars="none">
+
+                    <RadioGroup
+                        android:id="@+id/rg_pitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal" />
+                </HorizontalScrollView>
             </LinearLayout>
 
             <!-- ===== Startup ===== -->

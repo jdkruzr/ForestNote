@@ -143,6 +143,17 @@ class BackendIntegrationTest {
     }
 
     @Test
+    fun genericBackendOnTransformChangedIsHarmlessNoOp() {
+        // The input-ownership seam method must be a safe no-op on a non-input-owning backend.
+        val backend = GenericBackend()
+        backend.init(mockContext)
+        backend.onTransformChanged()
+        backend.onTransformChanged()
+        backend.release()
+        // No exception → the defaulted no-op holds.
+    }
+
+    @Test
     fun genericBackendLifecycle_isIdempotent() {
         // AC3.4: GenericBackend release/reinit is safe
         val backend = GenericBackend()

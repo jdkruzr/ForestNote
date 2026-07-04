@@ -131,6 +131,14 @@ interface InkBackend {
     /** Provide the active [PageTransform] so the backend can map firmware view-px → virtual. */
     fun setTransform(transform: PageTransform) {}
 
+    /**
+     * Notify an input-owning backend that the [PageTransform]'s projection changed (aspect switch,
+     * zoom, pan, size change) so it can re-derive any screen-space firmware state — chiefly the
+     * raw-drawing limit rect, which must track the page so live ink stays off the letterbox margin.
+     * No-op on Viwoods/Generic (they don't own input; the shared transform reference is enough).
+     */
+    fun onTransformChanged() {}
+
     /** Update the firmware live-ink style (colour/width) from the active pen params. */
     fun updatePen(penParams: PenParams) {}
 

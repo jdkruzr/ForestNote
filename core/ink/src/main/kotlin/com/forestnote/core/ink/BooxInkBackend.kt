@@ -68,6 +68,11 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     @Volatile
     private var excludeReapplyPending = false
 
+    /** Set when a transform change (limit-rect move) arrives mid-stroke; the SDK ignores a re-latch
+     *  then, so it is drained at stroke-end alongside [excludeReapplyPending]. */
+    @Volatile
+    private var limitReapplyPending = false
+
     /** Fired (on the UI thread) on firmware pen-down so the host can dismiss an open over-canvas popup. */
     private var onPenDown: (() -> Unit)? = null
 
@@ -228,6 +233,31 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         this.transform = transform
     }
 
+    override fun onTransformChanged() {
+        // The page projection moved (aspect switch, zoom, pan, size change) → re-push the firmware
+        // limit rect so live ink stays confined to the page and doesn't render in the letterbox
+        // margin. A mid-stroke re-latch doesn't take (SDK), so defer it to stroke-end in that case.
+        if (strokeInProgress) {
+            limitReapplyPending = true
+            return
+        }
+        surfaceView?.post { reapplyExcludeRects() }
+    }
+
+    /**
+     * The firmware raw-drawing limit rect for the current page projection: the page rectangle
+     * ([PageTransform.pageRectScreen]) reduced to a surface-local integer [Rect] via
+     * [FirmwareLimitRectLogic]. Defensive — any failure falls back to the full canvas (today's
+     * unbounded behavior), never a dead pen.
+     */
+    private fun currentLimitRect(width: Int, height: Int): Rect = try {
+        val r = FirmwareLimitRectLogic.compute(transform?.pageRectScreen(), canvasTopOffset, width, height)
+        Rect(r.left, r.top, r.right, r.bottom)
+    } catch (t: Throwable) {
+        Log.w(TAG, "currentLimitRect failed; falling back to full canvas", t)
+        Rect(0, canvasTopOffset, width, height)
+    }
+
     override fun updatePen(penParams: PenParams) {
         pen = penParams
         applyPen()
@@ -286,7 +316,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         val surface = surfaceView ?: return
         val th = touchHelper ?: return
         try {
-            val limit = Rect(0, canvasTopOffset, surface.width, surface.height)
+            val limit = currentLimitRect(surface.width, surface.height)
             th.setRawDrawingEnabled(false)
             th.setLimitRect(mutableListOf(limit)).setExcludeRect(currentExcludeRects())
             applyFirmwareEnableState()
@@ -391,7 +421,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         try {
             // Drawing is limited to the canvas region (below the navbar strip); the navbar itself
             // is in [excludeRects] so finger + USI-pen taps there pass through to normal UI.
-            val limit = Rect(0, canvasTopOffset, width, height)
+            val limit = currentLimitRect(width, height)
             val th = touchHelper ?: TouchHelper.create(surface, rawCallback).also { touchHelper = it }
             th.setRawDrawingEnabled(false)
             th.closeRawDrawing()
@@ -468,7 +498,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         val surface = surfaceView ?: return
         val th = touchHelper ?: return
         try {
-            val limit = Rect(0, canvasTopOffset, surface.width, surface.height)
+            val limit = currentLimitRect(surface.width, surface.height)
             th.setRawDrawingEnabled(false)
             th.setLimitRect(mutableListOf(limit)).setExcludeRect(currentExcludeRects())
             th.setRawDrawingEnabled(true)
@@ -559,10 +589,11 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
                 ingestStroke(pendingPoints.toList())
             }
             strokeInProgress = false
-            // Apply any exclude-rect clear that was deferred because it arrived mid-stroke (the popup
-            // was dismissed BY this stroke's pen-down) — now safe to re-latch the firmware capture region.
-            if (excludeReapplyPending) {
+            // Apply any exclude-rect clear (popup dismissed BY this stroke's pen-down) or limit-rect
+            // change (transform moved mid-stroke) that was deferred — now safe to re-latch the region.
+            if (excludeReapplyPending || limitReapplyPending) {
                 excludeReapplyPending = false
+                limitReapplyPending = false
                 surfaceView?.post { reapplyExcludeRects() }
             }
         }
@@ -587,8 +618,9 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
                 ingestErase(pendingErasePoints.toList())
             }
             strokeInProgress = false
-            if (excludeReapplyPending) {
+            if (excludeReapplyPending || limitReapplyPending) {
                 excludeReapplyPending = false
+                limitReapplyPending = false
                 surfaceView?.post { reapplyExcludeRects() }
             }
             Log.d(TAG, "raw erasing end")
@@ -664,15 +696,6 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         // Coalesce: if a pass is already queued, just leave the freshened lastBitmap for it to pick
         // up — don't pile on another expensive freeze.
         if (!reconcilePending.compareAndSet(false, true)) return
-        // Panel-class-dependent (Phase-0 finding): REGAL is flash-free on colour Kaleido panels;
-        // ANIMATION_MONO is the cleanest on mono. The 300/500 ms settle matches the spike. A one-shot
-        // [cleanNextReconcile] forces GC (full ghost-clear) for the post-dialog repaint.
-        val mode = when {
-            cleanNextReconcile -> UpdateMode.GC
-            colorDevice -> UpdateMode.REGAL
-            else -> UpdateMode.ANIMATION_MONO
-        }
-        cleanNextReconcile = false
         val settleMs = if (colorDevice) 500L else 300L
         reconcileExecutor.execute {
             // Clear the gate FIRST so triggers arriving during this pass queue a fresh follow-up.
@@ -681,6 +704,21 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             val w = bmp.width
             val h = bmp.height
             if (w <= 0 || h <= 0) return@execute
+            // Choose the waveform + consume the one-shot GC request HERE, at RUN time — NOT at queue
+            // time. A [cleanNextReconcile] set AFTER this pass was queued but before it runs must still
+            // upgrade THIS pass to GC; computing the mode at queue time loses that request to coalescing
+            // (every later reconcileRepaint early-returns without consuming the flag), so the ghost-clear
+            // never fires. Proven on-device: entering the editor from the Library queued a REGAL pass,
+            // then set cleanNextReconcile while it was pending → the pass still ran REGAL and the folder
+            // icons ghosted. Panel-class default: REGAL is flash-free on colour Kaleido, ANIMATION_MONO
+            // cleanest on mono; a forced GC is the full ghost-clear for editor/overlay transitions.
+            val forceGc = cleanNextReconcile
+            cleanNextReconcile = false
+            val mode = when {
+                forceGc -> UpdateMode.GC
+                colorDevice -> UpdateMode.REGAL
+                else -> UpdateMode.ANIMATION_MONO
+            }
             try {
                 // Suspending firmware render wipes its ink layer globally, so we always repaint the
                 // WHOLE canvas from the bitmap (a partial blit would blank the rest).

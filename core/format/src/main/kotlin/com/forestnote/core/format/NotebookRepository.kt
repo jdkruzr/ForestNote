@@ -479,6 +479,18 @@ class NotebookRepository private constructor(
         }
     }
 
+    /**
+     * Set a notebook's page aspect (virtual-unit long axis). Written once, lazily, the first time the
+     * notebook's editor is laid out at its true size (the create-dialog keyboard corrupts a capture
+     * taken at creation) — see app:notes deferred aspect capture. Syncs like [renameNotebook].
+     */
+    fun setNotebookAspect(notebookId: String, aspectLongAxis: Int) {
+        db.transaction {
+            db.notebookQueries.setNotebookAspectLongAxis(aspectLongAxis.toLong(), notebookId)
+            enqueueOp("notebook", notebookId, clock())
+        }
+    }
+
     // -- folders (C2) -------------------------------------------------------
 
     private fun Folder.toFolderMeta() = FolderMeta(

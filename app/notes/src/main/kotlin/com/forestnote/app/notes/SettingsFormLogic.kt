@@ -15,11 +15,12 @@ import kotlin.math.abs
 object SettingsFormLogic {
 
     /**
-     * Pitch presets, in millimetres, ascending (left-to-right radio order). Tuned
-     * on-device: 5mm is the practical minimum at the Mini's true PPI, 7mm reads
-     * well, 10mm suits learning script. (4mm was too fine to write on.)
+     * Pitch presets, in millimetres, ascending (left-to-right radio order). Pitch is now a
+     * device-independent page quantity ([PageTransform.VIRTUAL_UNITS_PER_MM]), so the practical
+     * range widened once per-notebook page sizes shipped: 3–4mm for fine script, 5/7/10mm the
+     * common band, 14/20mm for coarse ruling / large pages. The picker scrolls horizontally to fit.
      */
-    val pitchPresetsMm: List<Int> = listOf(5, 7, 10)
+    val pitchPresetsMm: List<Int> = listOf(3, 4, 5, 7, 10, 14, 20)
 
     /** The pitch radio is only meaningful when a template is actually drawn. */
     fun pitchRowVisible(template: PageTemplate): Boolean = template != PageTemplate.BLANK

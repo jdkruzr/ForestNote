@@ -275,11 +275,6 @@ class MainActivity : Activity() {
         drawView = findViewById(R.id.draw_view)
         val toolBarRoot: View = findViewById(R.id.toolbar)
 
-        // Physical PPI for mm→px template pitch (B3). Some e-ink devices misreport
-        // DisplayMetrics.xdpi, so keep the measured e-ink fallback that existing pages
-        // were authored against; generic displays can use xdpi.
-        pageTransform.ppi = if (isEInk) EINK_TEMPLATE_PPI else resources.displayMetrics.xdpi
-
         // Configure DrawView
         drawView.apply {
             setBackend(backend)
@@ -288,6 +283,7 @@ class MainActivity : Activity() {
             onStrokeSaved = { stroke ->
                 // Notification-only callback
             }
+            onEditorLaidOut = { w, h -> maybeCaptureNotebookAspect(w, h) }
         }
 
         // Input-owning backend (Boox/Onyx): the firmware sources stylus input via TouchHelper and
@@ -1049,7 +1045,14 @@ class MainActivity : Activity() {
             activeNotebookName = activeNotebook?.name.orEmpty()
             // Apply the active notebook's page aspect (per-notebook; null = legacy 3:4) so the page
             // renders at its native shape — letterboxed, never distorted — on this device. Idempotent.
-            drawView.setNotebookLongAxis(activeNotebook?.aspectLongAxis ?: PageTransform.VIRTUAL_LONG_AXIS)
+            // For a freshly-created notebook awaiting capture, capture DIRECTLY from the real surface
+            // instead of first applying the 3:4 default (avoids a redundant reconcile + intermediate
+            // aspect flash). onEditorLaidOut covers the case where the surface isn't sized here yet.
+            if (activeId == pendingAspectCaptureId && drawView.width > 0 && drawView.height > 0) {
+                maybeCaptureNotebookAspect(drawView.width, drawView.height)
+            } else {
+                drawView.setNotebookLongAxis(activeNotebook?.aspectLongAxis ?: PageTransform.VIRTUAL_LONG_AXIS)
+            }
         }
         store.listPages { pages, activeId ->
             pageIds = pages.map { it.id }
@@ -1086,13 +1089,36 @@ class MainActivity : Activity() {
      * writing surface on this device). Falls back to the display's real size before the canvas is
      * laid out, and to the legacy 3:4 default if neither is available.
      */
-    private fun deviceAspectLongAxis(): Int {
-        val w = if (drawView.width > 0) drawView.width else resources.displayMetrics.widthPixels
-        val h = if (drawView.height > 0) drawView.height else resources.displayMetrics.heightPixels
+    /**
+     * The page long-axis (virtual units) for a writing surface of size [w]×[h] px: short axis is the
+     * fixed [PageTransform.VIRTUAL_SHORT_AXIS], long axis = round(SHORT × maxDim / minDim). Pure; the
+     * caller supplies dimensions from a reliably laid-out editor (see [maybeCaptureNotebookAspect]).
+     */
+    private fun aspectLongAxisFor(w: Int, h: Int): Int {
         val minDim = minOf(w, h)
         val maxDim = maxOf(w, h)
         if (minDim <= 0) return PageTransform.VIRTUAL_LONG_AXIS
         return Math.round(PageTransform.VIRTUAL_SHORT_AXIS.toFloat() * maxDim / minDim)
+    }
+
+    /**
+     * Deferred per-notebook aspect capture. A note created from the Library dialog can't measure its
+     * aspect at creation — that dialog's soft keyboard shrinks the editor surface, so a capture then
+     * records a squashed shape (proven on-device: an 824×1590 Palma surface measured 824×988 → wrong
+     * long axis). Instead the notebook is created with a NULL aspect and [pendingAspectCaptureId] is
+     * armed; the real aspect is captured + persisted here the first time that notebook's editor is laid
+     * out at its true size (via [DrawView.onEditorLaidOut] and the [refreshPageIndicator] fallback).
+     * Only fires for the freshly-created notebook — legacy NULL-aspect notes keep the 3:4 default.
+     */
+    private var pendingAspectCaptureId: String? = null
+
+    private fun maybeCaptureNotebookAspect(w: Int, h: Int) {
+        val nbId = pendingAspectCaptureId ?: return
+        if (nbId != activeNotebookId || w <= 0 || h <= 0) return
+        val longAxis = aspectLongAxisFor(w, h)
+        pendingAspectCaptureId = null
+        store.setNotebookAspect(nbId, longAxis)
+        drawView.setNotebookLongAxis(longAxis)
     }
 
     /** Swap to another page: clear canvas, load its ink, refresh overlay + indicator. */
@@ -1334,7 +1360,13 @@ class MainActivity : Activity() {
         // render suppresses normal EPD posting and the overlay opens INVISIBLY on top of the editor —
         // eating all touches while only firmware drawing works ("frozen except drawing"). Mirrors the
         // toolbar-popup suspend path. closeLibrary() resumes. No-op on Viwoods/Generic.
-        if (backend.ownsInput()) backend.setInputSuspended(true)
+        if (backend.ownsInput()) {
+            backend.setInputSuspended(true)
+        } else {
+            // Viwoods: the writing overlay composites ink ABOVE the View pipeline, so clear it now
+            // (DrawView still topmost) or the note's ink ghosts over the Library. Model preserved.
+            drawView.blankPanelForFullScreenUi()
+        }
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
         libraryView.show(content, store, LibraryView.Callbacks(
             onOpenNotebook = { card -> libraryView.hide(); goToNotebook(card.id) },
@@ -1746,9 +1778,11 @@ class MainActivity : Activity() {
                 .setPositiveButton("Create") { _, _ ->
                     val name = input.text.toString().trim().ifEmpty { "Untitled" }
                     // Created from the Library (or editor): open the new notebook, hiding the
-                    // Library if it's showing (no-op when invoked from the editor). Capture this
-                    // device's page aspect now so the note keeps its native shape on every device.
-                    store.createNotebook(name, parentFolderId, deviceAspectLongAxis()) { newId ->
+                    // Library if it's showing (no-op when invoked from the editor). Aspect is captured
+                    // LATER (create-dialog keyboard corrupts a measurement now) — create with NULL
+                    // aspect and arm the deferred capture keyed to the new id (see maybeCaptureNotebookAspect).
+                    store.createNotebook(name, parentFolderId, null) { newId ->
+                        pendingAspectCaptureId = newId
                         libraryView.hide(); goToNotebook(newId)
                     }
                 }
@@ -2069,10 +2103,6 @@ class MainActivity : Activity() {
     }
 
     private companion object {
-        // Historical e-ink template calibration. The AiPaper Mini reported density incorrectly;
-        // this value is also close to the Boox panels currently under test.
-        const val EINK_TEMPLATE_PPI = 293f
-
         // Base for code-generated pitch RadioButton ids in the page-template dialog.
         const val PITCH_ID_BASE = 0x71_00_01
 

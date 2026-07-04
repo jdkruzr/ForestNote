@@ -498,6 +498,15 @@ class NotebookStore(
         }
     }
 
+    /** Persist a notebook's captured page aspect (long axis, virtual units). Off-thread; syncs. */
+    fun setNotebookAspect(notebookId: String, aspectLongAxis: Int, onDone: () -> Unit = {}) {
+        executor.execute {
+            runCatching { repo?.setNotebookAspect(notebookId, aspectLongAxis) }
+                .onFailure { android.util.Log.e(TAG, "failed to set notebook aspect", it) }
+            poster { onDone() }
+        }
+    }
+
     // -- folders (C2): off-thread wrappers over the repository's folder CRUD/reads --
 
     /** Create a folder under [parentFolderId] (null = root); posts the new folder id. */

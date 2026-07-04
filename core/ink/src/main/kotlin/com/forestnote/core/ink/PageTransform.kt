@@ -17,6 +17,14 @@ class PageTransform {
 
         /** Virtual units along the long axis of the canonical notebook page. */
         const val VIRTUAL_LONG_AXIS = 13_333
+
+        /**
+         * Virtual units per real-world millimetre of template pitch. Fixed by definition: the page
+         * is nominally [VIRTUAL_SHORT_AXIS] / [VIRTUAL_UNITS_PER_MM] = 125 mm across the short axis.
+         * This makes ruled/grid spacing a device-independent page property, so template lines land
+         * at the same virtual coordinates as the (device-independent) ink on every panel.
+         */
+        const val VIRTUAL_UNITS_PER_MM = 80f
     }
 
     /** Effective pixels per virtual unit after applying [zoom]. */
@@ -50,14 +58,6 @@ class PageTransform {
     /** Screen height in pixels. */
     var screenHeight: Int = 0
         private set
-
-    /**
-     * Physical pixels-per-inch, for converting real-world mm measurements (page
-     * template pitch) to pixels. Set from the device's *physical* density
-     * where possible. E-ink devices can misreport xdpi, so the app supplies a
-     * measured fallback for those panels.
-     */
-    var ppi: Float = 160f
 
     /**
      * Update the transform when view dimensions (or the active page shape) change.
@@ -99,14 +99,25 @@ class PageTransform {
     fun toScreenY(virtualY: Float): Float = (virtualY - viewportY) * scale
 
     /**
-     * Convert a real-world template pitch (mm) to virtual page units. Uses [fitScale] + [ppi] so the
-     * pitch is a fixed property of the page (zoom-independent); the template layer is then projected
-     * to screen through this transform like ink, so zoom scaling falls out for free.
+     * Convert a real-world template pitch (mm) to virtual page units. A fixed multiple
+     * ([VIRTUAL_UNITS_PER_MM]) so the pitch is a device-independent property of the page — the
+     * template layer is projected to screen through this transform like ink, so both letterboxing
+     * and zoom scaling fall out for free and the ruling always tracks the handwriting.
      */
-    fun templatePitchVirtual(mm: Float): Float {
-        if (fitScale <= 0f) return 0f
-        return (mm / 25.4f * ppi) / fitScale
-    }
+    fun templatePitchVirtual(mm: Float): Float = mm * VIRTUAL_UNITS_PER_MM
+
+    /**
+     * The page rectangle (`[0, VIRTUAL_SHORT_AXIS] × [0, virtualLongAxis]`) projected to screen
+     * pixels through the current viewport. Anchored top-left; under zoom/pan it can extend past the
+     * viewport, so consumers that need an on-screen rect (the Boox firmware limit rect) intersect it
+     * with the surface. Purely derived from the existing screen projection.
+     */
+    fun pageRectScreen(): ScreenRect = ScreenRect(
+        left = toScreenX(0f),
+        top = toScreenY(0f),
+        right = toScreenX(VIRTUAL_SHORT_AXIS.toFloat()),
+        bottom = toScreenY(virtualLongAxis.toFloat()),
+    )
 
     /** Convert virtual width/distance to screen pixels. */
     fun toScreenSize(virtualSize: Int): Float = virtualSize * scale

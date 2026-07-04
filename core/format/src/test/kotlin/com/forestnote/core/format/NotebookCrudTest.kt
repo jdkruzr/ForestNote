@@ -347,6 +347,22 @@ class NotebookCrudTest {
         reopened.close()
     }
 
+    /** Deferred aspect capture: a notebook created with NULL aspect can have it set later and it
+     *  round-trips through listNotebooks (the app captures it on first editor layout). */
+    @Test
+    fun setNotebookAspectPersistsAndRoundTrips() {
+        val repo = NotebookRepository.forTesting(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY))
+        val id = repo.createNotebook("Deferred", aspectLongAxis = null)
+
+        assertEquals(null, repo.listNotebooks().first { it.id == id }.aspectLongAxis,
+            "created with no aspect")
+
+        repo.setNotebookAspect(id, 19296)
+
+        assertEquals(19296, repo.listNotebooks().first { it.id == id }.aspectLongAxis,
+            "captured aspect round-trips")
+    }
+
     // --- helpers: direct DB access to verify no orphans remain ---
 
     private fun db(driver: JdbcSqliteDriver) = NotebookDatabase(driver)

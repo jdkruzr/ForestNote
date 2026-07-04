@@ -7,6 +7,7 @@ import android.widget.ImageView
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 // pattern: Imperative Shell
 // Orchestrates store reads + disk cache + render across a dedicated executor; the
@@ -32,13 +33,13 @@ class ThumbnailLoader(
             if (stale(target, notebookId)) return@thumbnailSource
             if (src == null) return@thumbnailSource  // empty notebook keeps the placeholder
             val key = ThumbnailCacheLogic.key(src.pageId, src.strokeCount, src.modifiedAt)
-            renderExecutor.execute {
+            submit {
                 val cached = cache.read(key)
                 if (cached != null) {
                     apply(target, notebookId, cached)
                 } else {
                     store.loadStrokesForPage(src.pageId) { strokes ->
-                        renderExecutor.execute {
+                        submit {
                             val bmp = ThumbnailRenderer.render(strokes)
                             cache.write(src.pageId, key, bmp)
                             apply(target, notebookId, bmp)
@@ -50,6 +51,21 @@ class ThumbnailLoader(
     }
 
     fun shutdown() { renderExecutor.shutdown() }
+
+    /**
+     * Submit a render task, tolerating a shut-down executor. [load]'s store hops post their
+     * callbacks back to the main thread AFTER the read completes, so a callback can land after
+     * [shutdown] (e.g. creating a note closes the Library between the [load] and its callback) —
+     * without this guard that lands as a `RejectedExecutionException` crash on the dead pool.
+     */
+    private fun submit(task: () -> Unit) {
+        if (renderExecutor.isShutdown) return
+        try {
+            renderExecutor.execute(task)
+        } catch (e: RejectedExecutionException) {
+            // Raced shutdown() between the isShutdown check and execute() — drop the thumbnail.
+        }
+    }
 
     private fun apply(target: ImageView, notebookId: String, bmp: Bitmap) {
         main.post { if (!stale(target, notebookId)) target.setImageBitmap(bmp) }

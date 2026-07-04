@@ -222,6 +222,9 @@ INSERT INTO notebook(id, name, sort_order, created_at, modified_at, folder_id, a
 renameNotebook:
 UPDATE notebook SET name = ? WHERE id = ?;
 
+setNotebookAspectLongAxis:
+UPDATE notebook SET aspect_long_axis = ? WHERE id = ?;
+
 setNotebookFolder:
 UPDATE notebook SET folder_id = ? WHERE id = ?;
 

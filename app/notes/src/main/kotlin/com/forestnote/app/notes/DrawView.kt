@@ -22,6 +22,7 @@ import com.forestnote.core.ink.DisplayMode
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.InkPhase
 import com.forestnote.core.ink.InkSample
+import com.forestnote.core.ink.PageBoundsGate
 import com.forestnote.core.ink.PageTransform
 import com.forestnote.core.ink.PenParams
 import com.forestnote.core.ink.PenVariant
@@ -445,7 +446,14 @@ class DrawView @JvmOverloads constructor(
         // Re-lay the full static composite for the new scale (template even with no ink).
         composeStaticBitmap()
         reconcileIfOwned()
+        // Notify the host that the editor is laid out at a real size — used to capture a new
+        // notebook's page aspect from the true writing surface (not the keyboard-shrunk create moment).
+        if (w > 0 && h > 0) onEditorLaidOut?.invoke(w, h)
     }
+
+    /** Fired from [onSizeChanged] with the laid-out editor size (>0). Host uses it for deferred
+     *  per-notebook aspect capture. Not called for zero-size layouts. */
+    var onEditorLaidOut: ((width: Int, height: Int) -> Unit)? = null
 
     fun setBackend(backend: InkBackend) {
         this.backend = backend
@@ -564,6 +572,9 @@ class DrawView @JvmOverloads constructor(
             preserveCenter = preserveCenter,
         )
         backend?.updatePen(PenParams.of(activePenVariant, activePenWidthLevel))
+        // The page projection moved (size change, aspect switch, or a zoom-setting change all route
+        // here) → let an input-owning backend re-push its firmware limit rect to the new page rect.
+        backend?.onTransformChanged()
         if (recompose) redrawBitmap()
     }
 
@@ -671,6 +682,27 @@ class DrawView @JvmOverloads constructor(
         reconcileIfOwned()
     }
 
+    /**
+     * Blank the editor's ink from the panel in a GC pass, WITHOUT touching the stroke/text-box model,
+     * so a full-screen non-editor View opened over the editor (the Library) isn't haunted by the
+     * note's ink. On Viwoods the writing overlay composites ABOVE the View pipeline, so its ink can't
+     * be cleared by a host-level GC — it must be pushed clear here, while the DrawView is still the
+     * topmost View (i.e. BEFORE the overlay is shown). Pushes a fully transparent frame so nothing of
+     * the editor is stamped; returning to the editor re-renders from the intact model via [gcRefresh].
+     * No-op on an input-owning backend (Boox suspends firmware render + hardware-GCs instead).
+     */
+    fun blankPanelForFullScreenUi() {
+        if (backend?.ownsInput() == true) return
+        val src = writingBitmap ?: return
+        val blank = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888) // all-transparent
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        backend?.setDisplayMode(DisplayMode.FULL_REFRESH)
+        backend?.pushBackgroundBitmap(blank, loc)
+        backend?.resetOverlay(blank, loc, width, height)
+        backend?.setDisplayMode(DisplayMode.FAST)
+    }
+
     // ========== Bitmap Management ==========
 
     /**
@@ -767,6 +799,9 @@ class DrawView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
                 fingerPanning = false
+                // Re-push the firmware limit rect ONCE at pan-end (not per MOVE — the enable-toggle is
+                // too heavy for every frame; the sink-side PageBoundsGate bounds storage mid-pan).
+                backend?.onTransformChanged()
             }
         }
         return true
@@ -1445,33 +1480,49 @@ class DrawView @JvmOverloads constructor(
         private var dMaxY = 0f
         private var hasDirty = false
 
+        // Off-page policy (both feeders): a DOWN in the letterbox margin drops the whole stroke;
+        // mid-stroke samples that leave the page are clamped to the edge. See [PageBoundsGate].
+        private val gate = PageBoundsGate()
+
+        // The active stroke's pen params, captured at [begin] and consumed on an ACCEPTED DOWN.
+        // Deferring the stroke's side effects (bitmap/backend/StrokeBuilder) to the DOWN lets an
+        // off-page DOWN reject the stroke with nothing to unwind — both feeders call begin() then
+        // accept(DOWN) synchronously back-to-back.
+        private var pendingParams: PenParams? = null
+
         override fun begin(tool: Tool, penParams: PenParams) {
-            ensureBitmap()
-            beginBackendStroke()
-            // Resolve colour/xfermode (highlighter composites DST_OVER) for the live paint.
-            configureStrokePaintFor(penParams.color)
-            currentStroke = StrokeBuilder(penParams.color, penParams.wMin, penParams.wMax)
+            pendingParams = penParams
+            gate.begin()
             hasDirty = false
         }
 
         override fun accept(sample: InkSample, phase: InkPhase) {
+            val admitted = gate.admit(sample, phase, transform.virtualLongAxis) ?: return
             when (phase) {
                 InkPhase.DOWN -> {
-                    currentStroke?.addPoint(sample.toPoint())
+                    // Lazily materialize the stroke now that the DOWN is confirmed on-page.
+                    val params = pendingParams ?: return
+                    ensureBitmap()
+                    beginBackendStroke()
+                    // Resolve colour/xfermode (highlighter composites DST_OVER) for the live paint.
+                    configureStrokePaintFor(params.color)
+                    currentStroke = StrokeBuilder(params.color, params.wMin, params.wMax)
+
+                    currentStroke?.addPoint(admitted.toPoint())
                     // Seed the segment origin in screen space for the first MOVE.
-                    prevX = transform.toScreenX(sample.vx)
-                    prevY = transform.toScreenY(sample.vy)
+                    prevX = transform.toScreenX(admitted.vx)
+                    prevY = transform.toScreenY(admitted.vy)
                 }
 
                 InkPhase.MOVE -> {
                     val stroke = currentStroke ?: return
                     val canvas = writingCanvas ?: return
-                    stroke.addPoint(sample.toPoint())
+                    stroke.addPoint(admitted.toPoint())
 
-                    val cx = transform.toScreenX(sample.vx)
-                    val cy = transform.toScreenY(sample.vy)
+                    val cx = transform.toScreenX(admitted.vx)
+                    val cy = transform.toScreenY(admitted.vy)
                     val screenW = transform.toScreenSize(
-                        PressureCurve.width(sample.millipressure, stroke.penWidthMin, stroke.penWidthMax)
+                        PressureCurve.width(admitted.millipressure, stroke.penWidthMin, stroke.penWidthMax)
                     )
                     strokePaint.strokeWidth = screenW
                     canvas.drawLine(prevX, prevY, cx, cy, strokePaint)
@@ -1484,7 +1535,7 @@ class DrawView @JvmOverloads constructor(
                     // Matches the pre-refactor UP: append the final point to the model but draw
                     // NO segment to it (the 900ms repaint blits the bitmap as-is), then finalize.
                     val stroke = currentStroke ?: return
-                    stroke.addPoint(sample.toPoint())
+                    stroke.addPoint(admitted.toPoint())
 
                     val completed = stroke.toStroke()
                     completedStrokes.add(completed)
@@ -1552,6 +1603,7 @@ class DrawView @JvmOverloads constructor(
 
         override fun cancel() {
             currentStroke = null
+            pendingParams = null
             hasDirty = false
         }
 
