@@ -76,6 +76,13 @@ class DrawView @JvmOverloads constructor(
         private const val TEMPLATE_LINE_PX = 2f
         private const val TEMPLATE_DOT_RADIUS_PX = 2.25f
 
+        // Page-edge marker: a solid line drawn where a letterbox margin begins, so the user can see
+        // where the note ends on a device whose aspect differs from the note's. Deliberately BOLD and
+        // unlike anything else in the app (the template ruling is thin muted gray; UI dividers are
+        // 1dp) — solid black at 6px so it reads unambiguously as "page boundary", not another rule.
+        private val PAGE_BOUNDARY_COLOR = Color.parseColor("#FF000000")
+        private const val PAGE_BOUNDARY_PX = 6f
+
         // Text-box placement defaults (virtual units; short axis = 10,000).
         private const val DEFAULT_TEXT_SIZE_V = 240    // ~17sp on the Mini
         private const val DEFAULT_TEXT_WIDTH_V = 3200  // ~a third of the short axis
@@ -417,6 +424,14 @@ class DrawView @JvmOverloads constructor(
         color = TEMPLATE_LINE_COLOR
         style = Paint.Style.FILL
         strokeWidth = TEMPLATE_LINE_PX
+    }
+
+    // The page-edge boundary marker (see [renderPageBoundary]). Bold + distinct from the template.
+    private val pageBoundaryPaint = Paint().apply {
+        isAntiAlias = true
+        color = PAGE_BOUNDARY_COLOR
+        style = Paint.Style.STROKE
+        strokeWidth = PAGE_BOUNDARY_PX
     }
 
     // The template (dots/ruled/grid) is a page-space layer: its grid positions live in virtual page
@@ -2055,6 +2070,35 @@ class DrawView @JvmOverloads constructor(
         for (box in textBoxes) if (box.zBand == ZBand.BOTTOM && box.id.isStaticallyDrawn()) drawTextBox(canvas, box)
         for (stroke in completedStrokes) drawStrokeToBitmap(stroke)
         for (box in textBoxes) if (box.zBand == ZBand.TOP && box.id.isStaticallyDrawn()) drawTextBox(canvas, box)
+        renderPageBoundary(canvas) // last: the page-edge marker stays visible over everything
+    }
+
+    /**
+     * Draw a bold marker along any page edge that falls INSIDE the view — i.e. where a letterbox
+     * margin begins — so the user can see where the note ends when this device's aspect differs from
+     * the note's (the page is projected through [transform], so this tracks zoom + pan). An edge at
+     * the view border (the axis the page fills) or off-screen (zoomed past) gets no marker. Covers
+     * both orientations: a vertical edge marks a left/right margin, a horizontal edge a top/bottom one.
+     */
+    private fun renderPageBoundary(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        val left = transform.toScreenX(0)
+        val top = transform.toScreenY(0)
+        val right = transform.toScreenX(PageTransform.VIRTUAL_SHORT_AXIS)
+        val bottom = transform.toScreenY(transform.virtualLongAxis)
+        // The page's visible span on each axis, clamped to the view, so a marker doesn't run past
+        // the page's own extent into a corner that isn't the note.
+        val spanTop = top.coerceIn(0f, h)
+        val spanBottom = bottom.coerceIn(0f, h)
+        val spanLeft = left.coerceIn(0f, w)
+        val spanRight = right.coerceIn(0f, w)
+        val eps = 1f // ignore a sub-pixel gap on the axis the page fills (uniform fit = one axis exact)
+        if (right in eps..(w - eps)) canvas.drawLine(right, spanTop, right, spanBottom, pageBoundaryPaint)
+        if (left in eps..(w - eps)) canvas.drawLine(left, spanTop, left, spanBottom, pageBoundaryPaint)
+        if (bottom in eps..(h - eps)) canvas.drawLine(spanLeft, bottom, spanRight, bottom, pageBoundaryPaint)
+        if (top in eps..(h - eps)) canvas.drawLine(spanLeft, top, spanRight, top, pageBoundaryPaint)
     }
 
     /** A box is drawn into the static bitmap unless it's currently being edited or transformed
