@@ -163,12 +163,18 @@ class NotebookRepository private constructor(
          * If the file is corrupted, deletes it and starts fresh.
          */
         fun open(context: Context, now: () -> Long = { System.currentTimeMillis() }): NotebookRepository {
+            // Resolve where the datastore lives: `/sdcard/ForestNote` (migrating the private DB out
+            // once if needed) when external storage is usable, else the app-private dir as a safe
+            // fallback. See StorageLocation / StorageLocationLogic. `dbContext` redirects every
+            // framework DB-file lookup, so the driver + corruption-recovery delete below all target
+            // the resolved location transparently.
+            val dbContext = StorageLocation.resolve(context, DEFAULT_FILENAME)
             // Build the SQLDelight Android driver and the RhizomeSync handle over ONE shared
             // SupportSQLiteOpenHelper, so the adapter's `rhizome_*` tables and SQLDelight's data tables
             // live on the same connection (and the same write transaction — see Phase 8 C3).
             fun build(): NotebookRepository {
                 val helper = FrameworkSQLiteOpenHelperFactory().create(
-                    SupportSQLiteOpenHelper.Configuration.builder(context)
+                    SupportSQLiteOpenHelper.Configuration.builder(dbContext)
                         .name(DEFAULT_FILENAME)
                         .callback(AndroidSqliteDriver.Callback(NotebookDatabase.Schema))
                         .build()
@@ -181,8 +187,8 @@ class NotebookRepository private constructor(
             return try {
                 build()
             } catch (e: Throwable) {
-                // Corrupted database — delete and recreate.
-                context.deleteDatabase(DEFAULT_FILENAME)
+                // Corrupted database — delete and recreate (at the resolved location).
+                dbContext.deleteDatabase(DEFAULT_FILENAME)
                 build()
             }
         }
