@@ -92,16 +92,22 @@ object StorageLocation {
      */
     fun resolve(context: Context, dbFilename: String): Context {
         return try {
-            val dbDir = File(Environment.getExternalStorageDirectory(), EXTERNAL_DIR_NAME)
+            val dbDir = File(externalRoot(), EXTERNAL_DIR_NAME)
             val externalDb = File(dbDir, dbFilename)
             val privateDb = context.getDatabasePath(dbFilename)
 
             val externalWritable = ensureWritable(dbDir)
-            when (StorageLocationLogic.decide(
+            val choice = StorageLocationLogic.decide(
                 externalWritable = externalWritable,
                 externalDbExists = externalDb.exists(),
                 privateDbExists = privateDb.exists(),
-            )) {
+            )
+            Log.i(
+                TAG,
+                "resolve: dir=$dbDir writable=$externalWritable extDb=${externalDb.exists()} " +
+                    "privDb=${privateDb.exists()} choice=$choice",
+            )
+            when (choice) {
                 StorageChoice.USE_PRIVATE -> context
                 StorageChoice.USE_EXTERNAL -> ExternalStorageContext(context, dbDir)
                 StorageChoice.MIGRATE_THEN_EXTERNAL -> {
@@ -114,6 +120,16 @@ object StorageLocation {
             context
         }
     }
+
+    /**
+     * The external directory the datastore lives under: a top-level `/sdcard/ForestNote`. Creating a
+     * new top-level `/sdcard` folder requires `MANAGE_EXTERNAL_STORAGE` ("All files access") on
+     * API 30+ — the app requests it on first launch. Until it is granted, [ensureWritable] fails and
+     * the resolver falls back to private storage; once granted, the datastore is created/migrated
+     * here. This is a proper app-data location (unlike stashing it in the shared `Download` dir) and
+     * survives an uninstall (it is not under `Android/data`).
+     */
+    private fun externalRoot(): File = Environment.getExternalStorageDirectory()
 
     /** Create [dir] if needed and confirm it's writable. */
     private fun ensureWritable(dir: File): Boolean = try {

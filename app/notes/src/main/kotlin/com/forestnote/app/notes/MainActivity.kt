@@ -154,6 +154,15 @@ class MainActivity : Activity() {
     private var activeNotebookId: String = ""
     private var activeNotebookName: String = ""
 
+    // All-files-access (MANAGE_EXTERNAL_STORAGE) gates the /sdcard/ForestNote datastore location.
+    // hadAllFilesAccessAtOpen is captured just before the store opens, so onResume can notice a
+    // just-granted permission and re-open the store there (via recreate → migration). promptedStorage
+    // keeps the first-launch grant prompt to once per process; storageReopenTriggered guards the
+    // one-shot recreate. See maybePromptForAllFilesAccess / reopenIfStorageJustGranted.
+    private var hadAllFilesAccessAtOpen = false
+    private var promptedStorage = false
+    private var storageReopenTriggered = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         installCrashHandler()
@@ -201,7 +210,10 @@ class MainActivity : Activity() {
         )
 
         // Open storage. The store opens the repository on its own background thread,
-        // so onCreate never makes a synchronous DB call (AC1.2).
+        // so onCreate never makes a synchronous DB call (AC1.2). Capture whether All-Files-Access
+        // is granted RIGHT NOW: it decides whether the store lands on /sdcard/ForestNote or falls
+        // back to private storage, and lets onResume re-open at /sdcard once the user grants it.
+        hadAllFilesAccessAtOpen = hasAllFilesAccess()
         store = NotebookStore.create(this, secureCreds)
         syncController = SyncController(
             store, syncScope,
@@ -2051,6 +2063,70 @@ class MainActivity : Activity() {
         // Try to drain any queued CalDAV tasks + restart the periodic timer. Safe to call before
         // the user has configured CalDAV — the drainer aborts cleanly when there are no creds.
         caldavDrainer.resume()
+        // Storage: if the user just granted All-Files-Access, re-open at /sdcard; otherwise, on
+        // first launch without it, prompt once. Both are cheap no-ops on the common path.
+        reopenIfStorageJustGranted()
+        maybePromptForAllFilesAccess()
+    }
+
+    /** True when the app holds MANAGE_EXTERNAL_STORAGE ("All files access"). Never throws. */
+    private fun hasAllFilesAccess(): Boolean = try {
+        android.os.Environment.isExternalStorageManager()
+    } catch (t: Throwable) {
+        false
+    }
+
+    /**
+     * First-launch nudge to grant All-Files-Access so the datastore can move to /sdcard/ForestNote.
+     * Once per process (declining just falls back to private storage — the app works either way).
+     */
+    private fun maybePromptForAllFilesAccess() {
+        if (promptedStorage || hasAllFilesAccess()) return
+        promptedStorage = true
+        try {
+            AlertDialog.Builder(this)
+                .setTitle("Allow storage access")
+                .setMessage(
+                    "ForestNote can keep your notebook library at /sdcard/ForestNote so it survives " +
+                        "app updates and reinstalls. Grant “All files access” to move it there. " +
+                        "Until then your notes are stored privately and work normally.",
+                )
+                .setPositiveButton("Grant") { _, _ -> openAllFilesAccessSettings() }
+                .setNegativeButton("Not now", null)
+                .show()
+        } catch (t: Throwable) {
+            fileLogger.log("Storage", "grant prompt failed: ${t.message}")
+        }
+    }
+
+    /** Open the system "All files access" screen for this app (falls back to the global list). */
+    private fun openAllFilesAccessSettings() {
+        try {
+            startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    android.net.Uri.parse("package:$packageName"),
+                ),
+            )
+        } catch (t: Throwable) {
+            try {
+                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+            } catch (t2: Throwable) {
+                fileLogger.log("Storage", "cannot open all-files settings: ${t2.message}")
+            }
+        }
+    }
+
+    /**
+     * If All-Files-Access was granted AFTER the store already opened (on private storage), re-launch
+     * the Activity so onCreate re-resolves the datastore location — migrating the private DB out to
+     * /sdcard/ForestNote. One-shot; store.shutdown() in onDestroy drains + closes the old handle first.
+     */
+    private fun reopenIfStorageJustGranted() {
+        if (storageReopenTriggered || hadAllFilesAccessAtOpen || !hasAllFilesAccess()) return
+        storageReopenTriggered = true
+        fileLogger.log("Storage", "all-files access granted; reopening datastore at /sdcard/ForestNote")
+        recreate()
     }
 
     override fun onDestroy() {
