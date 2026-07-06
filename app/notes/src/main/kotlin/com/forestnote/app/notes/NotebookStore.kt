@@ -27,6 +27,7 @@ import io.rhizome.core.Op
 import io.rhizome.core.SyncLocalStore
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -694,17 +695,26 @@ class NotebookStore(
     /** Run [block] on the DB executor thread and suspend until it returns (or rethrows). */
     private suspend fun <T> onDb(block: (NotebookRepository) -> T): T =
         suspendCancellableCoroutine { cont ->
-            executor.execute {
-                val r = repo
-                if (r == null) {
-                    cont.resumeWithException(IllegalStateException("repository not open"))
-                } else {
-                    try {
-                        cont.resume(block(r))
-                    } catch (e: Throwable) {
-                        cont.resumeWithException(e)
+            try {
+                executor.execute {
+                    val r = repo
+                    if (r == null) {
+                        cont.resumeWithException(IllegalStateException("repository not open"))
+                    } else {
+                        try {
+                            cont.resume(block(r))
+                        } catch (e: Throwable) {
+                            cont.resumeWithException(e)
+                        }
                     }
                 }
+            } catch (e: RejectedExecutionException) {
+                // The executor is already shut down (store.shutdown() ran — app close, or a
+                // recreate() to re-open the datastore after an All-Files-Access grant). A drainer/
+                // sync coroutine still in flight must NOT crash the app with an uncaught
+                // RejectedExecutionException; cancel the caller cleanly instead (a Cancellation
+                // exception is normal coroutine teardown, not a failure).
+                cont.cancel(e)
             }
         }
 

@@ -2051,6 +2051,10 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // If the user just granted All-Files-Access, re-open the datastore at /sdcard (via recreate)
+        // and skip the rest — this Activity instance is being torn down, so don't spin up sync/drainer
+        // work on it (the store is about to shut down).
+        if (reopenIfStorageJustGranted()) return
         if (isEInk) {
             // Re-acquire the device ink resource (Viwoods: WritingBufferQueue; Boox: raw drawing).
             // onResumeReacquire is on the InkBackend interface now, retiring the old
@@ -2063,9 +2067,7 @@ class MainActivity : Activity() {
         // Try to drain any queued CalDAV tasks + restart the periodic timer. Safe to call before
         // the user has configured CalDAV — the drainer aborts cleanly when there are no creds.
         caldavDrainer.resume()
-        // Storage: if the user just granted All-Files-Access, re-open at /sdcard; otherwise, on
-        // first launch without it, prompt once. Both are cheap no-ops on the common path.
-        reopenIfStorageJustGranted()
+        // First launch without the permission: prompt once to move the datastore to /sdcard.
         maybePromptForAllFilesAccess()
     }
 
@@ -2121,12 +2123,14 @@ class MainActivity : Activity() {
      * If All-Files-Access was granted AFTER the store already opened (on private storage), re-launch
      * the Activity so onCreate re-resolves the datastore location — migrating the private DB out to
      * /sdcard/ForestNote. One-shot; store.shutdown() in onDestroy drains + closes the old handle first.
+     * Returns true if it triggered a recreate (so onResume can skip the rest of its work).
      */
-    private fun reopenIfStorageJustGranted() {
-        if (storageReopenTriggered || hadAllFilesAccessAtOpen || !hasAllFilesAccess()) return
+    private fun reopenIfStorageJustGranted(): Boolean {
+        if (storageReopenTriggered || hadAllFilesAccessAtOpen || !hasAllFilesAccess()) return false
         storageReopenTriggered = true
         fileLogger.log("Storage", "all-files access granted; reopening datastore at /sdcard/ForestNote")
         recreate()
+        return true
     }
 
     override fun onDestroy() {
