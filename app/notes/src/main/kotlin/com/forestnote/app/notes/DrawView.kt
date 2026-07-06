@@ -341,6 +341,11 @@ class DrawView @JvmOverloads constructor(
             store?.replaceTextBoxes(removedIds = emptyList(), added = pastedBoxes)
             textBoxes.addAll(pastedBoxes)
         }
+        recordEdit(
+            label = "paste",
+            strokeChanges = strokeChangesOf(emptyList(), pastedStrokes),
+            boxChanges = boxChangesOf(emptyList(), pastedBoxes),
+        )
 
         endPasteMode()
         redrawBitmap()
@@ -667,6 +672,82 @@ class DrawView @JvmOverloads constructor(
         reconcileIfOwned()
     }
 
+    // ===== Undo/redo support =====
+
+    /**
+     * Fired after a user edit is committed, carrying the before/after images of every row it touched.
+     * The host ([MainActivity]) stamps the active pageId and pushes an [EditStep] onto the
+     * per-notebook undo history. NOT fired by [applyUndoRedo] (undo/redo must never re-record).
+     */
+    var onEditCommitted: ((strokeChanges: List<RowChange<Stroke>>, boxChanges: List<RowChange<TextBox>>, label: String) -> Unit)? = null
+
+    /** Per-id [RowChange]s over the union of before/after ids — uniformly covers add/delete/move/edit. */
+    private fun strokeChangesOf(before: List<Stroke>, after: List<Stroke>): List<RowChange<Stroke>> {
+        val b = before.associateBy { it.id }
+        val a = after.associateBy { it.id }
+        return (b.keys + a.keys).map { RowChange(it, b[it], a[it]) }
+    }
+
+    private fun boxChangesOf(before: List<TextBox>, after: List<TextBox>): List<RowChange<TextBox>> {
+        val b = before.associateBy { it.id }
+        val a = after.associateBy { it.id }
+        return (b.keys + a.keys).map { RowChange(it, b[it], a[it]) }
+    }
+
+    private fun recordEdit(
+        label: String,
+        strokeChanges: List<RowChange<Stroke>> = emptyList(),
+        boxChanges: List<RowChange<TextBox>> = emptyList(),
+    ) {
+        if (strokeChanges.isEmpty() && boxChanges.isEmpty()) return
+        onEditCommitted?.invoke(strokeChanges, boxChanges, label)
+    }
+
+    /**
+     * The Clear tool: wipe the page's ink in-memory and record it as one undoable step (every live
+     * stroke: before=obj, after=null). Text boxes stay (Clear is ink-only). The caller persists the
+     * clear via [NotebookStore.clear].
+     */
+    fun clearForUser() {
+        val cleared = completedStrokes.toList()
+        clearAll(clearTextBoxes = false)
+        recordEdit(label = "clear", strokeChanges = cleared.map { RowChange(it.id, it, null) })
+    }
+
+    /**
+     * Apply an undo/redo [targets] set to the CURRENT page (the caller guarantees the store's current
+     * page matches): drop removedIds and any stale copy of a re-added id, append the target rows,
+     * persist through the existing batch paths (which capture sync ops), and GC-refresh (undo can
+     * add/remove a lot of ink — ghost-prone). Clears any live selection first (an undone row may have
+     * been selected). Does NOT re-enter [recordEdit].
+     */
+    fun applyUndoRedo(targets: Targets) {
+        // Drop any selection/transform that could reference a row we're about to change.
+        selectedStrokeIds = emptySet()
+        selectedTextBoxIds = emptySet()
+        transformingBoxIds = emptySet()
+        lassoPoints.clear()
+        lassoClosed = false
+        clearBoxSelection()
+        onSelectionChanged?.invoke(ClipboardPayload.EMPTY, null)
+
+        if (targets.strokeRemovedIds.isNotEmpty() || targets.strokeAdded.isNotEmpty()) {
+            val drop = HashSet(targets.strokeRemovedIds)
+            targets.strokeAdded.forEach { drop.add(it.id) }
+            completedStrokes.removeAll { it.id in drop }
+            completedStrokes.addAll(targets.strokeAdded)
+            store?.replaceStrokes(removedIds = targets.strokeRemovedIds, added = targets.strokeAdded)
+        }
+        if (targets.boxRemovedIds.isNotEmpty() || targets.boxAdded.isNotEmpty()) {
+            val drop = HashSet(targets.boxRemovedIds)
+            targets.boxAdded.forEach { drop.add(it.id) }
+            textBoxes.removeAll { it.id in drop }
+            textBoxes.addAll(targets.boxAdded)
+            store?.replaceTextBoxes(removedIds = targets.boxRemovedIds, added = targets.boxAdded)
+        }
+        gcRefresh()
+    }
+
     /**
      * Re-composite the page and re-push it to the WritingSurface at the CURRENT picture mode
      * (FAST after init). Cheap; good enough for editor↔editor transitions (page/notebook switch).
@@ -975,9 +1056,13 @@ class DrawView @JvmOverloads constructor(
     private fun commitSelectionMove(dx: Int, dy: Int) {
         if (dx == 0 && dy == 0) return
 
+        // Capture the pre-move originals (same ULIDs) for the undo record.
+        val origStrokes = getSelectedStrokes()
+        val origBoxes = getSelectedTextBoxes()
+
         // Strokes (unchanged behavior).
         val strokeIds = selectedStrokeIds.toList()
-        val movedStrokes = LassoSelectionLogic.translate(getSelectedStrokes(), dx, dy) { it.id }
+        val movedStrokes = LassoSelectionLogic.translate(origStrokes, dx, dy) { it.id }
         if (strokeIds.isNotEmpty()) store?.replaceStrokes(strokeIds, movedStrokes)
         val strokeIdSet = strokeIds.toHashSet()
         completedStrokes.removeAll { it.id in strokeIdSet }
@@ -985,10 +1070,9 @@ class DrawView @JvmOverloads constructor(
 
         // Text boxes (parallel batch path landed in Phase 4).
         val boxIds = selectedTextBoxIds.toList()
+        var movedBoxes: List<TextBox> = emptyList()
         if (boxIds.isNotEmpty()) {
-            val movedBoxes = LassoSelectionLogic.translateTextBoxes(
-                getSelectedTextBoxes(), dx, dy
-            ) { it.id }
+            movedBoxes = LassoSelectionLogic.translateTextBoxes(origBoxes, dx, dy) { it.id }
             store?.replaceTextBoxes(boxIds, movedBoxes)
             val boxIdSet = boxIds.toHashSet()
             val kept = textBoxes.filter { it.id !in boxIdSet }
@@ -996,6 +1080,12 @@ class DrawView @JvmOverloads constructor(
             textBoxes.addAll(kept)
             textBoxes.addAll(movedBoxes)
         }
+
+        recordEdit(
+            label = "move",
+            strokeChanges = strokeChangesOf(origStrokes, movedStrokes),
+            boxChanges = boxChangesOf(origBoxes, movedBoxes),
+        )
 
         // Shift the lasso outline (AC2.2).
         val shifted = lassoPoints.map { LassoSelectionLogic.Point(it.x + dx, it.y + dy) }
@@ -1059,8 +1149,17 @@ class DrawView @JvmOverloads constructor(
         val boxIds = selectedTextBoxIds.toList()
         if (strokeIds.isEmpty() && boxIds.isEmpty()) return
 
+        // Snapshot the removed rows (before the model loses them) for the undo record.
+        val removedStrokes = getSelectedStrokes()
+        val removedBoxes = getSelectedTextBoxes()
+
         if (strokeIds.isNotEmpty()) store?.deleteStrokes(strokeIds)
         if (boxIds.isNotEmpty()) store?.replaceTextBoxes(boxIds, emptyList())
+        recordEdit(
+            label = "delete",
+            strokeChanges = strokeChangesOf(removedStrokes, emptyList()),
+            boxChanges = boxChangesOf(removedBoxes, emptyList()),
+        )
 
         val strokeIdSet = strokeIds.toHashSet()
         val boxIdSet = boxIds.toHashSet()
@@ -1192,8 +1291,10 @@ class DrawView @JvmOverloads constructor(
                 transformingBoxId = null
                 if (tb != null && gestureMoved) {
                     val idx = textBoxes.indexOfFirst { it.id == tb.id }
+                    val before = if (idx >= 0) textBoxes[idx] else null
                     if (idx >= 0) textBoxes[idx] = tb
                     store?.saveTextBox(tb)
+                    recordEdit(label = "moveBox", boxChanges = boxChangesOf(listOfNotNull(before), listOf(tb)))
                     selectedBoxId = tb.id
                     redrawBitmap()
                     onBoxSelected?.invoke(tb, boxScreenRect(tb)) // re-show menu at the new spot
@@ -1278,8 +1379,10 @@ class DrawView @JvmOverloads constructor(
     /** Delete the selected box (soft-delete + remove from the model). */
     fun deleteSelectedBox() {
         val id = selectedBoxId ?: return
+        val removed = textBoxes.find { it.id == id }
         textBoxes.removeAll { it.id == id }
         store?.deleteTextBox(id)
+        if (removed != null) recordEdit(label = "deleteBox", boxChanges = boxChangesOf(listOf(removed), emptyList()))
         selectedBoxId = null
         onBoxSelectionCleared?.invoke()
         redrawBitmap()
@@ -1393,6 +1496,7 @@ class DrawView @JvmOverloads constructor(
                 if (idx >= 0) {
                     val old = textBoxes.removeAt(idx)
                     store?.deleteTextBox(old.id)
+                    recordEdit(label = "deleteBox", boxChanges = boxChangesOf(listOf(old), emptyList()))
                     if (selectedBoxId == old.id) { selectedBoxId = null; onBoxSelectionCleared?.invoke() }
                 }
             }
@@ -1411,9 +1515,14 @@ class DrawView @JvmOverloads constructor(
         val final = updatedBox.copy(text = trimmed, height = heightV)
 
         val idx = textBoxes.indexOfFirst { it.id == final.id }
+        val before = if (idx >= 0) textBoxes[idx] else null
         if (idx >= 0) textBoxes[idx] = final else textBoxes.add(final)
         if (wasPending) pendingNewBox = null
         store?.saveTextBox(final)
+        recordEdit(
+            label = if (before == null) "addBox" else "editBox",
+            boxChanges = boxChangesOf(listOfNotNull(before), listOf(final)),
+        )
         selectedBoxId = final.id
         redrawBitmap()
         onBoxSelected?.invoke(final, boxScreenRect(final))
@@ -1563,6 +1672,7 @@ class DrawView @JvmOverloads constructor(
                         // failures. The stroke already carries its ULID — no copy-back.
                         store?.save(completed)
                         onStrokeSaved?.invoke(completed)
+                        recordEdit(label = "draw", strokeChanges = listOf(RowChange(completed.id, null, completed)))
                     }
 
                     if (backend?.ownsInput() == true) {
@@ -1818,8 +1928,11 @@ class DrawView @JvmOverloads constructor(
             // Posted to the main thread by the store. Apply as a diff so strokes drawn
             // while we worked aren't clobbered, then redraw from the reconciled model.
             val removedSet = removed.toHashSet()
+            val fragIds = fragments.map { it.id }.toHashSet()
+            val beforeTouched = strokesSnapshot.filter { it.id in removedSet || it.id in fragIds }
             completedStrokes.removeAll { it.id in removedSet }
             completedStrokes.addAll(fragments)
+            recordEdit(label = "erase", strokeChanges = strokeChangesOf(beforeTouched, fragments))
             redrawBitmap()
         }
     }

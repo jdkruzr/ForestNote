@@ -57,6 +57,25 @@
         android:background="?attr/selectableItemBackground"
         android:scaleType="center" />
 
+    <!-- Undo / redo (per-notebook history), grouped with the page arrows as history navigation. -->
+    <ImageButton
+        android:id="@+id/btn_undo"
+        android:layout_width="48dp"
+        android:layout_height="match_parent"
+        android:src="@drawable/ic_undo"
+        android:contentDescription="Undo"
+        android:background="?attr/selectableItemBackground"
+        android:scaleType="center" />
+
+    <ImageButton
+        android:id="@+id/btn_redo"
+        android:layout_width="48dp"
+        android:layout_height="match_parent"
+        android:src="@drawable/ic_redo"
+        android:contentDescription="Redo"
+        android:background="?attr/selectableItemBackground"
+        android:scaleType="center" />
+
     <!-- The five tool buttons fill the remaining width. -->
     <include
         layout="@layout/toolbar"

@@ -85,6 +85,11 @@ class MainActivity : Activity() {
     private lateinit var pageIndicator: TextView
     private lateinit var btnNotebooks: ImageButton
     private lateinit var btnNext: ImageButton
+    private lateinit var btnUndo: ImageButton
+    private lateinit var btnRedo: ImageButton
+
+    /** Per-notebook, session-only undo/redo of canvas content edits (see [EditHistory]). */
+    private val editHistory = EditHistory()
     private var isEInk = false
 
     // In-process clipboard for lasso Cut/Copy/Paste (held across A7 selection + A8 paste).
@@ -358,6 +363,18 @@ class MainActivity : Activity() {
             }
         }
         pageIndicator.setOnClickListener { showPagePicker() }
+
+        // Undo/redo (per-notebook history). Sit beside the page arrows as history navigation.
+        btnUndo = findViewById(R.id.btn_undo)
+        btnRedo = findViewById(R.id.btn_redo)
+        btnUndo.setOnClickListener { performUndoRedo(EditDirection.UNDO) }
+        btnRedo.setOnClickListener { performUndoRedo(EditDirection.REDO) }
+        // Every committed editor edit is stamped with the active page and pushed onto the history.
+        drawView.onEditCommitted = { strokeChanges, boxChanges, label ->
+            editHistory.push(EditStep(activePageId, strokeChanges, boxChanges, label))
+            refreshUndoRedoButtons()
+        }
+        refreshUndoRedoButtons()
 
         // Notebook label opens the Library overlay (C6: the picker is fully superseded).
         btnNotebooks = findViewById(R.id.btn_notebooks)
@@ -1037,12 +1054,39 @@ class MainActivity : Activity() {
             .setMessage("Delete all strokes on this page?")
             .setPositiveButton("Clear") { _, _ ->
                 // Clear is ink-only — text boxes are separate elements and stay on the page.
-                drawView.clearAll(clearTextBoxes = false)
+                // clearForUser records the wipe as one undoable step before clearing in-memory.
+                drawView.clearForUser()
                 // The store clears off-thread and handles its own errors.
                 store.clear { }
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    /**
+     * Apply one undo (or redo) step from the per-notebook history. The step carries the page it
+     * happened on: if that's the page on screen, apply directly; otherwise navigate there first (so
+     * the change is visible and the store's current page — which scopes the writes — is correct),
+     * then apply once the page has loaded.
+     */
+    private fun performUndoRedo(direction: EditDirection) {
+        val step = (if (direction == EditDirection.UNDO) editHistory.undo() else editHistory.redo()) ?: return
+        val targets = targetRows(step, direction)
+        if (step.pageId == activePageId) {
+            drawView.applyUndoRedo(targets)
+        } else {
+            goToPage(step.pageId) { drawView.applyUndoRedo(targets) }
+        }
+        refreshUndoRedoButtons()
+    }
+
+    /** Dim + disable the undo/redo buttons to reflect what the history currently allows. */
+    private fun refreshUndoRedoButtons() {
+        if (!::btnUndo.isInitialized) return
+        btnUndo.isEnabled = editHistory.canUndo
+        btnUndo.alpha = if (editHistory.canUndo) 1f else 0.3f
+        btnRedo.isEnabled = editHistory.canRedo
+        btnRedo.alpha = if (editHistory.canRedo) 1f else 0.3f
     }
 
     /** Reload the current notebook's page list + active id; update the indicator. */
@@ -1134,7 +1178,7 @@ class MainActivity : Activity() {
     }
 
     /** Swap to another page: clear canvas, load its ink, refresh overlay + indicator. */
-    private fun goToPage(pageId: String) {
+    private fun goToPage(pageId: String, afterLoad: (() -> Unit)? = null) {
         textBoxEditOverlay.commitIfShowing() // persist any in-progress text edit before leaving the page
         drawView.clearAll()
         drawView.resetViewportForPage()
@@ -1143,7 +1187,12 @@ class MainActivity : Activity() {
             drawView.fullRefresh()       // clears e-ink ghosting on switch (AC6.4)
             refreshPageIndicator() // its listPages callback chains the OCR refresh too
         }
-        store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
+        // loadTextBoxes is enqueued after switchPage, so its callback runs last — the safe point to
+        // apply a cross-page undo (both strokes and boxes are loaded, currentPageId = pageId).
+        store.loadTextBoxes {
+            drawView.mergeLoadedTextBoxes(it)
+            afterLoad?.invoke()
+        }
     }
 
     /**
@@ -1197,6 +1246,8 @@ class MainActivity : Activity() {
         revealEditorChrome()
         editorLoaded = true
         editorOpenedFromLibrary = true // navigated in from the Library → Back returns there (#29)
+        editHistory.clear() // undo history is per-notebook — a fresh notebook starts empty
+        refreshUndoRedoButtons()
         drawView.clearAll()
         drawView.resetViewportForPage()
         store.switchNotebook(notebookId) { strokes ->
@@ -1219,6 +1270,8 @@ class MainActivity : Activity() {
         revealEditorChrome()
         editorLoaded = true
         editorOpenedFromLibrary = true // navigated in from the Library → Back returns there (#29)
+        editHistory.clear() // undo history is per-notebook — a fresh notebook starts empty
+        refreshUndoRedoButtons()
         drawView.clearAll()
         drawView.resetViewportForPage()
         store.switchNotebookToPage(notebookId, pageId) { strokes ->
