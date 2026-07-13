@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -300,7 +301,7 @@ class MainActivity : Activity() {
             onStrokeSaved = { stroke ->
                 // Notification-only callback
             }
-            onEditorLaidOut = { w, h -> maybeCaptureNotebookAspect(w, h) }
+            onEditorLaidOut = { _, _ -> schedulePendingNotebookAspectCapture() }
         }
 
         // Input-owning backend (Boox/Onyx): the firmware sources stylus input via TouchHelper and
@@ -1101,11 +1102,11 @@ class MainActivity : Activity() {
             activeNotebookName = activeNotebook?.name.orEmpty()
             // Apply the active notebook's page aspect (per-notebook; null = legacy 3:4) so the page
             // renders at its native shape — letterboxed, never distorted — on this device. Idempotent.
-            // For a freshly-created notebook awaiting capture, capture DIRECTLY from the real surface
-            // instead of first applying the 3:4 default (avoids a redundant reconcile + intermediate
-            // aspect flash). onEditorLaidOut covers the case where the surface isn't sized here yet.
-            if (activeId == pendingAspectCaptureId && drawView.width > 0 && drawView.height > 0) {
-                maybeCaptureNotebookAspect(drawView.width, drawView.height)
+            // For a freshly-created notebook awaiting capture, schedule the settled real surface
+            // measurement instead of first applying the 3:4 default (avoids a redundant reconcile +
+            // intermediate aspect flash). onEditorLaidOut restarts the debounce after size changes.
+            if (activeId == pendingAspectCaptureId) {
+                schedulePendingNotebookAspectCapture()
             } else {
                 drawView.setNotebookLongAxis(activeNotebook?.aspectLongAxis ?: PageTransform.VIRTUAL_LONG_AXIS)
             }
@@ -1139,42 +1140,38 @@ class MainActivity : Activity() {
     }
 
     /**
-     * The creating device's page long-axis in virtual units, captured at notebook creation so the
-     * note keeps its native aspect on every device. Short axis is the fixed VIRTUAL_SHORT_AXIS;
-     * long axis = round(SHORT * maxDim / minDim) of the drawing canvas (so a new note fills the
-     * writing surface on this device). Falls back to the display's real size before the canvas is
-     * laid out, and to the legacy 3:4 default if neither is available.
-     */
-    /**
-     * The page long-axis (virtual units) for a writing surface of size [w]×[h] px: short axis is the
-     * fixed [PageTransform.VIRTUAL_SHORT_AXIS], long axis = round(SHORT × maxDim / minDim). Pure; the
-     * caller supplies dimensions from a reliably laid-out editor (see [maybeCaptureNotebookAspect]).
-     */
-    private fun aspectLongAxisFor(w: Int, h: Int): Int {
-        val minDim = minOf(w, h)
-        val maxDim = maxOf(w, h)
-        if (minDim <= 0) return PageTransform.VIRTUAL_LONG_AXIS
-        return Math.round(PageTransform.VIRTUAL_SHORT_AXIS.toFloat() * maxDim / minDim)
-    }
-
-    /**
      * Deferred per-notebook aspect capture. A note created from the Library dialog can't measure its
      * aspect at creation — that dialog's soft keyboard shrinks the editor surface, so a capture then
      * records a squashed shape (proven on-device: an 824×1590 Palma surface measured 824×988 → wrong
      * long axis). Instead the notebook is created with a NULL aspect and [pendingAspectCaptureId] is
-     * armed; the real aspect is captured + persisted here the first time that notebook's editor is laid
-     * out at its true size (via [DrawView.onEditorLaidOut] and the [refreshPageIndicator] fallback).
-     * Only fires for the freshly-created notebook — legacy NULL-aspect notes keep the 3:4 default.
+     * armed. Layout changes are debounced until the IME is gone and the editor has settled, then the
+     * live DrawView dimensions are captured. Only the freshly-created notebook is eligible; legacy
+     * NULL-aspect notes keep the 3:4 default.
      */
     private var pendingAspectCaptureId: String? = null
 
-    private fun maybeCaptureNotebookAspect(w: Int, h: Int) {
-        val nbId = pendingAspectCaptureId ?: return
-        if (nbId != activeNotebookId || w <= 0 || h <= 0) return
-        val longAxis = aspectLongAxisFor(w, h)
+    private val captureNotebookAspectRunnable = Runnable {
+        val nbId = pendingAspectCaptureId ?: return@Runnable
+        if (nbId != activeNotebookId) return@Runnable
+        if (!drawView.isShown || drawView.width <= 0 || drawView.height <= 0 ||
+            drawView.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true
+        ) {
+            schedulePendingNotebookAspectCapture()
+            return@Runnable
+        }
+        val w = drawView.width
+        val h = drawView.height
+        val longAxis = NotebookAspectPolicy.longAxisFor(w, h)
         pendingAspectCaptureId = null
         store.setNotebookAspect(nbId, longAxis)
         drawView.setNotebookLongAxis(longAxis)
+        fileLogger.log("Aspect", "captured notebook=$nbId canvas=${w}x$h longAxis=$longAxis")
+    }
+
+    private fun schedulePendingNotebookAspectCapture() {
+        if (pendingAspectCaptureId == null || !::drawView.isInitialized) return
+        drawView.removeCallbacks(captureNotebookAspectRunnable)
+        drawView.postDelayed(captureNotebookAspectRunnable, ASPECT_CAPTURE_SETTLE_MS)
     }
 
     /** Swap to another page: clear canvas, load its ink, refresh overlay + indicator. */
@@ -2187,6 +2184,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        if (::drawView.isInitialized) drawView.removeCallbacks(captureNotebookAspectRunnable)
         super.onDestroy()
         try {
             caldavDrainer.shutdown()
@@ -2236,6 +2234,9 @@ class MainActivity : Activity() {
     }
 
     private companion object {
+        // Let dialog dismissal, IME removal, and the editor relayout complete before aspect capture.
+        const val ASPECT_CAPTURE_SETTLE_MS = 300L
+
         // Base for code-generated pitch RadioButton ids in the page-template dialog.
         const val PITCH_ID_BASE = 0x71_00_01
 
