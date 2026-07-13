@@ -25,7 +25,7 @@
 
     <ImageButton
         android:id="@+id/btn_prev_page"
-        android:layout_width="48dp"
+        android:layout_width="36dp"
         android:layout_height="match_parent"
         android:src="@drawable/ic_arrow_left"
         android:contentDescription="Previous page"
@@ -50,7 +50,7 @@
 
     <ImageButton
         android:id="@+id/btn_next_page"
-        android:layout_width="48dp"
+        android:layout_width="36dp"
         android:layout_height="match_parent"
         android:src="@drawable/ic_arrow_right"
         android:contentDescription="Next page"
@@ -60,7 +60,7 @@
     <!-- Undo / redo (per-notebook history), grouped with the page arrows as history navigation. -->
     <ImageButton
         android:id="@+id/btn_undo"
-        android:layout_width="48dp"
+        android:layout_width="36dp"
         android:layout_height="match_parent"
         android:src="@drawable/ic_undo"
         android:contentDescription="Undo"
@@ -69,10 +69,19 @@
 
     <ImageButton
         android:id="@+id/btn_redo"
-        android:layout_width="48dp"
+        android:layout_width="36dp"
         android:layout_height="match_parent"
         android:src="@drawable/ic_redo"
         android:contentDescription="Redo"
+        android:background="?attr/selectableItemBackground"
+        android:scaleType="center" />
+
+    <ImageButton
+        android:id="@+id/btn_viewport"
+        android:layout_width="40dp"
+        android:layout_height="match_parent"
+        android:src="@drawable/ic_viewport"
+        android:contentDescription="Viewport controls"
         android:background="?attr/selectableItemBackground"
         android:scaleType="center" />
 

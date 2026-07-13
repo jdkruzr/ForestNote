@@ -43,6 +43,17 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 /** The cheap inputs to a notebook's first-page thumbnail cache key (C3b). */
 data class ThumbnailSource(val pageId: String, val strokeCount: Long, val modifiedAt: Long)
 
+/** Complete, immutable input for an arbitrary-page browser preview. */
+data class PagePreviewSource(
+    val pageId: String,
+    val strokes: List<Stroke>,
+    val textBoxes: List<TextBox>,
+    val template: PageTemplate,
+    val pitchMm: Int,
+    val notebookLongAxis: Int,
+    val notebookModifiedAt: Long,
+)
+
 /**
  * Single owner of all persistence. Runs every database operation on one background
  * thread (the serialization point — single writer, no lock contention), and posts
@@ -226,6 +237,38 @@ class NotebookStore(
                 .onFailure { android.util.Log.e(TAG, "failed to load strokes for page", it) }
                 .getOrDefault(emptyList())
             poster { onResult(strokes) }
+        }
+    }
+
+    /**
+     * Load an arbitrary page's visible editor layers without changing active-page context.
+     * The notebook revision is deliberately included in the cache source: a page-browser preview
+     * must never survive an ink/text/template mutation that touched the notebook.
+     */
+    fun loadPagePreview(
+        page: PageMeta,
+        settings: Settings,
+        notebookLongAxis: Int,
+        notebookModifiedAt: Long,
+        onResult: (PagePreviewSource) -> Unit,
+    ) {
+        executor.execute {
+            val result = runCatching {
+                val r = repo
+                PagePreviewSource(
+                    pageId = page.id,
+                    strokes = r?.loadStrokesForPage(page.id).orEmpty(),
+                    textBoxes = r?.loadTextBoxesForPage(page.id).orEmpty(),
+                    template = TemplateGeometry.effectiveTemplate(page.template, settings.defaultTemplate),
+                    pitchMm = TemplateGeometry.effectivePitchMm(page.templatePitchMm, settings.defaultPitchMm),
+                    notebookLongAxis = notebookLongAxis,
+                    notebookModifiedAt = notebookModifiedAt,
+                )
+            }.onFailure { android.util.Log.e(TAG, "failed to load page preview", it) }
+                .getOrElse {
+                    PagePreviewSource(page.id, emptyList(), emptyList(), PageTemplate.BLANK, 5, notebookLongAxis, notebookModifiedAt)
+                }
+            poster { onResult(result) }
         }
     }
 

@@ -227,6 +227,7 @@ class DrawView @JvmOverloads constructor(
     var onStrokeSaved: ((Stroke) -> Unit)? = null
 
     private var editorZoomSetting: Float = EditorZoomPolicy.AUTO_SETTING
+    private var viewportLocked = false
     private var fingerPanning = false
     private var lastFingerX = 0f
     private var lastFingerY = 0f
@@ -538,6 +539,14 @@ class DrawView @JvmOverloads constructor(
         applyEditorZoomSetting(recompose = true, preserveCenter = true)
     }
 
+    /** Lock only capacitive viewport movement. Stylus editing and explicit zoom stay available. */
+    fun setViewportLocked(locked: Boolean) {
+        viewportLocked = locked
+        fingerPanning = false
+    }
+
+    fun isViewportLocked(): Boolean = viewportLocked
+
     /**
      * Set the active notebook's page long-axis (virtual units; per-notebook aspect captured from the
      * creating device). Re-runs the transform for the new page shape so the page letterboxes without
@@ -558,6 +567,8 @@ class DrawView @JvmOverloads constructor(
     }
 
     fun currentZoom(): Float = transform.zoom
+
+    fun isAutoZoom(): Boolean = editorZoomSetting <= EditorZoomPolicy.AUTO_SETTING
 
     fun zoomIn(): Float {
         val next = (transform.zoom * EditorZoomPolicy.STEP)
@@ -861,16 +872,8 @@ class DrawView @JvmOverloads constructor(
     }
 
     private fun handleFingerPan(event: MotionEvent): Boolean {
-        if (transform.zoom <= EditorZoomPolicy.MIN_ZOOM) {
+        if (!ViewportInteractionPolicy.allowsFingerPan(viewportLocked, transform.zoom, event.pointerCount)) {
             fingerPanning = false
-            return false
-        }
-        if (event.pointerCount < 2) {
-            if (event.actionMasked == MotionEvent.ACTION_UP ||
-                event.actionMasked == MotionEvent.ACTION_CANCEL
-            ) {
-                fingerPanning = false
-            }
             return true
         }
         val centerX = (event.getX(0) + event.getX(1)) / 2f

@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Rect
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.view.SurfaceView
 import android.view.View
@@ -18,6 +19,7 @@ import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.TextView
+import android.widget.PopupWindow
 import com.forestnote.core.format.FolderCard
 import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.format.PageTemplate
@@ -88,6 +90,8 @@ class MainActivity : Activity() {
     private lateinit var btnNext: ImageButton
     private lateinit var btnUndo: ImageButton
     private lateinit var btnRedo: ImageButton
+    private var viewportPopup: PopupWindow? = null
+    private var pagesBrowserNeedsReload = false
 
     /** Per-notebook, session-only undo/redo of canvas content edits (see [EditHistory]). */
     private val editHistory = EditHistory()
@@ -122,6 +126,7 @@ class MainActivity : Activity() {
     private val libraryView = LibraryView()
     // Full-screen Recycle Bin overlay (E3). Opened from the Library header; system back closes it.
     private val recycleBinView = RecycleBinView()
+    private val pagesView = PagesView()
     // Floating "Create task" pill shown after lasso-recognize when CalDAV is configured.
     // Full-screen "Create CalDAV task" sheet (SUMMARY + DUE chips + note + Send).
     private val caldavTaskSheet = CalDavTaskSheet()
@@ -364,6 +369,7 @@ class MainActivity : Activity() {
             }
         }
         pageIndicator.setOnClickListener { showPagePicker() }
+        findViewById<ImageButton>(R.id.btn_viewport).setOnClickListener { showViewportPopup(it) }
 
         // Undo/redo (per-notebook history). Sit beside the page arrows as history navigation.
         btnUndo = findViewById(R.id.btn_undo)
@@ -416,6 +422,7 @@ class MainActivity : Activity() {
             drawView.activeTextFontName = settings.textFontName
             drawView.activeTextFontSize = settings.textFontSizeV
             drawView.setEditorZoomSetting(settings.editorZoom)
+            drawView.setViewportLocked(settings.viewportLocked)
             // Refresh the synchronous launch cache so the next cold start makes the right
             // call without consulting the DB. (Idempotent if unchanged.)
             launchPrefs.edit().putString(KEY_START_VIEW, settings.startView.name).apply()
@@ -1781,6 +1788,10 @@ class MainActivity : Activity() {
             refreshEditorTransition(post = true)
             return
         }
+        if (pagesView.isShowing) {
+            closePagesBrowser(reloadActive = pagesBrowserNeedsReload)
+            return
+        }
         if (recycleBinView.isShowing) {
             closeRecycleBin()
             return
@@ -1963,43 +1974,76 @@ class MainActivity : Activity() {
             .show()
     }
 
-    /** Page/viewport menu: zoom controls, list pages, switch on tap; New/Delete page actions. */
+    /** Pages now has a dedicated full-screen, virtualized browser. */
     private fun showPagePicker() {
-        store.listPages { pages, activeId ->
-            val rows = mutableListOf<Pair<String, () -> Unit>>()
-            rows += "Zoom in" to {
-                val zoom = drawView.zoomIn()
-                persistEditorZoom(zoom)
+        if (pagesView.isShowing) return
+        if (backend.ownsInput()) backend.setInputSuspended(true) else drawView.blankPanelForFullScreenUi()
+        val content = findViewById<ViewGroup>(android.R.id.content)
+        pagesBrowserNeedsReload = false
+        pagesView.show(content, store, drawView.isViewportLocked(), PagesView.Callbacks(
+            onBack = { closePagesBrowser(reloadActive = pagesBrowserNeedsReload) },
+            onSelectPage = { id -> closePagesBrowser(reloadActive = false); goToPage(id) },
+            onNewPage = { store.createPage { id -> closePagesBrowser(reloadActive = false); goToPage(id) } },
+            onDeleteCurrent = { id -> confirmDeleteCurrentPageFromBrowser(id) },
+            onViewportLock = { setViewportLocked(it) },
+        ))
+        refreshUiTransition()
+    }
+
+    private fun closePagesBrowser(reloadActive: Boolean) {
+        if (!pagesView.isShowing) return
+        pagesView.hide()
+        pagesBrowserNeedsReload = false
+        if (backend.ownsInput()) backend.setInputSuspended(false)
+        if (reloadActive) reloadCurrentPage() else refreshEditorTransition(post = true)
+    }
+
+    private fun confirmDeleteCurrentPageFromBrowser(pageId: String) {
+        if (pageIds.size <= 1) return
+        AlertDialog.Builder(this).setTitle("Delete Current Page").setMessage("Delete this page and its contents?")
+            .setPositiveButton("Delete") { _, _ ->
+                store.deletePage(pageId) { deleted -> if (deleted) { pagesBrowserNeedsReload = true; pagesView.reload() } }
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun setViewportLocked(locked: Boolean) {
+        drawView.setViewportLocked(locked)
+        pagesView.setViewportLocked(locked)
+        store.updateSettings({ it.copy(viewportLocked = locked) })
+    }
+
+    private fun showViewportPopup(anchor: View) {
+        viewportPopup?.dismiss()
+        val density = resources.displayMetrics.density
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding((8*density).toInt(), (8*density).toInt(), (8*density).toInt(), (8*density).toInt()); setBackgroundColor(Color.WHITE) }
+        lateinit var refresh: () -> Unit
+        fun action(label: String, block: () -> Unit): TextView = TextView(this).apply {
+            text = label; textSize = 16f; setTextColor(Color.BLACK); gravity = android.view.Gravity.CENTER_VERTICAL; minHeight = (44*density).toInt(); setPadding((12*density).toInt(), 0, (12*density).toInt(), 0); isClickable = true; setBackgroundResource(android.R.drawable.list_selector_background); setOnClickListener { block(); refresh() }
+        }
+        val zoom = TextView(this).apply { text = "Zoom ${zoomPercent(drawView.currentZoom())}"; textSize = 15f; setTextColor(Color.BLACK); gravity = android.view.Gravity.CENTER; minHeight = (36*density).toInt() }
+        lateinit var lock: TextView
+        lateinit var auto: TextView
+        refresh = {
+            zoom.text = "Zoom ${zoomPercent(drawView.currentZoom())}"
+            lock.text = if (drawView.isViewportLocked()) "Viewport lock: On" else "Viewport lock: Off"
+            auto.background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(if (drawView.isAutoZoom()) Color.LTGRAY else Color.WHITE)
+                setStroke(if (drawView.isAutoZoom()) 2 else 0, Color.BLACK)
             }
-            rows += "Zoom out" to {
-                val zoom = drawView.zoomOut()
-                persistEditorZoom(zoom)
-            }
-            rows += "Fit page" to {
-                val zoom = drawView.fitPage()
-                persistEditorZoom(zoom)
-            }
-            rows += "Auto zoom" to {
-                drawView.autoZoom()
-                persistEditorZoom(EditorZoomPolicy.AUTO_SETTING)
-            }
-            pages.forEachIndexed { i, page ->
-                rows += "Page ${i + 1}" to { goToPage(page.id) }
-            }
-            val labels = rows.map { it.first }.toTypedArray()
-            val builder = AlertDialog.Builder(this)
-                .setTitle("Pages · Zoom ${zoomPercent(drawView.currentZoom())}")
-                .setItems(labels) { _, which -> rows[which].second.invoke() }
-                .setPositiveButton("New Page") { _, _ ->
-                    store.createPage { newId -> goToPage(newId) }
-                }
-                .setNegativeButton("Cancel", null)
-            if (PageNavigationLogic.canDelete(pages.map { it.id })) {
-                builder.setNeutralButton("Delete Current Page") { _, _ ->
-                    store.deletePage(activeId) { deleted -> if (deleted) reloadCurrentPage() }
-                }
-            }
-            builder.show()
+        }
+        root.addView(zoom)
+        root.addView(action("−  Zoom Out") { persistEditorZoom(drawView.zoomOut()) })
+        root.addView(action("+  Zoom In") { persistEditorZoom(drawView.zoomIn()) })
+        root.addView(action("Fit") { persistEditorZoom(drawView.fitPage()) })
+        auto = action("Auto") { drawView.autoZoom(); persistEditorZoom(EditorZoomPolicy.AUTO_SETTING) }
+        root.addView(auto)
+        lock = action("") { setViewportLocked(!drawView.isViewportLocked()) }
+        root.addView(lock); refresh()
+        PopupWindow(root, (196*density).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT, true).also { popup ->
+            viewportPopup = popup; popup.setBackgroundDrawable(ColorDrawable(Color.WHITE)); popup.isOutsideTouchable = true
+            if (backend.ownsInput()) backend.setInputSuspended(true)
+            popup.setOnDismissListener { viewportPopup = null; if (backend.ownsInput() && !anyEditorObscuringOverlayShowing()) backend.setInputSuspended(false) }
+            popup.showAsDropDown(anchor)
         }
     }
 
@@ -2097,7 +2141,7 @@ class MainActivity : Activity() {
      */
     private fun anyEditorObscuringOverlayShowing(): Boolean =
         libraryView.isShowing || settingsView.isShowing || recycleBinView.isShowing ||
-            textBoxEditOverlay.isShowing || caldavTaskSheet.isShowing
+            pagesView.isShowing || textBoxEditOverlay.isShowing || caldavTaskSheet.isShowing
 
     override fun onResume() {
         super.onResume()

@@ -76,6 +76,8 @@ data class Settings(
     val textFontSizeV: Int = 240,
     /** Per-device editor viewport zoom. 0f means auto based on screen size. */
     val editorZoom: Float = 0f,
+    /** Keep capacitive multi-touch from moving the editor viewport on this device. */
+    val viewportLocked: Boolean = false,
 ) {
     companion object {
         /**

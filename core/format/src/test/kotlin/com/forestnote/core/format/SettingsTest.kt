@@ -108,4 +108,12 @@ class SettingsTest {
         val decoded = json.decodeFromString(Settings.serializer(), json.encodeToString(Settings.serializer(), original))
         assertEquals(1.75f, decoded.editorZoom)
     }
+
+    @Test
+    fun viewportLockDefaultsForOlderBlobsAndRoundTrips() {
+        assertEquals(false, Settings().viewportLocked)
+        assertEquals(false, json.decodeFromString(Settings.serializer(), "{}").viewportLocked)
+        val original = Settings(viewportLocked = true)
+        assertEquals(original, json.decodeFromString(Settings.serializer(), json.encodeToString(Settings.serializer(), original)))
+    }
 }

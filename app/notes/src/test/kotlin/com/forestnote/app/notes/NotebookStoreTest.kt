@@ -371,6 +371,30 @@ class NotebookStoreTest {
         store.shutdown()
     }
 
+    @Test
+    fun pagePreviewLoadsAnArbitraryPageWithoutChangingTheActivePage() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() },
+        )
+        val first = awaitResult<String> { cb -> store.listPages { _, active -> cb(active) } }
+        val stroke = horizontalStroke()
+        store.save(stroke)
+        val second = awaitResult<String> { cb -> store.createPage(cb) }
+        awaitResult<List<Stroke>> { cb -> store.switchPage(second, cb) }
+        val pages = awaitResult<List<PageMeta>> { cb -> store.listPages { listed, _ -> cb(listed) } }
+        val preview = awaitResult<PagePreviewSource> { cb ->
+            store.loadPagePreview(pages.first { it.id == first }, Settings(), 12_000, 44L, cb)
+        }
+        assertEquals(first, preview.pageId)
+        assertEquals(listOf(stroke.id), preview.strokes.map { it.id })
+        assertEquals(12_000, preview.notebookLongAxis)
+        assertEquals(44L, preview.notebookModifiedAt)
+        store.shutdown()
+    }
+
     // B1: setPageTemplate persists the per-page override (visible via listPages PageMeta).
     @Test
     fun setPageTemplatePersistsOnThePage() {
