@@ -1,6 +1,7 @@
 package com.forestnote.core.format
 
 import android.content.Context
+import android.util.Log
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import app.cash.sqldelight.db.SqlDriver
@@ -129,6 +130,7 @@ class NotebookRepository private constructor(
         SqliteStorageAdapter(syncHandle, ForestNoteRegistry.registry, clock)
 
     companion object {
+        private const val TAG = "NotebookRepository"
         private const val DEFAULT_FILENAME = "default.forestnote"
         private const val DEFAULT_NOTEBOOK_NAME = "Notebook 1"
 
@@ -300,47 +302,94 @@ class NotebookRepository private constructor(
     private fun migrateLegacySyncToRhizome() {
         val migrated = db.notebookQueries.getSyncState().executeAsOneOrNull()?.rhizome_migrated ?: 0L
         if (migrated != 0L) return
-        db.transaction {
-            // Guarantee the legacy singleton exists so the flag-set below always lands (a never-synced
-            // fresh device has no sync_state row until enableSync); the new columns take their defaults.
-            db.notebookQueries.ensureSyncState()
-            // sync_state singleton → rhizome_sync_state. UPSERT-shaped so it's correct whether or not
-            // the adapter already inserted an id=0 row; last_hlc = max(legacy wall_ts) across both logs.
-            syncHandle.execute(
-                "INSERT OR IGNORE INTO rhizome_sync_state (id, site_id, cursor, next_op_seq, last_hlc) " +
-                    "VALUES (0, NULL, 0, 1, 0)",
-                emptyList(),
-            )
-            syncHandle.execute(
-                """
-                UPDATE rhizome_sync_state SET
-                  site_id = (SELECT site_id FROM sync_state WHERE id = 0),
-                  cursor = COALESCE((SELECT cursor FROM sync_state WHERE id = 0), 0),
-                  next_op_seq = COALESCE((SELECT next_op_seq FROM sync_state WHERE id = 0), 1),
-                  last_hlc = COALESCE(
-                    (SELECT MAX(ts) FROM (
-                       SELECT wall_ts AS ts FROM outbox
-                       UNION ALL
-                       SELECT lww_wall_ts AS ts FROM sync_row_meta)),
-                    0)
-                WHERE id = 0
-                """.trimIndent(),
-                emptyList(),
-            )
-            // outbox → rhizome_outbox (op_seq preserved; wall_ts → op_ts; payload → cols).
-            syncHandle.execute(
-                "INSERT INTO rhizome_outbox (op_seq, tbl, pk, op_ts, cols) " +
-                    "SELECT op_seq, table_name, pk, wall_ts, payload FROM outbox",
-                emptyList(),
-            )
-            // sync_row_meta → rhizome_row_meta (LWW provenance, same triple).
-            syncHandle.execute(
-                "INSERT INTO rhizome_row_meta (tbl, pk, op_ts, op_seq, site_id) " +
-                    "SELECT table_name, pk, lww_wall_ts, lww_op_seq, lww_site_id FROM sync_row_meta",
-                emptyList(),
-            )
-            db.notebookQueries.setRhizomeMigrated()
+        // The legacy oplog tables (`outbox`/`sync_row_meta`) are dropped by a later migration (18.sqm).
+        // A straggler that upgrades straight past the cutover runs THIS copy with the tables already
+        // gone; skip the parts that read them and let RhizomeSync.backfill() re-derive the un-copied
+        // outbox ops + LWW provenance from the live rows (idempotent under server LWW). `sync_state`
+        // itself is retained, so the site_id/cursor/next_op_seq carry-over below is always valid.
+        val legacyPresent = legacySyncTablesPresent()
+        try {
+            db.transaction {
+                // Guarantee the legacy singleton exists so the flag-set below always lands (a never-synced
+                // fresh device has no sync_state row until enableSync); the new columns take their defaults.
+                db.notebookQueries.ensureSyncState()
+                // sync_state singleton → rhizome_sync_state. UPSERT-shaped so it's correct whether or not
+                // the adapter already inserted an id=0 row; last_hlc = max(legacy wall_ts) across both logs
+                // (0 when the legacy logs are gone — backfill re-derives it).
+                syncHandle.execute(
+                    "INSERT OR IGNORE INTO rhizome_sync_state (id, site_id, cursor, next_op_seq, last_hlc) " +
+                        "VALUES (0, NULL, 0, 1, 0)",
+                    emptyList(),
+                )
+                val lastHlcExpr = if (legacyPresent) {
+                    "COALESCE((SELECT MAX(ts) FROM (" +
+                        "SELECT wall_ts AS ts FROM outbox " +
+                        "UNION ALL " +
+                        "SELECT lww_wall_ts AS ts FROM sync_row_meta)), 0)"
+                } else {
+                    "0"
+                }
+                syncHandle.execute(
+                    """
+                    UPDATE rhizome_sync_state SET
+                      site_id = (SELECT site_id FROM sync_state WHERE id = 0),
+                      cursor = COALESCE((SELECT cursor FROM sync_state WHERE id = 0), 0),
+                      next_op_seq = COALESCE((SELECT next_op_seq FROM sync_state WHERE id = 0), 1),
+                      last_hlc = $lastHlcExpr
+                    WHERE id = 0
+                    """.trimIndent(),
+                    emptyList(),
+                )
+                if (legacyPresent) {
+                    // outbox → rhizome_outbox (op_seq preserved; wall_ts → op_ts; payload → cols).
+                    syncHandle.execute(
+                        "INSERT INTO rhizome_outbox (op_seq, tbl, pk, op_ts, cols) " +
+                            "SELECT op_seq, table_name, pk, wall_ts, payload FROM outbox",
+                        emptyList(),
+                    )
+                    // sync_row_meta → rhizome_row_meta (LWW provenance, same triple).
+                    syncHandle.execute(
+                        "INSERT INTO rhizome_row_meta (tbl, pk, op_ts, op_seq, site_id) " +
+                            "SELECT table_name, pk, lww_wall_ts, lww_op_seq, lww_site_id FROM sync_row_meta",
+                        emptyList(),
+                    )
+                }
+                db.notebookQueries.setRhizomeMigrated()
+            }
+        } catch (t: Throwable) {
+            // Never let a legacy-copy failure escape: open() treats any DB error as corruption and
+            // deletes+recreates the store (data loss). The live rows are safe in the app tables and
+            // backfill re-captures them, so set the gate and move on rather than retry every launch.
+            Log.w(TAG, "migrateLegacySyncToRhizome failed; relying on backfill", t)
+            try {
+                db.notebookQueries.setRhizomeMigrated()
+            } catch (t2: Throwable) {
+                Log.w(TAG, "could not set rhizome_migrated gate", t2)
+            }
         }
+    }
+
+    /**
+     * Whether BOTH legacy oplog tables (`outbox`, `sync_row_meta`) still exist. They are dropped by
+     * migration 18.sqm; once gone, [migrateLegacySyncToRhizome] must not SELECT from them. Defensive:
+     * any failure is treated as "absent" so the copy skips rather than throwing.
+     */
+    private fun legacySyncTablesPresent(): Boolean = try {
+        var count = 0L
+        driver.executeQuery(
+            null,
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('outbox','sync_row_meta')",
+            { cursor ->
+                cursor.next()
+                count = cursor.getLong(0) ?: 0L
+                app.cash.sqldelight.db.QueryResult.Value(Unit)
+            },
+            0,
+        )
+        count == 2L
+    } catch (t: Throwable) {
+        Log.w(TAG, "legacy sync-table existence check failed; assuming absent", t)
+        false
     }
 
     /** The global default template/pitch as concrete columns, for seeding new pages. */
