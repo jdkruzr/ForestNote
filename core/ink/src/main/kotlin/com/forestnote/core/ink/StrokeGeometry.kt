@@ -50,8 +50,42 @@ object StrokeGeometry {
         val removedIds = mutableListOf<String>()
         val added = mutableListOf<Stroke>()
 
+        // AABB fast-reject: every point segmentIntersectsEraser tests (a stroke segment's
+        // start/end/midpoint) lies inside the stroke's point bounding box, and it can only be
+        // "erased" if it's within `radius` of an eraser-path point. So a stroke whose bounding box
+        // doesn't intersect the eraser path's bounding box inflated by `radius` cannot have any
+        // erased segment — skip the O(m·k) inner loops for it entirely. This turns the common case
+        // (an erase touching a few of many strokes) into an O(n) box check. Output is unchanged:
+        // the cull only reaches strokes the inner loops would have left untouched anyway.
+        var eMinX = Int.MAX_VALUE; var eMaxX = Int.MIN_VALUE
+        var eMinY = Int.MAX_VALUE; var eMaxY = Int.MIN_VALUE
+        for ((ex, ey) in eraserPath) {
+            if (ex < eMinX) eMinX = ex
+            if (ex > eMaxX) eMaxX = ex
+            if (ey < eMinY) eMinY = ey
+            if (ey > eMaxY) eMaxY = ey
+        }
+        val eLeft = eMinX - radius
+        val eRight = eMaxX + radius
+        val eTop = eMinY - radius
+        val eBottom = eMaxY + radius
+
         for (stroke in strokes) {
             if (stroke.points.size < 2) {
+                surviving.add(stroke)
+                continue
+            }
+
+            // Stroke bounding box vs. the radius-inflated eraser box (see note above).
+            var sMinX = Int.MAX_VALUE; var sMaxX = Int.MIN_VALUE
+            var sMinY = Int.MAX_VALUE; var sMaxY = Int.MIN_VALUE
+            for (p in stroke.points) {
+                if (p.x < sMinX) sMinX = p.x
+                if (p.x > sMaxX) sMaxX = p.x
+                if (p.y < sMinY) sMinY = p.y
+                if (p.y > sMaxY) sMaxY = p.y
+            }
+            if (sMaxX < eLeft || sMinX > eRight || sMaxY < eTop || sMinY > eBottom) {
                 surviving.add(stroke)
                 continue
             }
