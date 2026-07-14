@@ -182,28 +182,11 @@ CREATE TABLE sync_state (
     stored_schema_hash TEXT
 );
 
--- Outbound oplog: one full-row-UPSERT op per local mutation, appended in the SAME
--- transaction as the mutation (Phase 2). op_seq is this device's identity (site_id implicit).
-CREATE TABLE outbox (
-    op_seq     INTEGER PRIMARY KEY NOT NULL,  -- per-device monotonic; with sync_state.site_id = the op identity
-    table_name TEXT NOT NULL,                 -- "folder" | "notebook" | "page" | "stroke"
-    pk         TEXT NOT NULL,                 -- the row's ULID
-    wall_ts    INTEGER NOT NULL,              -- authoring wall clock, ms UTC (LWW key component)
-    payload    TEXT NOT NULL,                 -- JSON of the full cols map (row state)
-    created_at INTEGER NOT NULL
-);
-
--- LWW provenance of the value currently materialized in each synced row: the
--- (wall_ts, op_seq, site_id) of the op that last won for (table_name, pk). The apply
--- path (Phase 4) compares an incoming op's key against this to resolve conflicts.
-CREATE TABLE sync_row_meta (
-    table_name  TEXT NOT NULL,
-    pk          TEXT NOT NULL,
-    lww_wall_ts INTEGER NOT NULL,
-    lww_op_seq  INTEGER NOT NULL,
-    lww_site_id TEXT NOT NULL,
-    PRIMARY KEY (table_name, pk)
-);
+-- NOTE: the legacy oplog tables `outbox` (outbound op log) and `sync_row_meta` (LWW provenance)
+-- were DROPPED in migration 18.sqm (v18→v19). They were dormant after the Phase 8 RhizomeSync
+-- cutover — the adapter owns capture/apply/outbox/provenance in its own rhizome_* tables. The
+-- `sync_state` singleton above is KEPT: it still holds the live LOCAL-ONLY columns
+-- (joined/backfill_version/rhizome_migrated/stored_schema_hash). See migrateLegacySyncToRhizome.
 
 -- Live (non-tombstoned) rows. Every query that should ignore soft-deleted rows reads
 -- from these views instead of the base table, so the deleted_at filter can't be
@@ -484,16 +467,6 @@ UPDATE sync_state SET site_id = ? WHERE id = 0;
 bumpNextOpSeq:
 UPDATE sync_state SET next_op_seq = next_op_seq + 1 WHERE id = 0;
 
-insertOutbox:
-INSERT INTO outbox(op_seq, table_name, pk, wall_ts, payload, created_at) VALUES (?, ?, ?, ?, ?, ?);
-
-upsertRowMeta:
-INSERT INTO sync_row_meta(table_name, pk, lww_wall_ts, lww_op_seq, lww_site_id) VALUES (?, ?, ?, ?, ?)
-ON CONFLICT(table_name, pk) DO UPDATE SET
-    lww_wall_ts = excluded.lww_wall_ts,
-    lww_op_seq = excluded.lww_op_seq,
-    lww_site_id = excluded.lww_site_id;
-
 -- Full synced-column fetch per table (BASE table, includes tombstoned rows) — the source for
 -- building an op's `cols`. Column order is the wire order the codec (SyncWire) expects.
 syncRowNotebook:
@@ -533,23 +506,6 @@ SELECT id FROM text_box;
 -- relayed op is not re-authored). Each upsert overwrites only the synced columns; local-only
 -- columns (modified_at, the recycle-bin batch grouping) are left to their own paths. modified_at
 -- is bumped separately to max(current, wall_ts) so "recently edited" stays multi-device correct.
-
-getRowMeta:
-SELECT lww_wall_ts, lww_op_seq, lww_site_id FROM sync_row_meta WHERE table_name = ? AND pk = ?;
-
--- Pending outbound ops: everything the server has not yet acked (op_seq > acked_op_seq),
--- in authoring order. The engine sends these, then advances the ack water on success.
-pendingOutbox:
-SELECT op_seq, table_name, pk, wall_ts, payload FROM outbox WHERE op_seq > ? ORDER BY op_seq ASC;
-
--- Cheap "is there anything to sync?" probe: count of unacked outbox rows. Drives the
--- dirty-gate on sync-on-close (skip the round trip when there's nothing to push).
-countPendingOpsAbove:
-SELECT count(*) FROM outbox WHERE op_seq > ?;
-
--- Prune acked ops (at/below the contiguous accepted_through high-water).
-pruneOutbox:
-DELETE FROM outbox WHERE op_seq <= ?;
 
 setAckedOpSeq:
 UPDATE sync_state SET acked_op_seq = ? WHERE id = 0;

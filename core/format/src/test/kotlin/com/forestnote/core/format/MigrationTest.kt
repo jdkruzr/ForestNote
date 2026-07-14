@@ -162,6 +162,59 @@ class MigrationTest {
         return exists
     }
 
+    /**
+     * Re-create the legacy sync oplog tables that 18.sqm drops from the current schema. Used to
+     * simulate a pre-drop device (schema v15–v18) whose run-once cutover copy still has legacy data
+     * to move — the copy path stays live for that lineage even though a fresh v19 schema lacks them.
+     * Mirrors the pre-drop DDL from notebook.sq verbatim.
+     */
+    private fun createLegacySyncTables(driver: JdbcSqliteDriver) {
+        driver.execute(
+            null,
+            """
+            CREATE TABLE outbox (
+                op_seq     INTEGER PRIMARY KEY NOT NULL,
+                table_name TEXT NOT NULL,
+                pk         TEXT NOT NULL,
+                wall_ts    INTEGER NOT NULL,
+                payload    TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+            0
+        )
+        driver.execute(
+            null,
+            """
+            CREATE TABLE sync_row_meta (
+                table_name  TEXT NOT NULL,
+                pk          TEXT NOT NULL,
+                lww_wall_ts INTEGER NOT NULL,
+                lww_op_seq  INTEGER NOT NULL,
+                lww_site_id TEXT NOT NULL,
+                PRIMARY KEY (table_name, pk)
+            )
+            """.trimIndent(),
+            0
+        )
+    }
+
+    /** Whether a view exists in the schema. */
+    private fun viewExists(driver: JdbcSqliteDriver, name: String): Boolean {
+        var exists = false
+        driver.executeQuery(
+            null,
+            "SELECT count(*) FROM sqlite_master WHERE type = 'view' AND name = ?",
+            { cursor ->
+                cursor.next()
+                exists = (cursor.getLong(0) ?: 0L) > 0L
+                QueryResult.Value(Unit)
+            },
+            1
+        ) { bindString(0, name) }
+        return exists
+    }
+
     /** Whether an index exists in the schema. */
     private fun indexExists(driver: JdbcSqliteDriver, name: String): Boolean {
         var exists = false
@@ -243,6 +296,34 @@ class MigrationTest {
         val loaded = repo.loadStrokes()
         assertEquals(1, loaded.size, "migrated v3 DB accepts and returns strokes")
         assertEquals(stroke.id, loaded[0].id, "saved ULID round-trips through the v3 DB")
+
+        driver.close()
+    }
+
+    /**
+     * v18 -> v19 drops the dead legacy sync oplog tables (`outbox`, `sync_row_meta`) while leaving
+     * the `sync_state` singleton, the notebook_live/folder_live views, and the live tables intact —
+     * and the DB stays usable through the repository afterward. `7.sqm` creates the two tables on the
+     * way up, so a full v2 -> current chain exercises both their creation and their drop.
+     */
+    @Test
+    fun v18ToV19DropsLegacySyncTablesButKeepsSyncStateAndViews() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        createV2Schema(driver)
+
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = NotebookDatabase.Schema.version)
+
+        assertFalse(tableExists(driver, "outbox"), "outbox is dropped by 18.sqm")
+        assertFalse(tableExists(driver, "sync_row_meta"), "sync_row_meta is dropped by 18.sqm")
+        assertTrue(tableExists(driver, "sync_state"), "sync_state (local-only state) is retained")
+        assertTrue(viewExists(driver, "notebook_live"), "notebook_live view survives the drop migration")
+        assertTrue(viewExists(driver, "folder_live"), "folder_live view survives the drop migration")
+
+        // The migrated DB is usable end-to-end (openExisting reads notebook_live during bootstrap).
+        val repo = NotebookRepository.openExisting(driver)
+        val stroke = Stroke(points = listOf(StrokePoint(1, 2, 3, 4L)))
+        repo.saveStroke(stroke)
+        assertEquals(1, repo.loadStrokes().size, "migrated v19 DB accepts and returns strokes")
 
         driver.close()
     }
@@ -944,6 +1025,9 @@ class MigrationTest {
         // Full current schema. The rhizome_* tables are NOT created here — the adapter makes them
         // when the repository is constructed, exactly as on a real upgraded device.
         NotebookDatabase.Schema.create(driver)
+        // The legacy oplog tables are dropped from the current schema (18.sqm); re-create them to
+        // stand in for a pre-drop (v15–v18) device whose cutover copy still has data to move.
+        createLegacySyncTables(driver)
         // Seed legacy sync state as if this device had been syncing pre-cutover.
         driver.execute(null,
             "INSERT INTO sync_state(id, site_id, next_op_seq, cursor, acked_op_seq, joined, backfill_version) " +
@@ -995,6 +1079,7 @@ class MigrationTest {
     fun cutoverCopyRunsOnlyOnceAndNeverClobbersAdvancedRhizomeState() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         NotebookDatabase.Schema.create(driver)
+        createLegacySyncTables(driver) // stand in for a pre-drop device (see cutoverCopies… above)
         driver.execute(null,
             "INSERT INTO sync_state(id, site_id, next_op_seq, cursor, acked_op_seq) VALUES (0, 'SITE0', 7, 42, 5)", 0)
         driver.execute(null,

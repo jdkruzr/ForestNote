@@ -1,0 +1,16 @@
+-- v18 -> v19: drop the dead legacy sync oplog tables.
+--
+-- After the Phase 8 RhizomeSync cutover the outbound op log (`outbox`) and LWW provenance
+-- (`sync_row_meta`) are dormant — the adapter (SqliteStorageAdapter) owns capture/apply/outbox/
+-- provenance in its own rhizome_* tables (created at adapter construction, NOT declared here). Their
+-- SQLDelight queries had zero Kotlin callers; the run-once cutover copy (migrateLegacySyncToRhizome)
+-- is guarded to skip them once they're gone, and RhizomeSync.backfill() re-derives any un-copied
+-- outbox/provenance from the live rows. Neither table was ever in ForestNoteRegistry, so the wire
+-- schema hash is UNCHANGED (no UltraBridge coordination).
+--
+-- IF EXISTS: a straggler that already lost them (or a fresh install) is a no-op. This drops only two
+-- base tables; it does NOT touch the notebook_live/folder_live views, so no CREATE VIEW is needed.
+-- The `sync_state` singleton is DELIBERATELY kept — it still holds the live LOCAL-ONLY columns
+-- (joined / backfill_version / rhizome_migrated / stored_schema_hash).
+DROP TABLE IF EXISTS outbox;
+DROP TABLE IF EXISTS sync_row_meta;
