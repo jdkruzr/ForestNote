@@ -337,6 +337,40 @@ class OcrStalenessTest {
         repo.close()
     }
 
+    @Test
+    fun `a relayed client-OCR op updates the text but does NOT clear the local stale marker`() {
+        // CONTRACT (documented, deliberate): applySyncOps clears stale_at ONLY for
+        // page_text_from_server (the server OCRs a synced-thus-current page). page_text_from_client
+        // is a peer device's OCR of ITS strokes; under row-LWW it can land while THIS device has a
+        // newer local stroke edit, so the relayed text may already be stale relative to our ink.
+        // We therefore leave stale_at set — the generic adapter upserts only the wire columns and FN
+        // adds NO client-side clear hook. If this ever flips to "clear", it needs a new sibling of
+        // clearPageTextStale and its own decision, not a silent change here. Mirror of the
+        // server-relayed test above; contrast the two to see the intentional asymmetry.
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver) { 1000L }
+        val pageId = repo.currentPageId()
+        seedClientOcr(driver, pageId)
+        repo.saveStroke(aStroke()) // a local mutation flips the client row's stale_at
+        assertTrue(repo.loadPageTextFromClient(pageId)!!.isStale, "precondition: stale after a local edit")
+
+        val def = ForestNoteRegistry.registry.byName.getValue("page_text_from_client")
+        val values = mapOf<String, Any?>(
+            "text" to "peer device OCR", "ocr_at" to 1700_000_002_000L,
+            "model" to "mlkit-digital-ink:en-US", "created_at" to 0L,
+        )
+        val op = Op(
+            "page_text_from_client", pageId, "0000000000000000000000RMT0", 1, 9_000_000_000L,
+            buildJsonObject { for (c in def.columns) put(c.name, WireCodec.encode(c.type, values[c.name])) },
+        )
+        repo.applySyncOps(listOf(op))
+
+        val r = repo.loadPageTextFromClient(pageId)!!
+        assertEquals("peer device OCR", r.text, "the relayed client-OCR text wins under LWW")
+        assertTrue(r.isStale, "a relayed client-OCR op must NOT clear the local stale marker (documented asymmetry)")
+        repo.close()
+    }
+
     private fun readStaleAt(driver: JdbcSqliteDriver, pageId: String): Long? {
         var v: Long? = null
         driver.executeQuery(
