@@ -461,57 +461,12 @@ SELECT * FROM sync_state WHERE id = 0;
 ensureSyncState:
 INSERT OR IGNORE INTO sync_state(id, site_id, next_op_seq, cursor, acked_op_seq) VALUES (0, NULL, 1, 0, 0);
 
-setSyncSiteId:
-UPDATE sync_state SET site_id = ? WHERE id = 0;
-
-bumpNextOpSeq:
-UPDATE sync_state SET next_op_seq = next_op_seq + 1 WHERE id = 0;
-
--- Full synced-column fetch per table (BASE table, includes tombstoned rows) — the source for
--- building an op's `cols`. Column order is the wire order the codec (SyncWire) expects.
-syncRowNotebook:
-SELECT folder_id, name, sort_order, created_at, deleted_at FROM notebook WHERE id = ?;
-
-syncRowFolder:
-SELECT name, sort_order, created_at, deleted_at, parent_folder_id FROM folder WHERE id = ?;
-
-syncRowPage:
-SELECT notebook_id, sort_order, created_at, deleted_at, template, template_pitch_mm FROM page WHERE id = ?;
-
-syncRowStroke:
-SELECT page_id, color, pen_width_min, pen_width_max, points, z, created_at, deleted_at FROM stroke WHERE id = ?;
-
-syncRowTextBox:
-SELECT page_id, x, y, width, height, text, font_name, font_size, color, weight, border_width, z, created_at, deleted_at FROM text_box WHERE id = ?;
-
--- All row ids per table (incl. tombstoned), for the first-enable backfill.
-allFolderIds:
-SELECT id FROM folder;
-
-allNotebookIds:
-SELECT id FROM notebook;
-
-allPageIds:
-SELECT id FROM page;
-
-allStrokeIds:
-SELECT id FROM stroke;
-
-allTextBoxIds:
-SELECT id FROM text_box;
-
--- ── Sync (UltraBridge) — Phase 4 apply ───────────────────────────────────────
--- Applying a RELAYED op (authored by another device): write the decoded wire columns straight
--- into the base table and re-stamp provenance, WITHOUT touching the outbox or next_op_seq (a
--- relayed op is not re-authored). Each upsert overwrites only the synced columns; local-only
--- columns (modified_at, the recycle-bin batch grouping) are left to their own paths. modified_at
--- is bumped separately to max(current, wall_ts) so "recently edited" stays multi-device correct.
-
-setAckedOpSeq:
-UPDATE sync_state SET acked_op_seq = ? WHERE id = 0;
-
-setCursor:
-UPDATE sync_state SET cursor = ? WHERE id = 0;
+-- NOTE: the hand-written capture/apply queries that once lived here (setSyncSiteId, bumpNextOpSeq,
+-- syncRow*, all*Ids, setAckedOpSeq, setCursor, applyUpsert{Notebook,Folder,Page,Stroke,TextBox})
+-- were removed post-cutover — the RhizomeSync adapter (SqliteStorageAdapter) owns capture/apply/
+-- outbox/cursor in its own rhizome_* tables. Only the LOCAL-ONLY sync_state accessors below survive
+-- (joined / backfill_version / rhizome_migrated / stored_schema_hash), plus the FN post-apply hooks
+-- and the still-authored page-text upserts.
 
 setJoined:
 UPDATE sync_state SET joined = ? WHERE id = 0;
@@ -538,73 +493,9 @@ UPDATE notebook SET modified_at = max(modified_at, ?) WHERE id = ?;
 notebookIdOfPage:
 SELECT notebook_id FROM page WHERE id = ?;
 
-applyUpsertNotebook:
-INSERT INTO notebook(id, name, sort_order, created_at, modified_at, folder_id, deleted_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-    name = excluded.name,
-    sort_order = excluded.sort_order,
-    created_at = excluded.created_at,
-    folder_id = excluded.folder_id,
-    deleted_at = excluded.deleted_at;
-
-applyUpsertFolder:
-INSERT INTO folder(id, name, sort_order, created_at, modified_at, parent_folder_id, deleted_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-    name = excluded.name,
-    sort_order = excluded.sort_order,
-    created_at = excluded.created_at,
-    parent_folder_id = excluded.parent_folder_id,
-    deleted_at = excluded.deleted_at;
-
-applyUpsertPage:
-INSERT INTO page(id, notebook_id, sort_order, created_at, template, template_pitch_mm, deleted_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-    notebook_id = excluded.notebook_id,
-    sort_order = excluded.sort_order,
-    created_at = excluded.created_at,
-    template = excluded.template,
-    template_pitch_mm = excluded.template_pitch_mm,
-    deleted_at = excluded.deleted_at;
-
-applyUpsertStroke:
-INSERT INTO stroke(id, page_id, color, pen_width_min, pen_width_max, points, z, created_at, deleted_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-    page_id = excluded.page_id,
-    color = excluded.color,
-    pen_width_min = excluded.pen_width_min,
-    pen_width_max = excluded.pen_width_max,
-    points = excluded.points,
-    z = excluded.z,
-    created_at = excluded.created_at,
-    deleted_at = excluded.deleted_at;
-
--- Apply a RELAYED text-box op: write decoded wire columns (deleted_at may be a tombstone).
-applyUpsertTextBox:
-INSERT INTO text_box(id, page_id, x, y, width, height, text, font_name, font_size, color, weight, border_width, z, created_at, deleted_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-    page_id = excluded.page_id,
-    x = excluded.x,
-    y = excluded.y,
-    width = excluded.width,
-    height = excluded.height,
-    text = excluded.text,
-    font_name = excluded.font_name,
-    font_size = excluded.font_size,
-    color = excluded.color,
-    weight = excluded.weight,
-    border_width = excluded.border_width,
-    z = excluded.z,
-    created_at = excluded.created_at,
-    deleted_at = excluded.deleted_at;
-
--- Apply a RELAYED page-text op. Both tables are server-/future-authored, so there is NO syncRow*
--- / all*Ids capture query for them (the client never builds outbox ops for these — see
--- NotebookRepository.buildCols). deleted_at may be a tombstone.
+-- Apply a RELAYED page-text op. Both tables are server-/future-authored (deleted_at may be a
+-- tombstone). These are the only hand-written relayed-op upserts left; the folder/notebook/page/
+-- stroke/text_box apply now goes through the RhizomeSync adapter.
 -- Every server upsert clears stale_at: a fresh OCR row IS the post-mutation state, so any
 -- prior staleness marker is no longer meaningful. The sync wire shape itself stays at the
 -- v3 5-column form (stale_at is local-only); the bind list below mirrors that.
