@@ -240,7 +240,19 @@ class DrawView @JvmOverloads constructor(
 
     // ===== Lasso selection state (A6) — kept off the fast-ink writing buffer =====
     private val lassoPoints = mutableListOf<LassoSelectionLogic.Point>()
+    // Cache of the currently-selected stroke objects, so drawLassoOverlay (called every frame during
+    // a selection drag) highlights by iterating this short list instead of rescanning ALL of
+    // completedStrokes each frame. Rebuilt whenever the selection changes (the setter below) and after
+    // a move commit (where completedStrokes changes but the ids don't). Caching REFERENCES preserves
+    // the existing safety property: a stroke deleted mid-session is simply absent from the cache —
+    // never an id lookup that could miss.
+    private var selectedStrokes: List<Stroke> = emptyList()
     private var selectedStrokeIds: Set<String> = emptySet()
+        set(value) {
+            field = value
+            selectedStrokes = if (value.isEmpty()) emptyList()
+                else completedStrokes.filter { it.id in value }
+        }
     // Lasso-side text-box selection. Distinct from [selectedBoxId] (per-box text-tool
     // selection) — lasso is plural and ignores the per-box transform overlay path.
     private var selectedTextBoxIds: Set<String> = emptySet()
@@ -1070,6 +1082,10 @@ class DrawView @JvmOverloads constructor(
         val strokeIdSet = strokeIds.toHashSet()
         completedStrokes.removeAll { it.id in strokeIdSet }
         completedStrokes.addAll(movedStrokes)
+        // completedStrokes changed but selectedStrokeIds did not (the selection persists on the moved
+        // strokes), so the setter didn't fire — refresh the cache to the moved objects explicitly.
+        selectedStrokes = if (selectedStrokeIds.isEmpty()) emptyList()
+            else completedStrokes.filter { it.id in selectedStrokeIds }
 
         // Text boxes (parallel batch path landed in Phase 4).
         val boxIds = selectedTextBoxIds.toList()
@@ -1121,10 +1137,8 @@ class DrawView @JvmOverloads constructor(
 
     // ===== Lasso selection actions (A7) =====
 
-    /** The strokes currently selected by the lasso (live lookup against the model). */
-    fun getSelectedStrokes(): List<Stroke> =
-        if (selectedStrokeIds.isEmpty()) emptyList()
-        else completedStrokes.filter { it.id in selectedStrokeIds }
+    /** The strokes currently selected by the lasso (cached; see [selectedStrokes]). */
+    fun getSelectedStrokes(): List<Stroke> = selectedStrokes
 
     /** The text boxes currently selected by the lasso (live lookup against the model). */
     fun getSelectedTextBoxes(): List<TextBox> =
@@ -2044,12 +2058,11 @@ class DrawView @JvmOverloads constructor(
             canvas.save()
             canvas.translate(transform.toScreenSize(dragDx.toFloat()), transform.toScreenSize(dragDy.toFloat()))
         }
-        // Highlight by re-stroking selected ink. Iterate the live list (not the id set)
-        // so ids that no longer exist after a delete/paste are simply skipped — never
-        // look a stroke up by id and risk a miss.
-        if (selectedStrokeIds.isNotEmpty()) {
-            for (stroke in completedStrokes) {
-                if (stroke.id !in selectedStrokeIds) continue
+        // Highlight by re-stroking selected ink. Iterate the cached selection (references to the
+        // selected stroke objects) instead of rescanning ALL completedStrokes every frame; a stroke
+        // deleted mid-session is simply absent from the cache — never an id lookup that could miss.
+        if (selectedStrokes.isNotEmpty()) {
+            for (stroke in selectedStrokes) {
                 val pts = stroke.points
                 if (pts.size < 2) continue
                 selectionPaint.strokeWidth =
