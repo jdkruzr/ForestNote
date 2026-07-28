@@ -35,10 +35,16 @@ jobs:
           repository: jdkruzr/vw_ink_sdk_unofficial
           path: vw_ink_sdk_unofficial
 
+      # PINNED to a tag on purpose. This checkout is `publishToMavenLocal`-ed and ForestNote resolves
+      # `io.rhizome:*` against it, so an unpinned default-branch checkout would mean a signed release
+      # silently bakes in whatever rhizome main happened to be at build time — for the sync core,
+      # that is the one component where "which code shipped?" must stay answerable. Keep this ref in
+      # lockstep with the io.rhizome version in gradle/libs.versions.toml; bump both together.
       - name: Checkout RhizomeSync
         uses: actions/checkout@v4
         with:
           repository: jdkruzr/rhizome
+          ref: v0.8.2
           path: rhizome
 
       # JDK 17: AGP 8.7's baseline; Kotlin 2.0.21 (ForestNote) + 2.2.0 (rhizome) + Gradle 9.1 are all
