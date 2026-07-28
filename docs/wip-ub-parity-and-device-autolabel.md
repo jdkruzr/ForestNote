@@ -107,9 +107,57 @@ coordinated change across three repos.
 headers, or a transport-level hook) that ForestNote populates. Less protocol churn, but a
 "miscellaneous extras" bag is the kind of thing that is easy to add and impossible to remove.
 
-Leaning A: the field is already specified, already implemented server-side, and is genuinely
-generic — "which install am I talking to" is not a notes-app concern. But it's a rhizome API
-decision, so it should be made with the rhizome source open.
+**Go with A.** The field is already specified, already implemented server-side, and is genuinely
+generic — "which install am I talking to" is not a notes-app concern, it is something any
+Rhizome deployment with more than one device will want. Operator confirmed 2026-07-28 that
+generalizability is the point, not an incidental nicety. The exact API shape is still a rhizome
+decision to make with that source open, but the direction is settled: this belongs *in* the
+protocol, not bolted beside it.
+
+### Why the "we just patch `third_party/`" reflex won't work here
+
+This is the trap to avoid, because there is a real precedent pointing the wrong way.
+
+UltraBridge vendors the Go half of Rhizome at `third_party/rhizome-server-go` and compiles that
+copy, never upstream:
+
+```
+// UltraBridge go.mod:51
+replace github.com/jdkruzr/rhizome/server-go => ./third_party/rhizome-server-go
+```
+
+When `notebook.aspect_long_axis` went in (UB `ed76c36`, 2026-06-30), the vendored registry was
+edited in place and **rhizome was deliberately left alone**. That decision was correct and is
+recorded in `docs/wip-notebook-aspect-and-template-layer.md`:
+
+> rhizome's `server-go/registry/forestnote.go` + rhizome-core's Kotlin `ForestNoteRegistry` fixture
+> are a **frozen v3 cutover-guard reference** that UB does not run […] Bumping rhizome would break
+> its own conformance vectors/tests for no benefit. The live contract is FN ⟷ UB only.
+
+**That precedent does not extend to `device_name`, and the difference is not a judgement call.**
+
+| | `aspect_long_axis` | `device_name` |
+|---|---|---|
+| What was changed | a **registry fixture** — a frozen conformance reference | the **envelope** — live wire structure |
+| Who executes the changed code | nobody; UB runs its vendored copy via `replace` | the client, on every sync |
+| Can a UB-side fork deliver it? | yes, and it did | **no** |
+
+The registry is a *description* of a schema, and UB is free to run its own description. The
+envelope is *code that serializes the request*, and on the client that code is
+`io.rhizome.core.SyncRequest` inside `SyncEngine`. ForestNote imports it; there is no in-tree copy
+to patch and no `replace` to point elsewhere. A field that does not exist in that class cannot be
+put on the wire by any amount of editing in ForestNote or in UltraBridge's `third_party/`.
+
+So: **the autolabel is the first piece of work here that genuinely requires a change to the real
+rhizome repo, pushed separately.** Budget for a three-repo change (rhizome → mavenLocal → ForestNote,
+plus `rhizome-server-go` if the Go server is to stay in step) rather than the single-repo vendored
+edits the last two schema changes needed.
+
+One knock-on worth deciding at the same time: if `deviceName` lands in
+`rhizome-server-go/syncsvc.Request`, UltraBridge's own `internal/syncsvc.Request` — which has
+carried the field since 2026-06-10 — stops being a divergence and could eventually be dropped in
+favour of the upstream type. Not required, and not a reason to delay, but it is the moment where
+UB's fork could get smaller instead of larger.
 
 ### What UB guarantees, whichever option wins
 
@@ -171,9 +219,12 @@ Gruis, Charon, Tikhov). What an auto-label buys is everything *before* a human i
 
 ### Rough shape of the work
 
-1. **rhizome** — add the field to `SyncRequest` + serialization; add a `deviceName` parameter to
-   `SyncEngine` (nullable, omitted when null). Mirror it in `rhizome-server-go/syncsvc` if going
-   with Option A. Publish to mavenLocal.
+1. **rhizome** (`~/rhizome` on the laptop; **not checked out on the UB box**) — add the field to
+   `SyncRequest` + serialization; add a `deviceName` parameter to `SyncEngine` (nullable, omitted
+   when null). Mirror it in `rhizome-server-go/syncsvc`. Publish to mavenLocal, **and push the
+   repo** — unlike the last two schema changes, this one cannot live as a vendored edit in
+   UltraBridge's `third_party/` (see "Why the reflex won't work here"). ForestNote's
+   `libs.versions.toml` pins `io.rhizome:*:0.8.2`, so a version bump is part of this step.
 2. **ForestNote** — resolve the device string in `app:notes`, thread it through the two
    `SyncEngine(...)` call sites in `SyncController.kt` (lines 76 and 108 — `runSession` and
    `enableAndJoin`; **both**, or a fresh install's very first handshake goes unnamed, which is
