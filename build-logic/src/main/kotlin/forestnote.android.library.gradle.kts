@@ -23,6 +23,14 @@ android {
     }
 }
 
+// Pin the COMPILER JDK (the settings above are bytecode TARGETS, not a JDK selector). Without this
+// the build silently compiles on whatever JVM runs Gradle — locally JDK 25, in CI JDK 17 — so the
+// two environments differed by accident rather than by declaration. Keep this in lockstep with the
+// java-version in .github/workflows/release.yml, which is what actually builds signed releases.
+kotlin {
+    jvmToolchain(21)
+}
+
 val libs = extensions.getByType<VersionCatalogsExtension>().named("libs")
 
 dependencies {

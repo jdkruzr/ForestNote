@@ -47,13 +47,16 @@ jobs:
           ref: v0.8.2
           path: rhizome
 
-      # JDK 17: AGP 8.7's baseline; Kotlin 2.0.21 (ForestNote) + 2.2.0 (rhizome) + Gradle 9.1 are all
-      # happy on it (sidesteps the local JDK-25 quirk — reproducible CI toolchain).
-      - name: Set up JDK 17
+      # JDK 21: supported by AGP 8.7, Gradle 9.1, and Kotlin 2.0.21 (ForestNote) + 2.2.0 (rhizome).
+      # This MUST match `jvmToolchain(...)` in build-logic's convention plugins — that pin is what
+      # makes local and CI compile on the same JDK instead of differing by accident (dev boxes here
+      # default to JDK 25). Was 17; moved to 21 because it is the newest JDK all four tools support
+      # that is already present on the dev box, so no toolchain auto-provisioning is needed.
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
           cache: gradle
 
       - name: Set up Android SDK
