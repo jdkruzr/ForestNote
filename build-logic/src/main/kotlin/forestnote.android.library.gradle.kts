@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
@@ -17,18 +19,20 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-
-    kotlinOptions {
-        jvmTarget = "11"
-    }
 }
 
-// Pin the COMPILER JDK (the settings above are bytecode TARGETS, not a JDK selector). Without this
-// the build silently compiles on whatever JVM runs Gradle — locally JDK 25, in CI JDK 17 — so the
-// two environments differed by accident rather than by declaration. Keep this in lockstep with the
-// java-version in .github/workflows/release.yml, which is what actually builds signed releases.
 kotlin {
+    // Pin the COMPILER JDK. jvmTarget below and android.compileOptions above are bytecode TARGETS,
+    // not a JDK selector — without this the build silently compiles on whatever JVM runs Gradle
+    // (locally JDK 25, in CI JDK 17), so the two environments differed by accident rather than by
+    // declaration. Keep in lockstep with the java-version in .github/workflows/release.yml, which
+    // is what actually builds signed releases.
     jvmToolchain(21)
+
+    compilerOptions {
+        // Pairs with android.compileOptions above — change the two together.
+        jvmTarget.set(JvmTarget.JVM_11)
+    }
 }
 
 val libs = extensions.getByType<VersionCatalogsExtension>().named("libs")
