@@ -14,18 +14,22 @@ import io.rhizome.core.TableDef
  * truth that drives the wire codec, capture, apply, backfill, and the schema hash — replacing the
  * hand-rolled [SyncWire]/[SyncMerge] declarations.
  *
- * **Live-cutover invariant:** [Registry.schemaHash] MUST equal ForestNote's production v3 hash
- * `724411eb…` (guarded by `ForestNoteRegistryHashTest`, and matched on the server by UltraBridge's
- * `registry.ForestNote()`). Only column NAMES affect the hash; types drive the wire codec
+ * **Live-cutover invariant:** [Registry.schemaHash] MUST equal ForestNote's production hash —
+ * currently **v4** `74e6b5d7…`, which added `notebook.aspect_long_axis` (guarded by
+ * `ForestNoteRegistryHashTest`, and matched on the server by UltraBridge's `registry.ForestNote()`).
+ * The prior v3 `724411eb…` was retired from UltraBridge's `AcceptsSchemaHash` grace window with UB
+ * v1.4.0. Only column NAMES affect the hash; types drive the wire codec
  * (`ColorInt` = signed-ARGB↔unsigned-int64, `Blob` = base64, `Timestamp` = int64 ms / HLC).
  *
  * LOCAL-ONLY storage that must NEVER reach the wire is deliberately absent here, exactly as it was
  * absent from `SyncMerge.knownCols`: `page_text_from_server.stale_at` and the entire `caldav_outbox`
  * table. Adding either to this registry would change the hash — don't.
  *
- * `page_text_from_server` is `serverAuthoredOnly` (the UB server OCRs a page and authors the text;
- * the client decodes/applies but never captures it — a structural single-writer guarantee).
- * `page_text_from_client` is the reserved client-authored sibling: in the hash, never captured yet.
+ * The two OCR tables are a deliberate pair, one per writer, so neither side can clobber the other's
+ * recognition of the same page: `page_text_from_server` is `serverAuthoredOnly` (UltraBridge OCRs a
+ * page and authors the text; the client decodes/applies but never captures it — a structural
+ * single-writer guarantee), while `page_text_from_client` carries on-device recognition the other
+ * way and IS captured, via [NotebookRepository.upsertPageTextFromClient].
  */
 object ForestNoteRegistry {
 

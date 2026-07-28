@@ -41,18 +41,23 @@ keeps the firmware's raw-draw rect on the page, and `DrawView` draws a page-edge
 margin begins (`cf6ee63`). That UB doc should be amended to closed. **No work owed** — this is a
 bookkeeping fix on the UltraBridge side.
 
-### 2. Two stale comments in `ForestNoteRegistry.kt`
+### 2. Two stale comments in `ForestNoteRegistry.kt` — FIXED in this commit
 
-Both are KDoc-only, no behaviour change, but they will actively mislead the next reader:
+Both were KDoc-only, no behaviour change, but they contradicted the code they documented:
 
-- **Line 17–18** — "`Registry.schemaHash` MUST equal ForestNote's production **v3** hash
-  `724411eb…`". The registry now contains `aspect_long_axis`, so it hashes to **v4**
-  `74e6b5d7…`, which is exactly what `ForestNoteRegistryHashTest` asserts. The invariant is
-  right; the version named in it is a release out of date.
-- **Line 28** — "`page_text_from_client` is the reserved client-authored sibling: in the hash,
-  **never captured yet**". It *is* captured — `NotebookRepository.kt:1100` enqueues the op, and
-  UB's v1.4.0 release verification recorded a live device pushing **7 `page_text_from_client`
-  ops** in a single session.
+- The **live-cutover invariant** named ForestNote's production hash as **v3** `724411eb…`. The
+  registry contains `aspect_long_axis`, so it hashes to **v4** `74e6b5d7…` — exactly what
+  `ForestNoteRegistryHashTest` asserts. The invariant was right; the version named in it was a
+  release out of date. Now names v4 and records that v3 left UB's `AcceptsSchemaHash` grace
+  window with UB v1.4.0.
+- **`page_text_from_client`** was described as "the reserved client-authored sibling: in the hash,
+  never captured yet". It *is* captured, by `NotebookRepository.upsertPageTextFromClient`, and
+  UB's v1.4.0 release verification recorded a live device pushing **7 `page_text_from_client` ops**
+  in one session. Reworded to describe the two OCR tables as what they now are: a
+  one-table-per-writer pair, so neither side can clobber the other's recognition of a page.
+
+Not compiled — written on the UltraBridge box, which has no Android SDK and no rhizome in
+mavenLocal. Comment-only, so the risk is a dokka link at worst; still worth a build on the laptop.
 
 ---
 
