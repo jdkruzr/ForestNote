@@ -10,7 +10,7 @@ import kotlin.test.assertEquals
  * and the Go server's `registry.ForestNote()`; all three MUST agree.
  *
  * v4 adds `notebook.aspect_long_axis` (per-notebook page aspect ratio). The prior v3
- * (`724411eb…`) stays in UltraBridge's `AcceptsSchemaHash` grace window for one release.
+ * (`724411eb…`) was RETIRED from UltraBridge's `AcceptsSchemaHash` grace window with UB v1.4.0.
  */
 class ForestNoteRegistryHashTest {
 

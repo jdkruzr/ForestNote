@@ -295,7 +295,7 @@ class OcrStalenessTest {
     @Test
     fun `stale_at is NOT in the sync wire knownCols for page_text_from_server`() {
         // If this fires, someone bumped the wire schema by accident — review ForestNoteRegistry
-        // (it must reproduce v3 724411eb…) and the grace window with UB before re-running.
+        // (it must reproduce v4 74e6b5d7…) and the grace window with UB before re-running.
         val cols = ForestNoteRegistry.registry.knownCols["page_text_from_server"]
         assertNotNull(cols)
         assertFalse("stale_at" in cols, "stale_at must stay local-only; was found in wire knownCols")
