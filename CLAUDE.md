@@ -1,8 +1,8 @@
 # ForestNote
 
-Last verified: 2026-07-28 (wire hash v4 correction)
+Last verified: 2026-08-23 (Viwoods direct ink / 1.8)
 
-E-ink note-taking app for low-latency stylus handwriting. Two firmware-latency ink paths behind one `InkBackend` seam: the **Viwoods AiPaper Mini** via reverse-engineered fast-ink APIs (display accelerator — MotionEvents → fast overlay), and **Boox/Onyx** devices via the published Onyx Pen SDK (`TouchHelper`/`RawInputCallback` — the backend OWNS input, firmware renders live ink). A generic `View.invalidate()` fallback covers any other Android device. Backend is auto-detected at launch; stored stroke DATA is identical across platforms (only the on-panel raster differs).
+E-ink note-taking app for low-latency stylus handwriting. Two firmware-latency ink paths sit behind one `InkBackend` seam: the **Viwoods AiPaper Mini** via reverse-engineered ENote callbacks (direct digitizer input on ENote's worker thread → app bitmap → partial panel refresh), and **Boox/Onyx** devices via the published Onyx Pen SDK (`TouchHelper`/`RawInputCallback` — firmware renders live ink). A generic `View.invalidate()` fallback covers any other Android device. Backend is auto-detected at launch; stored stroke DATA is identical across platforms (only the live on-panel transport differs).
 
 ## Tech Stack
 - Language: Kotlin (Android)
@@ -28,6 +28,7 @@ E-ink note-taking app for low-latency stylus handwriting. Two firmware-latency i
 - During active dev sessions, assume it is acceptable to build and install ForestNote on the Viwoods tablet unless the user says otherwise.
 - Current device access is SSH/Termux, not ADB shell: `ssh -p 8022 <device-ip>` and `scp -P 8022 ... <device-ip>:/sdcard/Download/...`. The device IP varies per deployment (whoever stands up the tablet), so it is not pinned here.
 - The device has Magisk root through Termux `su`; do not use blanket SELinux permissive mode (`setenforce 0`) because it breaks WritingSurface until reboot.
+- **Root is not a ForestNote runtime dependency.** The direct ENote listener works from ForestNote's normal `untrusted_app_30` process. Root is only a development convenience for ROM/APK inspection and for the restricted package-session install route below.
 - **Viwoods package-session backdoor:** ADB/Termux package-manager commands are restricted, but root package sessions work:
   `su -c "cmd package install-create -r -d"`, then
   `su -c "cmd package install-write SESSION base /sdcard/Download/forestnote-debug.apk && cmd package install-commit SESSION"`.

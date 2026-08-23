@@ -30,6 +30,7 @@ import com.forestnote.core.ink.PageTransform
 import com.forestnote.core.ink.PenParams
 import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.Tool
+import com.forestnote.core.ink.ViwoodsBackend
 import com.forestnote.core.ink.ZBand
 import io.rhizome.core.SyncStatus
 import com.forestnote.app.notes.caldav.CalDavOutboxDrainer
@@ -309,6 +310,15 @@ class MainActivity : Activity() {
             onEditorLaidOut = { _, _ -> schedulePendingNotebookAspectCapture() }
         }
 
+        // Viwoods' direct ENote callback needs no SurfaceView, but it feeds the same DrawView sink
+        // as the Boox input-owning path. Attaching unconditionally lets the persisted experimental
+        // setting enable/disable it after the asynchronous Settings load.
+        if (backend is ViwoodsBackend) {
+            backend.setTransform(pageTransform)
+            backend.updatePen(PenParams.of(drawView.activePenVariant, drawView.activePenWidthLevel))
+            backend.attachInput(drawView, drawView.inputStrokeSink(), emptyList())
+        }
+
         // Input-owning backend (Boox/Onyx): the firmware sources stylus input via TouchHelper and
         // renders live ink itself, so we host a sibling SurfaceView over the canvas for it to bind
         // to and to reconcile the page bitmap onto. DrawView stays the bitmap/model owner and goes
@@ -316,7 +326,7 @@ class MainActivity : Activity() {
         // surface spans only the canvas (inside canvas_container, below the navbar), so the pen can
         // still tap toolbar cells through normal dispatch — no exclude rect needed. No-op on
         // Viwoods/Generic (ownsInput() == false).
-        if (backend.ownsInput()) {
+        if (backend.ownsPageDisplay()) {
             // CANVAS-ONLY surface topology (Onyx). The firmware owns panel refresh only WITHIN the
             // SurfaceView bound to TouchHelper, so we bind it to a surface covering ONLY the canvas
             // (added behind DrawView inside canvas_container, which already sits below the navbar). The
@@ -411,6 +421,8 @@ class MainActivity : Activity() {
         // it when it actually becomes visible. The visibility cover above handles the empty-editor-
         // shell flash; this block handles the editor-content (strokes) flash.
         store.loadSettings { settings ->
+            backend.setVendorNativePreviewEnabled(settings.viwoodsNativePreview)
+            backend.setInputSuspended(anyEditorObscuringOverlayShowing())
             // A10: seed per-variant pen widths from settings, then prime the canvas with the
             // active variant's width. (toolBar is assigned below in onCreate; this async
             // callback runs after onCreate returns, so it's set by the time we get here.)
@@ -490,7 +502,12 @@ class MainActivity : Activity() {
         // master capture AND the render passthrough — so the popup paints + takes touches through the
         // normal pipeline and dismisses on outside-touch. (Was disabled when setInputSuspended only
         // dropped the master, leaving render passthrough re-inking + holding the panel firmware-composited.)
-        toolBar = ToolBar(toolBarRoot, isEInk, settingsPopupsEnabled = true, firmwareOwnsInput = backend.ownsInput()) { tool ->
+        toolBar = ToolBar(
+            toolBarRoot,
+            isEInk,
+            settingsPopupsEnabled = true,
+            firmwareOwnsInput = { backend.ownsInput() },
+        ) { tool ->
             // A pen-VARIANT pick re-selects the already-active Pen tool (ToolSelectionLogic
             // .selectPenVariant → selectTool(Pen)), so this fires even when nothing changed; gate the
             // expensive Boox reconcile on an ACTUAL tool change so a variant pick from the open popup
@@ -509,7 +526,7 @@ class MainActivity : Activity() {
             // A panel reconcile (the firmware-render off→on toggle) blinks the layer and repaints the
             // whole panel incl. the navbar — the only mechanism that works (it's what notable does too).
             // Only needed on a real tool change. No-op on Viwoods/Generic.
-            if (backend.ownsInput() && toolChanged) drawView.refreshPanelForUi()
+            if (backend.ownsPageDisplay() && toolChanged) drawView.refreshPanelForUi()
         }
         // Infra kept for Phase-3 over-canvas UI (dialogs/chooser): suspend raw drawing while shown so
         // it renders + takes touches (the notable approach). No popups open on Boox today, so this is
@@ -688,7 +705,7 @@ class MainActivity : Activity() {
             return
         }
         val host = findViewById<ViewGroup>(android.R.id.content)
-        if (backend.ownsInput()) backend.setInputSuspended(true)
+        if (backend.usesFirmwareInk()) backend.setInputSuspended(true)
         textBoxEditOverlay.show(
             host = host,
             box = box,
@@ -701,14 +718,14 @@ class MainActivity : Activity() {
                 onCommit = { updated, text ->
                     drawView.commitOverlayBox(updated, text)
                     textBoxEditOverlay.hide()
-                    if (backend.ownsInput()) backend.setInputSuspended(false)
+                    if (backend.usesFirmwareInk()) backend.setInputSuspended(false)
                     refreshEditorTransition()        // single clean refresh post-dismiss
                     onCommitted?.invoke()
                 },
                 onCancel = { boxId, wasNew ->
                     if (wasNew) drawView.discardPendingNewBox(boxId)
                     textBoxEditOverlay.hide()
-                    if (backend.ownsInput()) backend.setInputSuspended(false)
+                    if (backend.usesFirmwareInk()) backend.setInputSuspended(false)
                     refreshEditorTransition()
                 },
             ),
@@ -896,7 +913,7 @@ class MainActivity : Activity() {
                 nativeUrl = if (haveIds) ForestNoteLink.native(nbId, pgId) else null,
             )
             val webUrl = if (haveIds) ForestNoteLink.web(settings.syncServerUrl, nbId, pgId) else null
-            if (backend.ownsInput()) backend.setInputSuspended(true)
+            if (backend.usesFirmwareInk()) backend.setInputSuspended(true)
             caldavTaskSheet.show(
                 host = host,
                 prefillSummary = prefill,
@@ -915,7 +932,7 @@ class MainActivity : Activity() {
                             // lasso polygon + selection in one chokepoint. (Cancel leaves the
                             // selection intact so the user can retry.)
                             toolBar.selectTool(Tool.Pen)
-                            if (backend.ownsInput()) backend.setInputSuspended(false)
+                            if (backend.usesFirmwareInk()) backend.setInputSuspended(false)
                             refreshEditorTransition(post = true)
                             fileLogger.log("CalDAV", "enqueue uid=${input.uid} sum=\"${input.summary.take(60)}\" due=${input.due}")
                             // Persist first so a crash mid-PUT still keeps the task. Then race the
@@ -933,7 +950,7 @@ class MainActivity : Activity() {
                             }
                         },
                         onCancel = {
-                            if (backend.ownsInput()) backend.setInputSuspended(false)
+                            if (backend.usesFirmwareInk()) backend.setInputSuspended(false)
                             refreshEditorTransition(post = true)
                             fileLogger.log("CalDAV", "task creation cancelled")
                         },
@@ -1438,9 +1455,10 @@ class MainActivity : Activity() {
         // render suppresses normal EPD posting and the overlay opens INVISIBLY on top of the editor —
         // eating all touches while only firmware drawing works ("frozen except drawing"). Mirrors the
         // toolbar-popup suspend path. closeLibrary() resumes. No-op on Viwoods/Generic.
-        if (backend.ownsInput()) {
+        if (backend.usesFirmwareInk()) {
             backend.setInputSuspended(true)
-        } else {
+        }
+        if (!backend.ownsPageDisplay()) {
             // Viwoods: the writing overlay composites ink ABOVE the View pipeline, so clear it now
             // (DrawView still topmost) or the note's ink ghosts over the Library. Model preserved.
             drawView.blankPanelForFullScreenUi()
@@ -1511,7 +1529,7 @@ class MainActivity : Activity() {
     private fun refreshEditorTransition(post: Boolean = false) {
         if (!isEInk) return
         val refresh = {
-            if (backend.ownsInput()) backend.cleanNextReconcile()
+            if (backend.ownsPageDisplay()) backend.cleanNextReconcile()
             drawView.gcRefresh()
         }
         if (post) drawView.post(refresh) else refresh()
@@ -1587,7 +1605,7 @@ class MainActivity : Activity() {
         // MotionEvent swallowed) while Lasso (ordinary dispatch) still worked. Idempotent; no-op on
         // Viwoods/Generic. applyFirmwareEnableState then gates on the active tool, so a non-Pen tool
         // stays firmware-off regardless.
-        if (backend.ownsInput()) backend.setInputSuspended(false)
+        if (backend.usesFirmwareInk()) backend.setInputSuspended(false)
     }
 
     /**
@@ -1675,16 +1693,29 @@ class MainActivity : Activity() {
     /** Show the full-screen Settings overlay over the editor (B2). */
     private fun openSettings() {
         if (settingsView.isShowing) return
-        if (backend.ownsInput()) backend.setInputSuspended(true)
+        if (backend.usesFirmwareInk()) backend.setInputSuspended(true)
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
-        settingsView.show(content, store, modelManager, secureCreds, caldavDrainer) { closeSettings() }
+        settingsView.show(
+            content,
+            store,
+            modelManager,
+            secureCreds,
+            caldavDrainer,
+            showViwoodsNativePreview = backend is ViwoodsBackend,
+            onViwoodsNativePreviewChanged = { enabled ->
+                // The Settings overlay is still covering the editor. Keep preview disarmed until
+                // closeSettings() reveals the page, even when the user just opted in.
+                backend.setInputSuspended(true)
+                backend.setVendorNativePreviewEnabled(enabled)
+            },
+        ) { closeSettings() }
         refreshUiTransition()
     }
 
     /** Dismiss the Settings overlay and return to the editor. */
     private fun closeSettings() {
         settingsView.hide()
-        if (backend.ownsInput() && !libraryView.isShowing && !recycleBinView.isShowing) {
+        if (backend.usesFirmwareInk() && !libraryView.isShowing && !recycleBinView.isShowing) {
             backend.setInputSuspended(false)
         }
         refreshVisibleTransition()
@@ -1793,7 +1824,7 @@ class MainActivity : Activity() {
         // CalDAV task sheet sits above the editor too; Back cancels without sending.
         if (caldavTaskSheet.isShowing) {
             caldavTaskSheet.requestCancel()
-            if (backend.ownsInput()) backend.setInputSuspended(false)
+            if (backend.usesFirmwareInk()) backend.setInputSuspended(false)
             refreshEditorTransition(post = true)
             return
         }
@@ -1986,7 +2017,8 @@ class MainActivity : Activity() {
     /** Pages now has a dedicated full-screen, virtualized browser. */
     private fun showPagePicker() {
         if (pagesView.isShowing) return
-        if (backend.ownsInput()) backend.setInputSuspended(true) else drawView.blankPanelForFullScreenUi()
+        if (backend.usesFirmwareInk()) backend.setInputSuspended(true)
+        if (!backend.ownsPageDisplay()) drawView.blankPanelForFullScreenUi()
         val content = findViewById<ViewGroup>(android.R.id.content)
         pagesBrowserNeedsReload = false
         pagesView.show(content, store, drawView.isViewportLocked(), PagesView.Callbacks(
@@ -2003,7 +2035,7 @@ class MainActivity : Activity() {
         if (!pagesView.isShowing) return
         pagesView.hide()
         pagesBrowserNeedsReload = false
-        if (backend.ownsInput()) backend.setInputSuspended(false)
+        if (backend.usesFirmwareInk()) backend.setInputSuspended(false)
         if (reloadActive) reloadCurrentPage() else refreshEditorTransition(post = true)
     }
 
@@ -2050,8 +2082,8 @@ class MainActivity : Activity() {
         root.addView(lock); refresh()
         PopupWindow(root, (196*density).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT, true).also { popup ->
             viewportPopup = popup; popup.setBackgroundDrawable(ColorDrawable(Color.WHITE)); popup.isOutsideTouchable = true
-            if (backend.ownsInput()) backend.setInputSuspended(true)
-            popup.setOnDismissListener { viewportPopup = null; if (backend.ownsInput() && !anyEditorObscuringOverlayShowing()) backend.setInputSuspended(false) }
+            if (backend.usesFirmwareInk()) backend.setInputSuspended(true)
+            popup.setOnDismissListener { viewportPopup = null; if (backend.usesFirmwareInk() && !anyEditorObscuringOverlayShowing()) backend.setInputSuspended(false) }
             popup.showAsDropDown(anchor)
         }
     }
@@ -2113,7 +2145,7 @@ class MainActivity : Activity() {
         // is still up. Content overlays (Library/Settings/RecycleBin/TextEdit/CalDav sheet) DON'T steal
         // window focus, so they aren't caught here; they manage their own suspend (openLibrary etc.) and
         // resuming under them would re-wedge. Returning from a dialog-over-Library thus stays suspended.
-        if (backend.ownsInput()) {
+        if (backend.usesFirmwareInk()) {
             if (!hasFocus) {
                 backend.setInputSuspended(true)
             } else if (regained && !anyEditorObscuringOverlayShowing()) {
@@ -2132,7 +2164,7 @@ class MainActivity : Activity() {
         // `regained` flips every time one of OUR OWN popups/dialogs closes — so simple interactions
         // turn into "darken + have to tap twice." Boox reconciles at real content changes instead; the
         // Viwoods-era return-from-system-overlay ghosting cleanup isn't needed here.
-        if (!regained || !isEInk || backend.ownsInput()) return
+        if (!regained || !isEInk || backend.ownsPageDisplay()) return
         // [[viwoods-writing-overlay]]: gcRefresh composites ABOVE the View pipeline, so only run it
         // when the editor is the topmost View — bail if any of our overlays / dialogs / inline edit
         // are up. Stray AlertDialogs are covered implicitly: an open AlertDialog holds window focus

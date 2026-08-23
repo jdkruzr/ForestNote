@@ -28,7 +28,7 @@ class ToolBar(
     private val root: View,
     private val isEInk: Boolean,
     private val settingsPopupsEnabled: Boolean = true,
-    private val firmwareOwnsInput: Boolean = false,
+    private val firmwareOwnsInput: () -> Boolean = { false },
     private val onToolSelected: (Tool) -> Unit
 ) {
     /**
@@ -547,6 +547,9 @@ class ToolBar(
         openPopup?.dismiss()
         val ctx = anchor.context
         val density = ctx.resources.displayMetrics.density
+        // Viwoods enables its direct callback only after Settings loads, so input ownership is
+        // deliberately queried when the popup opens rather than frozen during Activity startup.
+        val firmwareOwnsInputNow = firmwareOwnsInput()
 
         val container = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -562,7 +565,7 @@ class ToolBar(
             // Non-focusable in firmware-coexist mode: a focusable popup steals window focus and the
             // firmware then can't deliver the pen-down we rely on to draw-to-dismiss. Non-focusable
             // still receives taps on its own buttons (which sit in the host's firmware-exclude rect).
-            !firmwareOwnsInput // focusable: tap-outside dismisses (suspend-mode popups)
+            !firmwareOwnsInputNow // focusable: tap-outside dismisses (suspend-mode popups)
         )
         popup.isOutsideTouchable = true
         if (isEInk) popup.elevation = 0f
@@ -618,7 +621,7 @@ class ToolBar(
 
         // On an input-owning backend the pen popup coexists with live firmware (draw-to-dismiss);
         // elsewhere it uses the suspend-mode path.
-        showTrackedPopup(popup, anchor, coexist = firmwareOwnsInput)
+        showTrackedPopup(popup, anchor, coexist = firmwareOwnsInputNow)
     }
 
     /**

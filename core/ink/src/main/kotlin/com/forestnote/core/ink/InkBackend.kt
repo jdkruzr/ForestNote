@@ -27,6 +27,24 @@ interface InkBackend {
      */
     fun ownsInput(): Boolean = false
 
+    /**
+     * True only when the backend's own surface is the sole renderer of the retained page bitmap.
+     * Boox needs this because DrawView sits transparently over its sibling SurfaceView. Viwoods may
+     * own raw stylus input, but its WritingSurface is transient: DrawView must keep painting the
+     * ordinary retained frame underneath it.
+     */
+    fun ownsPageDisplay(): Boolean = false
+
+    /**
+     * True when firmware is drawing any live stylus preview that must be disabled while the editor
+     * is covered. Input-owning backends imply this; Viwoods overrides it for its independent MIPI
+     * preview while continuing to ingest ordinary Android MotionEvents.
+     */
+    fun usesFirmwareInk(): Boolean = ownsInput()
+
+    /** Enable an optional vendor-native live preview path, when the backend exposes one. */
+    fun setVendorNativePreviewEnabled(enabled: Boolean) {}
+
     /** One-time setup. Called once at app start. */
     fun init(context: Context): Boolean
 

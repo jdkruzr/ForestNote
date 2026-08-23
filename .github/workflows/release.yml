@@ -33,13 +33,13 @@ jobs:
       # dependencySubstitution in settings.gradle.kts compile this checkout straight into the APK —
       # so an unpinned default-branch checkout would mean the shipped ink code is whatever main was
       # at build time. Note there is no version to cross-check it against: core/ink declares
-      # io.github.vwunofficial:viwoods-ink:0.1.0-SNAPSHOT, but substitution means that string is
+      # io.github.vwunofficial:viwoods-ink:0.2.0, but substitution means that string is
       # never resolved, so this ref is the ONLY record of which SDK source a release was built from.
       - name: Checkout Viwoods ink SDK (composite build sibling)
         uses: actions/checkout@v4
         with:
           repository: jdkruzr/vw_ink_sdk_unofficial
-          ref: v0.1.0
+          ref: v0.2.0
           path: vw_ink_sdk_unofficial
 
       # PINNED to a tag on purpose. This checkout is `publishToMavenLocal`-ed and ForestNote resolves

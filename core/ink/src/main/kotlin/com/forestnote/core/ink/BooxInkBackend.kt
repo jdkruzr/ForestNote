@@ -194,6 +194,8 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
 
     override fun ownsInput(): Boolean = true
 
+    override fun ownsPageDisplay(): Boolean = true
+
     override fun init(context: Context): Boolean {
         // MANDATORY on minSdk 30 / Android 11+: the SDK reflects hidden Android APIs blocked from
         // API 28+, so exemptions must be installed before any SDK call. RxManager.initAppContext

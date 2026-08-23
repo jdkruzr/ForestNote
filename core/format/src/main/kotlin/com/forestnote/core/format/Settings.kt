@@ -78,6 +78,12 @@ data class Settings(
     val editorZoom: Float = 0f,
     /** Keep capacitive multi-touch from moving the editor viewport on this device. */
     val viewportLocked: Boolean = false,
+    /**
+     * Use Viwoods' direct ENote callback-thread preview. Enabled by default after on-device
+     * validation showed WiNote-class responsiveness; users can disable it to restore the older
+     * MotionEvent plus WritingSurface renderer.
+     */
+    val viwoodsNativePreview: Boolean = true,
 ) {
     companion object {
         /**

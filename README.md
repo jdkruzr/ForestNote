@@ -5,7 +5,7 @@ inking on the [Viwoods AiPaper Mini](https://www.viwoods.com/) and Boox/Onyx dev
 so the ink keeps up with your pen instead of lagging a few strokes behind. On any other
 Android device it falls back to a standard canvas.
 
-> **Status:** version 1.0, validated on-device. Writing, organizing, handwriting
+> **Status:** version 1.8, validated on-device. Writing, organizing, handwriting
 > recognition, calendar export, and cross-device sync all work today. Importing images
 > and PDFs is the main thing still missing.
 
@@ -34,7 +34,7 @@ Step-by-step instructions for each of these live in the **[user guide](docs/user
 
 | Device | How ink is drawn |
 |--------|------------------|
-| Viwoods AiPaper Mini | Reverse-engineered fast-ink path (the firmware display accelerator) |
+| Viwoods AiPaper Mini | Direct ENote digitizer callbacks + firmware partial refresh |
 | Boox / Onyx | Onyx Pen SDK — the firmware renders live ink directly to the panel |
 | Any other Android (SDK 30+) | Standard canvas redraw — works, but without the firmware speed-up |
 
@@ -43,7 +43,17 @@ identical, so a notebook written on one device opens unchanged on another.
 
 ## Installing
 
-ForestNote ships as a sideloaded APK; there's no Play Store listing. Build it from source:
+ForestNote ships as a sideloaded APK; there's no Play Store listing. Download the current APK
+from [GitHub Releases](https://github.com/jdkruzr/ForestNote/releases/latest), copy it to the
+tablet, and open it to install.
+
+On Viwoods, the fastest ink mode is enabled by default and **does not require root**. It runs from
+the same ordinary sideloaded app process as the rest of ForestNote. The setting under **Settings
+→ Debug** can disable it if a future firmware update breaks the private API; ForestNote then falls
+back to the older Android-input path. Root was useful to investigate the firmware and to work
+around the test tablet's restricted package shell, but it is not used by the installed app.
+
+To build it from source instead:
 
 ```sh
 ./gradlew :app:notes:assembleDebug   # the APK lands at app/notes/build/outputs/apk/debug/notes-debug.apk

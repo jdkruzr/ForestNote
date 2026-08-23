@@ -56,6 +56,7 @@ class SettingsView {
     private var modelManager: RecognitionModelManager? = null
     private var secureCreds: SecureCredentialsStore? = null
     private var caldavDrainer: CalDavOutboxDrainer? = null
+    private var onViwoodsNativePreviewChanged: ((Boolean) -> Unit)? = null
 
     /** Whether the overlay is currently attached. */
     val isShowing: Boolean get() = root != null
@@ -72,6 +73,8 @@ class SettingsView {
         modelManager: RecognitionModelManager,
         secureCreds: SecureCredentialsStore,
         caldavDrainer: CalDavOutboxDrainer,
+        showViwoodsNativePreview: Boolean,
+        onViwoodsNativePreviewChanged: (Boolean) -> Unit,
         onClose: () -> Unit,
     ) {
         if (isShowing) return
@@ -79,6 +82,7 @@ class SettingsView {
         this.modelManager = modelManager
         this.secureCreds = secureCreds
         this.caldavDrainer = caldavDrainer
+        this.onViwoodsNativePreviewChanged = onViwoodsNativePreviewChanged
         this.scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val view = LayoutInflater.from(host.context).inflate(R.layout.view_settings, host, false)
         host.addView(view)
@@ -86,7 +90,7 @@ class SettingsView {
 
         view.findViewById<View>(R.id.btn_settings_back).setOnClickListener { onClose() }
 
-        bind(view, store)
+        bind(view, store, showViwoodsNativePreview)
     }
 
     /** Detach the overlay. */
@@ -96,12 +100,13 @@ class SettingsView {
         modelManager = null
         secureCreds = null
         caldavDrainer = null
+        onViwoodsNativePreviewChanged = null
         root?.let { host?.removeView(it) }
         root = null
         host = null
     }
 
-    private fun bind(view: View, store: NotebookStore) {
+    private fun bind(view: View, store: NotebookStore, showViwoodsNativePreview: Boolean) {
         this.store = store
         val rgTemplate = view.findViewById<RadioGroup>(R.id.rg_template)
         val rowPitch = view.findViewById<View>(R.id.row_pitch)
@@ -146,6 +151,8 @@ class SettingsView {
         val debugLogsCheck = view.findViewById<CheckBox>(R.id.check_debug_logs)
         val prefillTimestampCheck = view.findViewById<CheckBox>(R.id.check_prefill_timestamp)
         val syncOnCloseCheck = view.findViewById<CheckBox>(R.id.check_sync_on_close)
+        val viwoodsNativePreviewCheck = view.findViewById<CheckBox>(R.id.check_viwoods_native_preview)
+        viwoodsNativePreviewCheck.visibility = if (showViwoodsNativePreview) View.VISIBLE else View.GONE
 
         // While populating from loaded values, suppress the change listeners so the
         // programmatic set doesn't immediately write back.
@@ -181,6 +188,7 @@ class SettingsView {
             debugLogsCheck.isChecked = s.debugLogging
             prefillTimestampCheck.isChecked = s.prefillNotebookNameTimestamp
             syncOnCloseCheck.isChecked = s.syncOnClose
+            viwoodsNativePreviewCheck.isChecked = s.viwoodsNativePreview
             loading = false
         }
 
@@ -197,6 +205,12 @@ class SettingsView {
         syncOnCloseCheck.setOnCheckedChangeListener { _, checked ->
             if (loading) return@setOnCheckedChangeListener
             store.updateSettings({ it.copy(syncOnClose = checked) })
+        }
+
+        viwoodsNativePreviewCheck.setOnCheckedChangeListener { _, checked ->
+            if (loading) return@setOnCheckedChangeListener
+            store.updateSettings({ it.copy(viwoodsNativePreview = checked) })
+            onViwoodsNativePreviewChanged?.invoke(checked)
         }
 
         rgTemplate.setOnCheckedChangeListener { _, checkedId ->

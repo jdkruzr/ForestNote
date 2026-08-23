@@ -42,6 +42,15 @@ interface StrokeSink {
      */
     fun erase(samples: List<InkSample>, tool: Tool = Tool.StrokeEraser) {}
 
+    /**
+     * Ingest an eraser gesture produced by the physical back end of a stylus. The app-side sink
+     * can resolve this to the user's most recently selected eraser variant; the default keeps
+     * firmware backends source-compatible and treats it as a whole-stroke erase.
+     */
+    fun eraseHardware(samples: List<InkSample>) {
+        erase(samples, Tool.StrokeEraser)
+    }
+
     /** Abandon the in-progress stroke without finalizing or persisting it. */
     fun cancel()
 }

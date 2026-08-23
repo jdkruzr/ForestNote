@@ -13,11 +13,18 @@ reverse-engineered fast-ink API or any native code.** `libpaintworker.so` /
 the WritingSurface is only the low-latency *transport* that blits whatever
 bitmap a pen drew into; it has nothing to do with how a pen *looks*.
 
-**Consequence for ForestNote:** every one of these pen types is reproducible
-with zero reverse-engineering. They map cleanly onto our existing model — a
-`BasePen`-equivalent strategy interface plus per-pen subclasses that draw into
-the offscreen bitmap `DrawView` already blits, with width driven by our
-millipressure values. See [future-directions.md](../design-notes/future-directions.md).
+**Consequence for ForestNote:** every one of these pen appearances is reproducible
+without a privileged Viwoods brush API. The drawing strategies can be shared across
+Viwoods, Boox, and generic Android. They do **not**, however, fit the current persisted
+stroke model when appearance depends on texture, nib rules, or dashes: deterministic
+cross-device rendering also needs a brush kind, renderer version, and texture seed.
+That schema/render/sync work is assigned to ForestNote 2.0; see
+[portable-brushes-2.0.md](../design-notes/portable-brushes-2.0.md).
+
+> **August 2026 update:** the same conclusion still holds after re-checking WiNote 1.6.5.
+> ENote provides the low-latency input/bitmap transport, while the fancy brush appearance remains
+> app-side. On Boox, the closest Onyx `StrokeStyle` can provide the in-progress firmware preview;
+> ForestNote's canonical renderer must own the committed result.
 
 ## The type enum
 

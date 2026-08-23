@@ -116,4 +116,12 @@ class SettingsTest {
         val original = Settings(viewportLocked = true)
         assertEquals(original, json.decodeFromString(Settings.serializer(), json.encodeToString(Settings.serializer(), original)))
     }
+
+    @Test
+    fun viwoodsNativePreviewDefaultsOnAndCanBeDisabled() {
+        assertEquals(true, Settings().viwoodsNativePreview)
+        assertEquals(true, json.decodeFromString(Settings.serializer(), "{}").viwoodsNativePreview)
+        val optedOut = Settings(viwoodsNativePreview = false)
+        assertEquals(optedOut, json.decodeFromString(Settings.serializer(), json.encodeToString(Settings.serializer(), optedOut)))
+    }
 }

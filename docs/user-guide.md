@@ -23,6 +23,17 @@ Fineliner and a fat Highlighter coexist without re-picking every time you switch
 Finger touches are ignored — only the stylus draws. That's deliberate, so you can rest your
 hand on the panel.
 
+### Viwoods fast ink
+
+On a supported Viwoods firmware, ForestNote receives pen samples directly from the tablet's ENote
+service and sends only the changed bitmap region to the panel. This is enabled by default and gives
+ForestNote native-class writing latency. It runs inside the ordinary ForestNote app: **root is not
+required**, and the app does not invoke `su` or install a privileged helper.
+
+If a Viwoods firmware update causes trouble, turn off **Settings → Debug → Use fastest Viwoods ink**.
+ForestNote will restart its ink controller and use the compatible Android-input fallback. This
+switch only changes how live ink reaches the screen; it does not change or convert your notes.
+
 ## Erasing
 
 The **Stroke** cell holds two erasers:
@@ -132,5 +143,5 @@ Reach Settings from the gear in the Library header.
 | Calendar (CalDAV tasks) | CalDAV collection URL and credentials, plus a connection test |
 | Recognition models | Download or delete handwriting languages |
 | Recycle bin | How many days before the bin auto-empties |
-| Debug | On-device file logging (off by default) |
+| Debug | Viwoods fast-ink fallback switch (shown only on Viwoods) and on-device file logging |
 | About | App version |

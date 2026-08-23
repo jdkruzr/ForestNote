@@ -530,6 +530,7 @@ class DrawView @JvmOverloads constructor(
 
     fun setTransform(transform: PageTransform) {
         this.transform = transform
+        backend?.setTransform(transform)
         // The template is projected through the transform every compose, so there's nothing to
         // invalidate here — the next composeStaticBitmap picks up the new transform.
     }
@@ -811,7 +812,7 @@ class DrawView @JvmOverloads constructor(
      * No-op on an input-owning backend (Boox suspends firmware render + hardware-GCs instead).
      */
     fun blankPanelForFullScreenUi() {
-        if (backend?.ownsInput() == true) return
+        if (backend?.ownsPageDisplay() == true) return
         val src = writingBitmap ?: return
         val blank = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888) // all-transparent
         val loc = IntArray(2)
@@ -1743,6 +1744,10 @@ class DrawView @JvmOverloads constructor(
             handleFirmwareErase(samples, tool)
         }
 
+        override fun eraseHardware(samples: List<InkSample>) {
+            handleFirmwareErase(samples, lastEraserVariant)
+        }
+
         override fun cancel() {
             currentStroke = null
             pendingParams = null
@@ -1994,7 +1999,7 @@ class DrawView @JvmOverloads constructor(
         // live ink and the backend reconciles the page bitmap onto its own SurfaceView; blitting
         // here too would double-render the page (a ~window-inset-shifted ghost copy). Overlays
         // below (lasso/text selection) still draw — they're not in the reconciled bitmap.
-        if (backend?.ownsInput() != true) {
+        if (backend?.ownsPageDisplay() != true) {
             writingBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
         }
 
