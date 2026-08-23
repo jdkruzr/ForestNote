@@ -12,6 +12,7 @@ import io.github.vwunofficial.ink.ViwoodsInkController
 import io.github.vwunofficial.ink.ViwoodsInkLogger
 import io.github.vwunofficial.ink.ViwoodsInkRenderResult
 import io.github.vwunofficial.ink.ViwoodsInkRenderer
+import java.lang.reflect.Method
 import java.util.Date
 
 /**
@@ -28,6 +29,9 @@ class ViwoodsBackend : InkBackend {
     private val currentViewLocation = intArrayOf(0, 0)
     private var controller: ViwoodsInkController? = null
     private var currentMode = ViwoodsEinkMode.FAST
+    private var pictureModeTarget: Any? = null
+    private var pictureModeMethod: Method? = null
+    private var pictureModeBindingAttempted = false
     private var nativeStrokeActive = false
     private var startAttempts = 0
     private var startSuccesses = 0
@@ -76,7 +80,15 @@ class ViwoodsBackend : InkBackend {
             DisplayMode.FULL_REFRESH -> ViwoodsEinkMode.GC
         }
         currentMode = sdkMode
-        controller?.setDisplayMode(sdkMode)
+        // UI-only launch paths (notably start-in-Library) deliberately never paint the hidden
+        // editor, so there may be no writing bitmap/controller yet. Picture mode is device-global,
+        // though, and the ordinary View hierarchy still needs a real GC refresh to erase whatever
+        // the previous screen left on the panel (for example the editor's bold letterbox boundary).
+        // Use the controller when it exists; otherwise bind the same hidden ENoteSetting singleton
+        // directly so refreshUiFrame() is not silently reduced to a normal invalidate.
+        if (controller?.setDisplayMode(sdkMode) != true) {
+            setPlatformPictureMode(sdkMode)
+        }
     }
 
     override fun refreshUiFrame(host: View) {
@@ -191,6 +203,47 @@ class ViwoodsBackend : InkBackend {
         controller = newController
         writeStatus("startSucceeded")
         return newController
+    }
+
+    /**
+     * Set Viwoods' device-wide picture mode before the writing controller exists.
+     *
+     * The unofficial SDK reaches this same hidden singleton internally, but its public
+     * [ViwoodsInkController.setDisplayMode] entry point requires a configured editor bitmap. A
+     * full-screen normal View (Library/Settings) has no such bitmap by design, so bind only the
+     * single method needed for its transition refresh. Failure stays non-fatal: Android still
+     * invalidates the View, just without the stronger e-ink waveform.
+     */
+    private fun setPlatformPictureMode(mode: ViwoodsEinkMode): Boolean {
+        if (!pictureModeBindingAttempted) bindPlatformPictureMode()
+        val target = pictureModeTarget ?: return false
+        val method = pictureModeMethod ?: return false
+        return try {
+            method.invoke(target, mode.value)
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "setPictureMode(${mode.name}) failed", t)
+            false
+        }
+    }
+
+    private fun bindPlatformPictureMode() {
+        pictureModeBindingAttempted = true
+        for (className in ENOTE_SETTING_CLASSES) {
+            try {
+                val settingClass = Class.forName(className)
+                val target = settingClass.getMethod("getInstance").invoke(null)
+                val method = settingClass.getMethod("setPictureMode", Integer.TYPE)
+                method.isAccessible = true
+                pictureModeTarget = target
+                pictureModeMethod = method
+                Log.i(TAG, "Bound $className.setPictureMode for UI-only refreshes")
+                return
+            } catch (_: Throwable) {
+                // Try the next package spelling observed across Viwoods ROM builds.
+            }
+        }
+        Log.w(TAG, "Unable to bind ENoteSetting.setPictureMode")
     }
 
     private fun ensureNativeStrokeStarted(activeController: ViwoodsInkController, reason: String) {
