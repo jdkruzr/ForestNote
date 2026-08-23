@@ -546,9 +546,9 @@ class DrawView @JvmOverloads constructor(
         redrawBitmap()
     }
 
-    fun setEditorZoomSetting(setting: Float) {
+    fun setEditorZoomSetting(setting: Float, recompose: Boolean = true) {
         editorZoomSetting = setting
-        applyEditorZoomSetting(recompose = true, preserveCenter = true)
+        applyEditorZoomSetting(recompose = recompose, preserveCenter = true)
     }
 
     /** Lock only capacitive viewport movement. Stylus editing and explicit zoom stay available. */

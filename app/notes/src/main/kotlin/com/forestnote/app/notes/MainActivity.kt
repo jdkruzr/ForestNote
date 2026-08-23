@@ -421,7 +421,16 @@ class MainActivity : Activity() {
             toolBar.loadTextStyle(settings.textFontName, settings.textFontSizeV)
             drawView.activeTextFontName = settings.textFontName
             drawView.activeTextFontSize = settings.textFontSizeV
-            drawView.setEditorZoomSetting(settings.editorZoom)
+            // Startup settings can arrive after launch-into-Library has already covered the editor.
+            // Updating the hidden editor's zoom must NOT recompose/push its bitmap through Viwoods'
+            // hardware writing layer: that layer sits above the normal View hierarchy and would stamp
+            // the page's bold letterbox boundary back over the freshly GC-cleared Library. Keep the
+            // transform current, but defer composition until the editor is actually revealed (all
+            // editor-entry paths recompose as part of load/reset).
+            drawView.setEditorZoomSetting(
+                settings.editorZoom,
+                recompose = !anyEditorObscuringOverlayShowing(),
+            )
             drawView.setViewportLocked(settings.viewportLocked)
             // Refresh the synchronous launch cache so the next cold start makes the right
             // call without consulting the DB. (Idempotent if unchanged.)
