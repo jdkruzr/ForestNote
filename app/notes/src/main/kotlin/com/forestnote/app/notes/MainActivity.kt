@@ -1886,8 +1886,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshVisibleTransition(post: Boolean = true) {
-        if (libraryView.isShowing || settingsView.isShowing || recycleBinView.isShowing ||
-            textBoxEditOverlay.isShowing || caldavTaskSheet.isShowing) {
+        if (anyEditorObscuringOverlayShowing()) {
             refreshUiTransition(post)
         } else {
             refreshEditorTransition(post)
@@ -2498,21 +2497,26 @@ class MainActivity : Activity() {
         // render is live it suppresses normal EPD posting, so such a window opens INVISIBLY over the
         // editor and eats touches ("frozen except drawing"). One choke point for every dialog: drop
         // firmware render on focus loss, restore on regain — but ONLY if no full-screen content-overlay
-        // is still up. Content overlays (Library/Settings/RecycleBin/TextEdit/CalDav sheet) DON'T steal
-        // window focus, so they aren't caught here; they manage their own suspend (openLibrary etc.) and
-        // resuming under them would re-wedge. Returning from a dialog-over-Library thus stays suspended.
+        // is still up. Content overlays (Library/Settings/RecycleBin/Pages/TextEdit/CalDav sheet) DON'T
+        // steal window focus, so they manage their own suspend (openLibrary etc.). When a dialog or
+        // external system screen closes over one, leave firmware suspended and GC-refresh the visible
+        // overlay after its first replacement draw; otherwise dialog/file-picker residue survives.
         if (backend.usesFirmwareInk()) {
             if (!hasFocus) {
                 backend.setInputSuspended(true)
-            } else if (regained && !anyEditorObscuringOverlayShowing()) {
-                backend.setInputSuspended(false)
-                // The dismissed dialog leaves an e-ink ghost (firmware render compositing back over the
-                // panel doesn't clear the framebuffer the dialog drew into). Reconcile the editor from
-                // its bitmap to repaint the canvas clean — as a GC refresh, since the dialog's
-                // high-contrast text ghosts through the default low-flash mono mode. Posted so it runs
-                // after the window settles.
-                backend.cleanNextReconcile()
-                drawView.post { drawView.refreshPanelForUi() }
+            } else if (regained) {
+                if (anyEditorObscuringOverlayShowing()) {
+                    refreshUiTransition()
+                } else {
+                    backend.setInputSuspended(false)
+                    // The dismissed dialog leaves an e-ink ghost (firmware render compositing back over
+                    // the panel doesn't clear the framebuffer the dialog drew into). Reconcile the editor
+                    // from its bitmap to repaint the canvas clean — as a GC refresh, since the dialog's
+                    // high-contrast text ghosts through the default low-flash mono mode. Posted so it runs
+                    // after the window settles.
+                    backend.cleanNextReconcile()
+                    drawView.post { drawView.refreshPanelForUi() }
+                }
             }
         }
         // On an input-owning backend (Boox/Onyx) this gcRefresh is actively harmful: gcRefresh runs a
@@ -2525,8 +2529,7 @@ class MainActivity : Activity() {
         // when the editor is the topmost View — bail if any of our overlays / dialogs / inline edit
         // are up. Stray AlertDialogs are covered implicitly: an open AlertDialog holds window focus
         // away from this Activity, so `regained` only flips when the dialog has already closed.
-        if (libraryView.isShowing || settingsView.isShowing || recycleBinView.isShowing ||
-            ocrTextDialog.isShowing || textBoxEditOverlay.isShowing || caldavTaskSheet.isShowing) return
+        if (anyEditorObscuringOverlayShowing() || ocrTextDialog.isShowing) return
         refreshEditorTransition(post = true)
     }
 

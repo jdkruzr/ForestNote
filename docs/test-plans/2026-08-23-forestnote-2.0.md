@@ -91,6 +91,10 @@ measured canvas without a remainder.
   full GC refresh: no page rules or handwriting may remain as panel-only ghosting even when an Android
   framebuffer screenshot is clean. Re-test on the Android 15 Go 10.3 II, where a plain posted refresh
   could run before the Library's first draw.
+- Over each full-screen content view (Library, Settings, Recycle Bin, Pages, text edit, and CalDAV),
+  open and dismiss a dialog or external picker. The underlying view must receive one post-draw full GC
+  while firmware ink stays suspended; no dialog/picker residue may remain and the overlay must stay
+  responsive. Closing the content view must still restore the editor and pen normally.
 
 ## Boox latency matrix
 
