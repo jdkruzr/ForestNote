@@ -1855,7 +1855,12 @@ class MainActivity : Activity() {
         uiFrameRefreshPending = true
         val observer = host.viewTreeObserver
         val listener = object : ViewTreeObserver.OnDrawListener {
+            private var fired = false
+
             override fun onDraw() {
+                // One traversal can report more than one draw before the posted removal runs.
+                if (fired) return
+                fired = true
                 // Removing an OnDrawListener from inside onDraw is forbidden. Post the removal and GC;
                 // at that point this frame has been submitted and refreshUiFrame targets the visible UI,
                 // not the editor bitmap that preceded it.
