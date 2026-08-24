@@ -1033,10 +1033,15 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     override fun refreshUiFrame(host: View) {
         if (host.width <= 0 || host.height <= 0) return
         try {
-            EpdController.refreshScreen(host, UpdateMode.GC)
-            Log.i(TAG, "refreshUiFrame GC host=${host.width}x${host.height}")
+            // Match Boox's own Library refresh path. refreshScreen(view, GC) is only a
+            // view-scoped request; on Android 15 it can reach SurfaceFlinger without actually
+            // scrubbing firmware-drawn ink from the physical panel. repaintEveryThing goes
+            // through ViewUpdateHelper.repaintEverything and performs the display-wide GC that
+            // Boox's launcher and Notes library use for an explicit full refresh.
+            EpdController.repaintEveryThing(UpdateMode.GC)
+            Log.i(TAG, "refreshUiFrame display-wide GC host=${host.width}x${host.height}")
         } catch (t: Throwable) {
-            Log.w(TAG, "refreshUiFrame GC failed", t)
+            Log.w(TAG, "refreshUiFrame display-wide GC failed", t)
         }
     }
 
