@@ -24,7 +24,7 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         // RhizomeSync library (io.rhizome:rhizome-core/-sqlite/-http) — published to mavenLocal
-        // until the v0.8.0 tag is pushed. Pure-JVM JVM-11 jars consumed by core:sync + core:format.
+        // from the pinned Rhizome checkout. Pure-JVM JVM-11 jars consumed by core:sync + core:format.
         mavenLocal()
         // Onyx/Boox Pen SDK (onyxsdk-pen/-device/-base) for the BooxInkBackend. Onyx publishes
         // only over cleartext HTTP, hence isAllowInsecureProtocol; scoped to the boox.com host.

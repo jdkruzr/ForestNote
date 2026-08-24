@@ -68,7 +68,7 @@ data class Settings(
     val caldavServerUrl: String = "",
     /** Auto-empty the Recycle Bin after this many days (E4). 0 = never (default). */
     val recycleBinRetentionDays: Int = 0,
-    /** Mirror diagnostics to /sdcard/ForestNote/forestnote.log for the SSH debug loop. Off by default. */
+    /** Mirror diagnostics to /sdcard/Download/forestnote.log for the SSH debug loop. Off by default. */
     val debugLogging: Boolean = false,
     /**
      * Pre-fill the New Notebook name field with `YYYYMMDD_HHMMSS ` (note the trailing space) so

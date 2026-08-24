@@ -50,22 +50,22 @@ ForestNote ships as a sideloaded APK; there's no Play Store listing. Download th
 from [GitHub Releases](https://github.com/jdkruzr/ForestNote/releases/latest), copy it to the
 tablet, and open it to install.
 
+Install an update over the existing app; do not uninstall first. On first launch, ForestNote offers
+an external library under `/sdcard/ForestNote` or an app-private library. Both work entirely
+offline. See [Getting started](docs/guide/getting-started.md) for the storage tradeoff and make a
+backup before changing devices or testing sync.
+
 On Viwoods, the fastest ink mode is enabled by default and **does not require root**. It runs from
 the same ordinary sideloaded app process as the rest of ForestNote. The setting under **Settings
 → Debug** can disable it if a future firmware update breaks the private API; ForestNote then falls
 back to the older Android-input path. Root was useful to investigate the firmware and to work
 around the test tablet's restricted package shell, but it is not used by the installed app.
 
-To build it from source instead:
-
-```sh
-./gradlew :app:notes:assembleDebug   # the APK lands at app/notes/build/outputs/apk/debug/notes-debug.apk
-./gradlew test                       # run all unit tests
-```
-
-Then copy `notes-debug.apk` to your tablet and install it. ForestNote is fully usable without
-network access or an account. Handwriting recognition is optional and needs Google Play Services
-plus a one-time per-language model download (about 20 MB).
+ForestNote is fully usable without network access or an account. Handwriting recognition is
+optional and downloads a language model on demand (roughly 20 MB per language); recognition runs
+on the tablet after that. Building from source requires the Viwoods ink and Rhizome repositories as
+siblings, so follow the complete [build guide](docs/development/building.md) rather than treating
+this repository as a standalone Gradle checkout.
 
 ## Under the hood
 
@@ -81,9 +81,10 @@ multi-module Gradle with shared config in `build-logic/`.
 | `core/format` | SQLite storage (folder → notebook → page → stroke) and the sync data binding |
 | `core/sync` | The app-specific sync timing and join policy |
 
-Every stroke is stored in a resolution-independent virtual coordinate space, so notes render
-the same across screen sizes and orientations. Deeper architecture docs are coming; for now
-the per-module `CLAUDE.md` files are the closest thing to a design reference.
+Every stroke is stored in a resolution-independent virtual coordinate space, so notes render the
+same across screen sizes and orientations. The [documentation index](docs/README.md) separates
+current user/developer references from historical plans and research; module-level `CLAUDE.md`
+files document invariants closest to the code.
 
 ## License
 

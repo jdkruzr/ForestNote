@@ -448,7 +448,7 @@
                 android:minHeight="44dp"
                 android:textSize="15sp"
                 android:textColor="@color/black"
-                android:text="Write debug logs to /sdcard/ForestNote" />
+                android:text="Write debug logs to /sdcard/Download" />
 
             <!-- ===== About =====
                  Text is set in code from packageManager.getPackageInfo(...).versionName so it

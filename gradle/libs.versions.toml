@@ -52,7 +52,7 @@ sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", versi
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 
 # Google ML Kit Digital Ink Recognition (on-device handwriting recognition).
-# Stroke-native, downloads a per-language model on first use (~20 MB) via GMS.
+# Stroke-native, downloads a per-language model on demand (~20 MB).
 mlkit-digital-ink = { module = "com.google.mlkit:digital-ink-recognition", version.ref = "mlkit-digital-ink" }
 
 # Kotlinx Coroutines (sync engine network/orchestration in :core:sync)
@@ -80,7 +80,7 @@ androidx-security-crypto = { module = "androidx.security:security-crypto", versi
 # RhizomeSync — the extracted schema-driven sync library (pure-JVM, JVM-11 bytecode). core:sync uses
 # rhizome-core (Registry/SyncEngine/SyncConfig) + rhizome-http (HttpUrlTransport); core:format uses
 # rhizome-core (Registry) + rhizome-sqlite (SqliteStorageAdapter). Consumed from mavenLocal until the
-# v0.8.0 tag is published.
+# pinned v0.8.2 artifacts are published locally before building ForestNote.
 rhizome-core = { module = "io.rhizome:rhizome-core", version.ref = "rhizome" }
 rhizome-sqlite = { module = "io.rhizome:rhizome-sqlite", version.ref = "rhizome" }
 rhizome-http = { module = "io.rhizome:rhizome-http", version.ref = "rhizome" }
