@@ -1034,6 +1034,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         if (host.width <= 0 || host.height <= 0) return
         try {
             EpdController.refreshScreen(host, UpdateMode.GC)
+            Log.i(TAG, "refreshUiFrame GC host=${host.width}x${host.height}")
         } catch (t: Throwable) {
             Log.w(TAG, "refreshUiFrame GC failed", t)
         }

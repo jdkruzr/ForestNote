@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.widget.CheckBox
 import android.widget.EditText
@@ -112,6 +113,9 @@ class MainActivity : Activity() {
     /** Per-notebook, session-only undo/redo of canvas content edits (see [EditHistory]). */
     private val editHistory = EditHistory()
     private var isEInk = false
+
+    /** Coalesces overlay GC requests until the replacement UI has actually drawn once. */
+    private var uiFrameRefreshPending = false
 
     // In-process clipboard for lasso Cut/Copy/Paste (held across A7 selection + A8 paste).
     private val clipboard = InProcessClipboard()
@@ -1833,8 +1837,38 @@ class MainActivity : Activity() {
     private fun refreshUiTransition(post: Boolean = true) {
         if (!isEInk) return
         val host = findViewById<View>(android.R.id.content)
-        val refresh = { backend.refreshUiFrame(host) }
-        if (post) host.post(refresh) else refresh()
+        if (!post) {
+            backend.refreshUiFrame(host)
+            return
+        }
+
+        // `View.post` only means "later on the UI queue"; it does NOT mean the replacement View
+        // hierarchy has completed a frame. On fast Android 15 Boox firmware the posted GC could run
+        // before Library/Settings drew, beautifully refreshing the old notebook and then letting the
+        // new white UI arrive in a low-flash waveform with the ruled page still ghosted underneath.
+        // Arm one refresh after the next real draw instead. Multiple overlay updates before that frame
+        // share the same GC pass.
+        if (uiFrameRefreshPending) {
+            host.invalidate()
+            return
+        }
+        uiFrameRefreshPending = true
+        val observer = host.viewTreeObserver
+        val listener = object : ViewTreeObserver.OnDrawListener {
+            override fun onDraw() {
+                // Removing an OnDrawListener from inside onDraw is forbidden. Post the removal and GC;
+                // at that point this frame has been submitted and refreshUiFrame targets the visible UI,
+                // not the editor bitmap that preceded it.
+                host.post {
+                    val liveObserver = if (observer.isAlive) observer else host.viewTreeObserver
+                    if (liveObserver.isAlive) liveObserver.removeOnDrawListener(this)
+                    uiFrameRefreshPending = false
+                    backend.refreshUiFrame(host)
+                }
+            }
+        }
+        observer.addOnDrawListener(listener)
+        host.invalidate()
     }
 
     private fun refreshEditorTransition(post: Boolean = false) {

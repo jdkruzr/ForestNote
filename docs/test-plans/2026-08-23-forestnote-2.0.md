@@ -87,6 +87,10 @@ measured canvas without a remainder.
 - Boox firmware limit rect, ForestNote input gate, retained bitmap, screenshot, thumbnail, PDF, SVG,
   and UltraBridge render all use the same rectangle.
 - Rotate/reopen without changing stored creator geometry.
+- After heavily inking a ruled page, return to the Library. Its first completed frame must receive a
+  full GC refresh: no page rules or handwriting may remain as panel-only ghosting even when an Android
+  framebuffer screenshot is clean. Re-test on the Android 15 Go 10.3 II, where a plain posted refresh
+  could run before the Library's first draw.
 
 ## Boox latency matrix
 
