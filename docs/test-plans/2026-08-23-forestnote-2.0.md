@@ -30,6 +30,13 @@ Use a fresh install or throwaway library for destructive restore checks.
 6. Interrupt or feed a malformed restore. The existing DB must remain available after the automatic
    app restart; a successful restore keeps `default.forestnote.pre-restore-*` beside the library.
 
+Go 6 II export update (2026-08-24): a two-page ruled notebook exported successfully as a direct
+PDF and an ordered two-SVG ZIP. The PDF parsed cleanly in Ghostscript as two pure-vector 1200×1600
+pages; the SVG files were valid, self-contained XML with `10000×13333` view boxes and no scripts or
+external references. Independent 1200×1600 renders matched page-for-page with only antialiasing-level
+pixel differences, and neither format baked in a device viewport or letterbox. Direct single-page
+SVG, multi-notebook archives, and backup/restore cases remain to be exercised.
+
 ## Optional endpoint transcription
 
 1. With provider **Off**, lasso recognition and full-page **Run local** use ML Kit; no endpoint

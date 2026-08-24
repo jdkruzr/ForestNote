@@ -137,3 +137,37 @@ reused as-is.
 
 **Hardest parts, ranked:** (1) selection/move/resize/rotate UI, (2) e-ink IME text editing +
 refresh, (3) the z-ordering policy. None are architectural risks — UI craft.
+
+## Post-2.0: broader-product and Play Store roadmap
+
+> Added 2026-08-24. Explicitly **not** part of the ForestNote 2.0 release gate.
+
+### Shape tools
+
+- Add portable straight line, arrow, rectangle, ellipse, and polygon elements; decide whether
+  freehand shape recognition belongs in the first pass or later.
+- Reuse lasso/object selection for move, resize, rotate, duplicate, z-order, and delete rather than
+  inventing a second transform UI.
+- Store shape geometry in virtual page coordinates with stable ids and deterministic styling, then
+  carry it through sync, thumbnails, screenshots, PDF, SVG, backup/restore, and unknown-kind
+  fallback just like portable brushes.
+- Keep firmware ink as a transient drag preview only; the committed shape must be app-rendered and
+  visually identical across Viwoods, Boox, generic Android, and UltraBridge.
+
+### Toolbar customization
+
+- Let users reorder and hide tools, choose which pen/brush presets get first-class buttons, and
+  retain an obvious route to every hidden tool plus a reset-to-default escape hatch.
+- Design for both the Mini's constrained width and larger Boox panels; customization must not bring
+  back clipped popup content or device-specific toolbar layouts.
+- Decide deliberately whether toolbar state is device-local (probably the least surprising default)
+  or synced as a user preference, and preserve it in local backups either way.
+
+### Play Store readiness
+
+- Raise and validate the target SDK against the then-current Play requirement without regressing
+  the Onyx hidden-API bridge, storage access, file pickers, background work, or Viwoods integration.
+- Complete store listing assets, signing/app-bundle delivery, privacy and data-safety disclosures,
+  accessibility review, crash reporting policy, and a repeatable pre-release device matrix.
+- Treat shape support and toolbar customization as product-readiness work requested for the broader
+  audience, not as reasons to delay or destabilize 2.0.
