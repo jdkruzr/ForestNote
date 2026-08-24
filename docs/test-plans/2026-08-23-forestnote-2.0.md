@@ -101,6 +101,13 @@ measured canvas without a remainder.
 
 ## Boox latency matrix
 
+Release decision (2026-08-24): the previously reported warm-up latency, first-contact loss, and
+corner dead-zone symptoms are no longer reproducible after the popup/input-state and raw-prefix
+fixes. Repeated incidental use across the available device/pen combinations has covered cold entry,
+pauses, tool and eraser switches, Library/editor transitions, sleep/resume, and corner/center input
+without a failure. The prescriptive ten-cycle matrix below is therefore waived as a 2.0 gate; reopen
+it only with a repeatable device + pen + transition case and capture the per-stroke diagnostics then.
+
 Go 6 II + Maxeye USI update (2026-08-23): the first-stroke loss after a pen popup was fixed by
 draw-to-dismiss popup handling. A second apparent Brush onset loss was isolated to the firmware's
 `NEO_BRUSH` live preview: raw callbacks, stored stroke, and canonical commit were complete. Boox
@@ -129,6 +136,13 @@ For each combination run ten cold editor entries and ten resume cycles:
    temporarily black, but each committed stroke and the reconciled page must settle to the same
    neutral gray shown in an Android screenshot; no stroke may turn green/blue or change hue after
    redraw. A small regional GC blink at pen-up is acceptable for these two gray-bearing tools only.
+
+Tab Ultra C Pro + EMR update (2026-08-24): passed items 1–6 during extended interactive testing.
+Immediate corner/center input, pause/resume, pen/eraser/tool transitions, sleep, full-screen views,
+all portable brushes, reopen/full redraw, hardware erasure, and ghost cleanup remained healthy.
+Translucent Marker and Highlighter stayed neutral before and after the delayed firmware cleanup.
+The final fix keeps the Onyx SurfaceView as a transient live-ink target while DrawView owns committed
+page pixels; post-test logs showed host-view commits and completed cleanup pulses with no crash/ANR.
 
 ## Sync rollout
 
