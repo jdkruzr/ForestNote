@@ -8,6 +8,10 @@ Android device it falls back to a standard canvas.
 > **Status:** version 2.0 release candidate, validated on Viwoods and Boox USI/EMR devices and ready
 > for the final release tag.
 
+<p align="center">
+  <img src="docs/assets/forestnote-library.png" alt="ForestNote Library on a Boox Go 6 II" width="760">
+</p>
+
 ## What you can do
 
 - **Write** with 17 portable brush styles: fountain, five pencil grades, brush, ballpoint,
