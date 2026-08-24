@@ -386,11 +386,12 @@ class NotebookStoreTest {
         awaitResult<List<Stroke>> { cb -> store.switchPage(second, cb) }
         val pages = awaitResult<List<PageMeta>> { cb -> store.listPages { listed, _ -> cb(listed) } }
         val preview = awaitResult<PagePreviewSource> { cb ->
-            store.loadPagePreview(pages.first { it.id == first }, Settings(), 12_000, 44L, cb)
+            store.loadPagePreview(pages.first { it.id == first }, Settings(), 10_000, 12_000, 44L, cb)
         }
         assertEquals(first, preview.pageId)
         assertEquals(listOf(stroke.id), preview.strokes.map { it.id })
-        assertEquals(12_000, preview.notebookLongAxis)
+        assertEquals(10_000, preview.pageWidth)
+        assertEquals(12_000, preview.pageHeight)
         assertEquals(44L, preview.notebookModifiedAt)
         store.shutdown()
     }

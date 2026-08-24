@@ -10,7 +10,7 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.ink.PageTransform
-import com.forestnote.core.ink.PressureCurve
+import com.forestnote.core.ink.CanonicalBrushRenderer
 import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.ZBand
 
@@ -23,7 +23,9 @@ object PagePreviewRenderer {
         val bitmap = Bitmap.createBitmap(WIDTH_PX, HEIGHT_PX, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.WHITE)
-        val transform = PageTransform().apply { update(WIDTH_PX, HEIGHT_PX, source.notebookLongAxis) }
+        val transform = PageTransform().apply {
+            updatePage(WIDTH_PX, HEIGHT_PX, source.pageWidth, source.pageHeight)
+        }
         drawTemplate(canvas, transform, source.template, source.pitchMm)
         PagePreviewRenderOrder.bottom(source.textBoxes).forEach { drawText(canvas, transform, it) }
         drawInk(canvas, transform, source)
@@ -34,10 +36,10 @@ object PagePreviewRenderer {
     private fun drawTemplate(canvas: Canvas, t: PageTransform, template: PageTemplate, pitchMm: Int) {
         if (template == PageTemplate.BLANK) return
         val left = t.toScreenX(0); val top = t.toScreenY(0)
-        val right = t.toScreenX(PageTransform.VIRTUAL_SHORT_AXIS); val bottom = t.toScreenY(t.virtualLongAxis)
+        val right = t.toScreenX(t.virtualWidth); val bottom = t.toScreenY(t.virtualHeight)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(190, 190, 190); strokeWidth = 1f }
-        val xs = TemplateGeometry.lineOffsets(PageTransform.VIRTUAL_SHORT_AXIS.toFloat(), t.templatePitchVirtual(pitchMm.toFloat()))
-        val ys = TemplateGeometry.lineOffsets(t.virtualLongAxis.toFloat(), t.templatePitchVirtual(pitchMm.toFloat()))
+        val xs = TemplateGeometry.lineOffsets(t.virtualWidth.toFloat(), t.templatePitchVirtual(pitchMm.toFloat()))
+        val ys = TemplateGeometry.lineOffsets(t.virtualHeight.toFloat(), t.templatePitchVirtual(pitchMm.toFloat()))
         canvas.save(); canvas.clipRect(left, top, right, bottom)
         when (template) {
             PageTemplate.DOT -> for (x in xs) for (y in ys) canvas.drawCircle(t.toScreenX(x), t.toScreenY(y), 1f, paint)
@@ -53,15 +55,10 @@ object PagePreviewRenderer {
 
     private fun drawInk(canvas: Canvas, t: PageTransform, source: PagePreviewSource) {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
-        for (stroke in source.strokes) {
-            if (stroke.points.size < 2) continue
-            paint.color = stroke.color
-            for (i in 1 until stroke.points.size) {
-                val a = stroke.points[i - 1]; val b = stroke.points[i]
-                paint.strokeWidth = t.toScreenSize(PressureCurve.width(b.pressure, stroke.penWidthMin, stroke.penWidthMax))
-                canvas.drawLine(t.toScreenX(a.x), t.toScreenY(a.y), t.toScreenX(b.x), t.toScreenY(b.y), paint)
-            }
-        }
+        source.strokes.filter { CanonicalBrushRenderer.isBehind(it.brushKind) }
+            .forEach { CanonicalBrushRenderer.drawStroke(canvas, it, t, paint) }
+        source.strokes.filterNot { CanonicalBrushRenderer.isBehind(it.brushKind) }
+            .forEach { CanonicalBrushRenderer.drawStroke(canvas, it, t, paint) }
     }
 
     private fun drawText(canvas: Canvas, t: PageTransform, box: TextBox) {

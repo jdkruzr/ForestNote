@@ -49,7 +49,8 @@ class SyncController(
     private suspend fun config(): SyncConfig? {
         val s = store.syncSettings()
         val (user, pass) = resolveCredentials(s)
-        return SyncConfig.from(s.syncServerUrl, user, pass)
+        val configured = SyncConfig.from(s.syncServerUrl, user, pass)
+        return configured.takeIf { s.isSyncEnabled(configured != null) }
     }
 
     /**
@@ -157,7 +158,8 @@ class SyncController(
         scope.launch {
             val s = store.syncSettings()
             val (user, pass) = resolveCredentials(s)
-            if (SyncConfig.from(s.syncServerUrl, user, pass) == null) {
+            val configured = SyncConfig.from(s.syncServerUrl, user, pass)
+            if (!s.isSyncEnabled(configured != null) || configured == null) {
                 _status.value = SyncStatus.Idle
                 return@launch
             }

@@ -14,17 +14,24 @@ object PageBounds {
     /** Whether a virtual point lies on the page (edges inclusive). Defensive: a non-positive
      *  [longAxis] (page not yet shaped) is treated as "nothing is on-page". */
     fun contains(vx: Int, vy: Int, longAxis: Int): Boolean {
-        if (longAxis <= 0) return false
-        return vx in 0..PageTransform.VIRTUAL_SHORT_AXIS && vy in 0..longAxis
+        return contains(vx, vy, PageTransform.VIRTUAL_SHORT_AXIS, longAxis)
     }
+
+    fun contains(vx: Int, vy: Int, width: Int, height: Int): Boolean =
+        width > 0 && height > 0 && vx in 0..width && vy in 0..height
 
     /**
      * Clamp a sample's coordinates to the page rectangle, preserving pressure/timestamp. Returns the
      * SAME instance when the point is already on-page (so callers can cheaply detect the no-op).
      */
     fun clamp(sample: InkSample, longAxis: Int): InkSample {
-        val maxY = if (longAxis > 0) longAxis else 0
-        val cx = sample.vx.coerceIn(0, PageTransform.VIRTUAL_SHORT_AXIS)
+        return clamp(sample, PageTransform.VIRTUAL_SHORT_AXIS, longAxis)
+    }
+
+    fun clamp(sample: InkSample, width: Int, height: Int): InkSample {
+        val maxX = if (width > 0) width else 0
+        val maxY = if (height > 0) height else 0
+        val cx = sample.vx.coerceIn(0, maxX)
         val cy = sample.vy.coerceIn(0, maxY)
         if (cx == sample.vx && cy == sample.vy) return sample
         return sample.copy(vx = cx, vy = cy)

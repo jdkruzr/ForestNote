@@ -14,10 +14,10 @@ class PagePreviewLoader(private val store: NotebookStore, cacheDir: File) {
     private val executor = Executors.newFixedThreadPool(2)
     private val main = Handler(Looper.getMainLooper())
 
-    fun load(page: com.forestnote.core.format.PageMeta, settings: com.forestnote.core.format.Settings, longAxis: Int, modifiedAt: Long, target: ImageView) {
+    fun load(page: com.forestnote.core.format.PageMeta, settings: com.forestnote.core.format.Settings, pageWidth: Int, pageHeight: Int, modifiedAt: Long, target: ImageView) {
         target.setTag(R.id.tag_notebook_id, page.id)
         target.setImageResource(R.color.card_placeholder)
-        store.loadPagePreview(page, settings, longAxis, modifiedAt) { source ->
+        store.loadPagePreview(page, settings, pageWidth, pageHeight, modifiedAt) { source ->
             if (stale(target, page.id)) return@loadPagePreview
             val key = key(source)
             submit {
@@ -32,7 +32,7 @@ class PagePreviewLoader(private val store: NotebookStore, cacheDir: File) {
     fun shutdown() = executor.shutdown()
 
     private fun key(s: PagePreviewSource): String =
-        "${s.pageId}_pagev2_${s.strokes.size}_${s.textBoxes.size}_${s.template.name}_${s.pitchMm}_${s.notebookLongAxis}_${s.notebookModifiedAt}"
+        "${s.pageId}_pagev3_${s.strokes.size}_${s.textBoxes.size}_${s.template.name}_${s.pitchMm}_${s.pageWidth}x${s.pageHeight}_${s.notebookModifiedAt}"
 
     private fun submit(block: () -> Unit) { try { if (!executor.isShutdown) executor.execute(block) } catch (_: RejectedExecutionException) {} }
     private fun apply(target: ImageView, id: String, bitmap: Bitmap) = main.post { if (!stale(target, id)) target.setImageBitmap(bitmap) }

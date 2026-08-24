@@ -19,11 +19,13 @@ import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.TextView
+import android.widget.Toast
 import android.widget.PopupWindow
 import com.forestnote.core.format.FolderCard
 import com.forestnote.core.format.NotebookMeta
 import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.format.StartView
+import com.forestnote.core.format.StorageLocation
 import com.forestnote.core.ink.BackendDetector
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.PageTransform
@@ -60,8 +62,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import java.io.FileWriter
+import java.io.File
+import java.io.FileOutputStream
 import java.io.PrintWriter
+import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
 
 // pattern: Imperative Shell
 // Activity lifecycle orchestration: wires backend, NotebookStore, and DrawView; no
@@ -93,6 +99,8 @@ class MainActivity : Activity() {
     private lateinit var btnRedo: ImageButton
     private var viewportPopup: PopupWindow? = null
     private var pagesBrowserNeedsReload = false
+    private var pendingExport: PendingExport? = null
+    private var storeClosedForRestore = false
 
     /** Per-notebook, session-only undo/redo of canvas content edits (see [EditHistory]). */
     private val editHistory = EditHistory()
@@ -532,12 +540,6 @@ class MainActivity : Activity() {
         // it renders + takes touches (the notable approach). No popups open on Boox today, so this is
         // dormant there; no-op on Viwoods/Generic.
         toolBar.onPopupVisibilityChanged = { open -> backend.setInputSuspended(open) }
-        // Draw-to-dismiss for the pen settings popup on an input-owning backend (Boox): the popup
-        // coexists with live firmware — its bounds are excluded from firmware capture so its buttons
-        // work, and a firmware pen-down dismisses it so starting to draw closes the menu. Both
-        // no-op on Viwoods/Generic.
-        toolBar.onCoexistPopupBounds = { rect -> backend.setOverlayExcludeScreenRect(rect) }
-        backend.setOnFirmwarePenDown { toolBar.dismissActivePopup() }
         // Propagate pen-variant choice to the canvas (affects width/colour/compositing).
         // Switching variant brings that variant's remembered width level forward (A10).
         toolBar.setOnPenVariantSelected { variant ->
@@ -978,7 +980,9 @@ class MainActivity : Activity() {
 
             caldavTaskSheet.updateAttachmentProgress("rendering page")
             val jpeg = runCatching {
-                withContext(Dispatchers.Default) { PageImageRenderer.renderJpeg(strokes) }
+                withContext(Dispatchers.Default) {
+                    PageImageRenderer.renderJpeg(strokes, pageTransform.virtualWidth, pageTransform.virtualHeight)
+                }
             }.onFailure {
                 fileLogger.log("CalDAV", "todo page image render failed page=$pageId err=${it.message}")
             }.getOrNull()
@@ -1141,7 +1145,12 @@ class MainActivity : Activity() {
             if (activeId == pendingAspectCaptureId) {
                 schedulePendingNotebookAspectCapture()
             } else {
-                drawView.setNotebookLongAxis(activeNotebook?.aspectLongAxis ?: PageTransform.VIRTUAL_LONG_AXIS)
+                drawView.setNotebookGeometry(
+                    activeNotebook?.pageWidth ?: PageTransform.VIRTUAL_SHORT_AXIS,
+                    activeNotebook?.pageHeight
+                        ?: activeNotebook?.aspectLongAxis
+                        ?: PageTransform.VIRTUAL_LONG_AXIS,
+                )
             }
         }
         store.listPages { pages, activeId ->
@@ -1194,11 +1203,11 @@ class MainActivity : Activity() {
         }
         val w = drawView.width
         val h = drawView.height
-        val longAxis = NotebookAspectPolicy.longAxisFor(w, h)
+        val geometry = NotebookAspectPolicy.geometryFor(w, h)
         pendingAspectCaptureId = null
-        store.setNotebookAspect(nbId, longAxis)
-        drawView.setNotebookLongAxis(longAxis)
-        fileLogger.log("Aspect", "captured notebook=$nbId canvas=${w}x$h longAxis=$longAxis")
+        store.setNotebookPageGeometry(nbId, geometry.width, geometry.height)
+        drawView.setNotebookGeometry(geometry.width, geometry.height)
+        fileLogger.log("Aspect", "captured notebook=$nbId canvas=${w}x$h page=${geometry.width}x${geometry.height}")
     }
 
     private fun schedulePendingNotebookAspectCapture() {
@@ -1481,6 +1490,7 @@ class MainActivity : Activity() {
             onSyncNow = { syncController.syncNow() },
             onOpenSearch = { showSearchDialog() },
             onBulkMove = { ids -> showMoveTargetDialog(ids) },
+            onBulkExport = { ids -> chooseExportFormat(ids) },
             onBulkDelete = { ids -> confirmBulkDelete(ids) }
         ))
         refreshUiTransition()
@@ -1492,6 +1502,188 @@ class MainActivity : Activity() {
         // closeLibrary() call stays: it covers mutations made INSIDE the Library (notebook/folder
         // delete/rename/move) that need pushing when you leave back to the editor.
         syncIfDirty()
+    }
+
+    private data class PendingExport(
+        val format: ExportFormat,
+        val notebooks: List<ExportNotebookSnapshot>,
+        val target: NotebookExporter.Target,
+    )
+
+    private fun chooseExportFormat(notebookIds: Set<String>) {
+        AlertDialog.Builder(this)
+            .setTitle("Export ${notebookIds.size} notebook${if (notebookIds.size == 1) "" else "s"}")
+            .setItems(arrayOf("PDF", "SVG")) { _, which ->
+                prepareExport(notebookIds, if (which == 0) ExportFormat.PDF else ExportFormat.SVG)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun prepareExport(notebookIds: Set<String>, format: ExportFormat) {
+        syncScope.launch {
+            runCatching { store.exportSnapshots(notebookIds) }
+                .onSuccess { snapshots ->
+                    if (snapshots.isEmpty()) {
+                        Toast.makeText(this@MainActivity, "Nothing to export", Toast.LENGTH_SHORT).show()
+                        return@onSuccess
+                    }
+                    val target = NotebookExporter.target(format, snapshots)
+                    pendingExport = PendingExport(format, snapshots, target)
+                    startActivityForResult(
+                        Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = target.mimeType
+                            putExtra(Intent.EXTRA_TITLE, target.fileName)
+                        },
+                        REQUEST_EXPORT,
+                    )
+                }
+                .onFailure { exportFailed(it) }
+        }
+    }
+
+    @Deprecated("Activity result API is sufficient here and keeps the min-SDK dependency surface small")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) return
+        if (requestCode == REQUEST_BACKUP) {
+            writeBackup(uri)
+            return
+        }
+        if (requestCode == REQUEST_RESTORE) {
+            confirmRestore(uri)
+            return
+        }
+        if (requestCode != REQUEST_EXPORT) return
+        val pending = pendingExport.also { pendingExport = null } ?: return
+        syncScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    contentResolver.openOutputStream(uri, "w").use { output ->
+                        NotebookExporter.write(pending.format, pending.notebooks, requireNotNull(output))
+                    }
+                }
+            }.onSuccess {
+                Toast.makeText(this@MainActivity, "Exported ${pending.target.fileName}", Toast.LENGTH_LONG).show()
+                libraryView.exitSelectMode()
+            }.onFailure { exportFailed(it) }
+        }
+    }
+
+    private fun exportFailed(error: Throwable) {
+        fileLogger.log("Export", "failed: ${error.message}")
+        Toast.makeText(this, "Export failed: ${error.message ?: "unknown error"}", Toast.LENGTH_LONG).show()
+    }
+
+    private fun createBackup() {
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        startActivityForResult(
+            Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "application/zip"
+                putExtra(Intent.EXTRA_TITLE, "ForestNote-$stamp${BackupArchive.EXTENSION}")
+            },
+            REQUEST_BACKUP,
+        )
+    }
+
+    private fun chooseBackupToRestore() {
+        startActivityForResult(
+            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/zip", "application/octet-stream"))
+            },
+            REQUEST_RESTORE,
+        )
+    }
+
+    private fun writeBackup(uri: android.net.Uri) {
+        syncScope.launch {
+            val snapshot = File.createTempFile("forestnote-backup-", ".sqlite", cacheDir).apply { delete() }
+            runCatching {
+                store.writeDatabaseSnapshot(snapshot)
+                withContext(Dispatchers.IO) {
+                    BackupArchive.scrubLegacyCredentials(snapshot)
+                    contentResolver.openOutputStream(uri, "w").use { output ->
+                        BackupArchive.write(snapshot, requireNotNull(output))
+                    }
+                }
+            }.onSuccess {
+                Toast.makeText(this@MainActivity, "Backup created", Toast.LENGTH_LONG).show()
+            }.onFailure { exportFailed(it) }
+            snapshot.delete()
+        }
+    }
+
+    private fun confirmRestore(uri: android.net.Uri) {
+        AlertDialog.Builder(this)
+            .setTitle("Replace this library?")
+            .setMessage("Restore replaces every notebook and local setting on this device. A copy of the current database will be kept beside it as a pre-restore backup. Passwords are not changed.")
+            .setPositiveButton("Restore") { _, _ -> restoreBackup(uri) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun restoreBackup(uri: android.net.Uri) {
+        syncScope.launch {
+            val restored = File.createTempFile("forestnote-restore-", ".sqlite", cacheDir).apply { delete() }
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri).use { input ->
+                        BackupArchive.extractDatabase(requireNotNull(input), restored)
+                    }
+                }
+                syncController.stopPeriodic()
+                caldavDrainer.pause()
+                caldavNetworkMonitor.stop()
+                backend.setInputSuspended(true)
+                withContext(Dispatchers.IO) {
+                    store.shutdown()
+                    storeClosedForRestore = true
+                    installRestoredDatabase(restored)
+                }
+            }.onSuccess {
+                restartAfterRestore()
+            }.onFailure {
+                restored.delete()
+                exportFailed(it)
+                // Once the sole store connection has closed, even a successfully rolled-back
+                // install failure cannot leave this Activity usable. Re-open through a clean task.
+                if (storeClosedForRestore) restartAfterRestore()
+            }
+        }
+    }
+
+    private fun restartAfterRestore() {
+        startActivity(Intent(this@MainActivity, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        })
+        finish()
+    }
+
+    /** Atomic-ish swap after the single DB owner has closed. The old file remains recoverable. */
+    private fun installRestoredDatabase(restored: File) {
+        val dbContext = StorageLocation.resolve(applicationContext, DATABASE_FILENAME)
+        val target = dbContext.getDatabasePath(DATABASE_FILENAME)
+        target.parentFile?.mkdirs()
+        val replacement = File(target.parentFile, "${target.name}.restore-new")
+        val previous = File(target.parentFile, "${target.name}.pre-restore-${System.currentTimeMillis()}")
+        restored.inputStream().use { input ->
+            FileOutputStream(replacement).use { output -> input.copyTo(output); output.fd.sync() }
+        }
+        if (target.exists() && !target.renameTo(previous)) {
+            replacement.delete()
+            error("could not preserve the current library before restore")
+        }
+        for (suffix in listOf("-wal", "-shm", "-journal")) File(target.absolutePath + suffix).delete()
+        if (!replacement.renameTo(target)) {
+            if (previous.exists()) previous.renameTo(target)
+            error("could not install the restored library")
+        }
+        restored.delete()
     }
 
     /**
@@ -1512,7 +1704,7 @@ class MainActivity : Activity() {
      */
     private fun syncIfDirty() {
         store.loadSettings { s ->
-            if (!s.syncOnClose) return@loadSettings
+            if (!s.syncOnClose || s.syncEnabled == false) return@loadSettings
             store.countPendingOps { count ->
                 if (count > 0L) syncController.syncNow()
             }
@@ -1708,6 +1900,8 @@ class MainActivity : Activity() {
                 backend.setInputSuspended(true)
                 backend.setVendorNativePreviewEnabled(enabled)
             },
+            onBackup = { createBackup() },
+            onRestore = { chooseBackupToRestore() },
         ) { closeSettings() }
         refreshUiTransition()
     }
@@ -1870,6 +2064,11 @@ class MainActivity : Activity() {
 
     /** New-notebook dialog. [parentFolderId] places it in the folder being viewed (null = root). */
     private fun promptNewNotebook(parentFolderId: String? = null) {
+        // Snapshot the settled editor before the IME appears. The Library is an overlay, so the
+        // hidden DrawView still carries the exact physical canvas size minus toolbar/insets.
+        val creatorGeometry = if (::drawView.isInitialized && drawView.width > 0 && drawView.height > 0) {
+            NotebookAspectPolicy.geometryFor(drawView.width, drawView.height)
+        } else null
         // Settings is loaded off-thread so we can't read it synchronously. The one-shot
         // loadSettings posts its callback to the main thread; we build the dialog there.
         // Cost is one DB read per New Notebook tap, which is negligible.
@@ -1894,8 +2093,14 @@ class MainActivity : Activity() {
                     // Library if it's showing (no-op when invoked from the editor). Aspect is captured
                     // LATER (create-dialog keyboard corrupts a measurement now) — create with NULL
                     // aspect and arm the deferred capture keyed to the new id (see maybeCaptureNotebookAspect).
-                    store.createNotebook(name, parentFolderId, null) { newId ->
-                        pendingAspectCaptureId = newId
+                    store.createNotebook(
+                        name = name,
+                        folderId = parentFolderId,
+                        aspectLongAxis = creatorGeometry?.longAxis,
+                        pageWidth = creatorGeometry?.width,
+                        pageHeight = creatorGeometry?.height,
+                    ) { newId ->
+                        pendingAspectCaptureId = if (creatorGeometry == null) newId else null
                         libraryView.hide(); goToNotebook(newId)
                     }
                 }
@@ -2218,7 +2423,8 @@ class MainActivity : Activity() {
      * Once per process (declining just falls back to private storage — the app works either way).
      */
     private fun maybePromptForAllFilesAccess() {
-        if (promptedStorage || hasAllFilesAccess()) return
+        if (promptedStorage || hasAllFilesAccess() ||
+            getSharedPreferences(STORAGE_PREFS, MODE_PRIVATE).getBoolean(KEY_KEEP_PRIVATE, false)) return
         promptedStorage = true
         try {
             AlertDialog.Builder(this)
@@ -2229,7 +2435,11 @@ class MainActivity : Activity() {
                         "Until then your notes are stored privately and work normally.",
                 )
                 .setPositiveButton("Grant") { _, _ -> openAllFilesAccessSettings() }
-                .setNegativeButton("Not now", null)
+                .setNegativeButton("Keep private") { _, _ ->
+                    getSharedPreferences(STORAGE_PREFS, MODE_PRIVATE).edit()
+                        .putBoolean(KEY_KEEP_PRIVATE, true)
+                        .apply()
+                }
                 .show()
         } catch (t: Throwable) {
             fileLogger.log("Storage", "grant prompt failed: ${t.message}")
@@ -2277,7 +2487,7 @@ class MainActivity : Activity() {
             recognizer.close()
             backend.release()
             // Drains pending saves, then closes the driver as its last task.
-            store.shutdown()
+            if (!storeClosedForRestore) store.shutdown()
         } catch (_: Throwable) {
             // Ignore cleanup errors
         }
@@ -2285,7 +2495,7 @@ class MainActivity : Activity() {
 
     /** Short Library-header caption for the current sync status. */
     private fun syncCaption(status: SyncStatus): String = when (status) {
-        is SyncStatus.Idle -> "Sync"
+        is SyncStatus.Idle -> "Local"
         is SyncStatus.Syncing -> "Syncing…"
         is SyncStatus.Synced -> "Synced"
         is SyncStatus.Error -> "Sync ✕"
@@ -2347,5 +2557,11 @@ class MainActivity : Activity() {
         // this is a one-key cache and the two callers don't share any other code).
         const val LAUNCH_PREFS = "forestnote_launch"
         const val KEY_START_VIEW = "start_view"
+        const val STORAGE_PREFS = "forestnote_storage"
+        const val KEY_KEEP_PRIVATE = "keep_private"
+        const val REQUEST_EXPORT = 0xF20
+        const val REQUEST_BACKUP = 0xF21
+        const val REQUEST_RESTORE = 0xF22
+        const val DATABASE_FILENAME = "default.forestnote"
     }
 }

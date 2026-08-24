@@ -10,15 +10,15 @@ class EditorZoomPolicyTest {
     }
 
     @Test
-    fun palmaSizedFitScaleOpensReadable() {
+    fun phoneSizedCanvasStillOpensAtExactFit() {
         val fitScale = 824f / 10_000f
 
-        assertEquals(1.699f, EditorZoomPolicy.autoZoom(fitScale), 0.001f)
+        assertEquals(1f, EditorZoomPolicy.autoZoom(fitScale), 0.001f)
     }
 
     @Test
-    fun autoZoomCapsVerySmallScreens() {
-        assertEquals(1.75f, EditorZoomPolicy.autoZoom(0.05f), 0.001f)
+    fun autoZoomNeverHidesTheBottomOfSmallScreens() {
+        assertEquals(1f, EditorZoomPolicy.autoZoom(0.05f), 0.001f)
     }
 
     @Test

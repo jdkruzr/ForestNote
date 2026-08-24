@@ -23,6 +23,9 @@ import com.onyx.android.sdk.utils.DeviceInfoUtil
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.PI
+import kotlin.math.atan2
+import kotlin.math.hypot
 
 /**
  * InkBackend for Onyx/Boox devices. Unlike Viwoods/Generic (display accelerators that render
@@ -531,7 +534,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     private fun applyPen() {
         try {
             touchHelper
-                ?.setStrokeStyle(StrokeStyle.FOUNTAIN)
+                ?.setStrokeStyle(liveStrokeStyle(pen.brushKind))
                 ?.setStrokeColor(pen.color)
                 ?.setStrokeWidth(liveStrokeWidthPx())
         } catch (t: Throwable) {
@@ -541,6 +544,21 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         // intended state — otherwise a pen-style change made from the open settings popup re-grabs the
         // stylus and the popup can no longer be dismissed by an outside tap (it draws instead).
         applyFirmwareEnableState()
+    }
+
+    /** Closest Onyx raw-ink preview only; committed rendering always uses BrushKind itself. */
+    private fun liveStrokeStyle(brush: BrushKind): Int = when (brush) {
+        BrushKind.FOUNTAIN, BrushKind.CALLIGRAPHY -> StrokeStyle.FOUNTAIN
+        BrushKind.PENCIL_HB, BrushKind.PENCIL_2B -> StrokeStyle.PENCIL
+        BrushKind.PENCIL_4B, BrushKind.PENCIL_6B -> StrokeStyle.CHARCOAL
+        BrushKind.PENCIL_8B -> StrokeStyle.CHARCOAL_V2
+        BrushKind.BRUSH -> StrokeStyle.NEO_BRUSH
+        BrushKind.BALLPOINT, BrushKind.FINELINER -> StrokeStyle.SQUARE_PEN
+        BrushKind.TRANSLUCENT_MARKER, BrushKind.MARKER, BrushKind.HIGHLIGHTER -> StrokeStyle.MARKER
+        BrushKind.DASHED -> StrokeStyle.DASH
+        BrushKind.CALLIGRAPHY_REVERSE,
+        BrushKind.CALLIGRAPHY_BROAD,
+        BrushKind.CALLIGRAPHY_CHISEL -> StrokeStyle.SQUARE_PEN
     }
 
     // ===== Firmware raw-input → StrokeSink =====
@@ -685,7 +703,16 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         val t = transform ?: return null
         val pressure01 = if (maxPressure > 0f) point.pressure / maxPressure else 0f
         // point.y is in full-screen surface space; shift to canvas/page space before PageTransform.
-        return InkSample.from(point.x, point.y - canvasTopOffset, pressure01, System.currentTimeMillis(), t)
+        val tiltDegrees = hypot(point.tiltX.toDouble(), point.tiltY.toDouble())
+        val tilt = Math.toRadians(tiltDegrees.coerceIn(0.0, 90.0)).toFloat().takeIf { it > 0f }
+        val orientation = if (point.tiltX == 0 && point.tiltY == 0) null else {
+            atan2(point.tiltY.toDouble(), point.tiltX.toDouble())
+                .coerceIn(-PI, PI).toFloat()
+        }
+        return InkSample.from(
+            point.x, point.y - canvasTopOffset, pressure01, System.currentTimeMillis(), t,
+            tiltRadians = tilt, orientationRadians = orientation,
+        )
     }
 
     // ===== Reconcile (firmware ink layer ← app bitmap) =====

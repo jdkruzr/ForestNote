@@ -5,14 +5,13 @@ inking on the [Viwoods AiPaper Mini](https://www.viwoods.com/) and Boox/Onyx dev
 so the ink keeps up with your pen instead of lagging a few strokes behind. On any other
 Android device it falls back to a standard canvas.
 
-> **Status:** version 1.8, validated on-device. Writing, organizing, handwriting
-> recognition, calendar export, and cross-device sync all work today. Importing images
-> and PDFs is the main thing still missing.
+> **Status:** version 2.0 release candidate. The Viwoods path is validated on-device;
+> the expanded Boox pen/device matrix is the remaining live-validation pass before release.
 
 ## What you can do
 
-- **Write** with pressure-sensitive Fountain, Fineliner, and Highlighter pens, each with
-  its own width. The highlighter sits behind your ink and never darkens where strokes overlap.
+- **Write** with 17 portable brush styles: fountain, five pencil grades, brush, ballpoint,
+  two markers, fineliner, four calligraphy nibs, highlighter, and dashed line.
 - **Erase** by stroke (wipe a whole line) or by pixel (rub out part of one). A hardware
   eraser button, if your stylus has one, works too.
 - **Choose a page template** — blank, dot, ruled, or grid — per page or as a notebook default,
@@ -27,6 +26,8 @@ Android device it falls back to a standard canvas.
   any CalDAV server, queued offline until you're back online.
 - **Sync across devices** against a self-hosted UltraBridge server, with conflict-free
   multi-master merging.
+- **Export or back up locally** without an account: selected notebooks go to PDF/SVG/ZIP,
+  and a complete `.forestnote-backup` can be restored through the system file picker.
 
 Step-by-step instructions for each of these live in the **[user guide](docs/user-guide.md)**.
 
@@ -38,8 +39,8 @@ Step-by-step instructions for each of these live in the **[user guide](docs/user
 | Boox / Onyx | Onyx Pen SDK — the firmware renders live ink directly to the panel |
 | Any other Android (SDK 30+) | Standard canvas redraw — works, but without the firmware speed-up |
 
-The backend is detected at launch. Whichever path draws your ink, the stored notes are
-identical, so a notebook written on one device opens unchanged on another.
+The backend is detected at launch. Saved strokes use ForestNote's own brush identities and
+deterministic renderer; vendor pen styles are only low-latency previews while the stylus is down.
 
 ## Installing
 
@@ -60,8 +61,9 @@ To build it from source instead:
 ./gradlew test                       # run all unit tests
 ```
 
-Then copy `notes-debug.apk` to your tablet and install it. Handwriting recognition needs
-Google Play Services and a one-time per-language model download (about 20 MB).
+Then copy `notes-debug.apk` to your tablet and install it. ForestNote is fully usable without
+network access or an account. Handwriting recognition is optional and needs Google Play Services
+plus a one-time per-language model download (about 20 MB).
 
 ## Under the hood
 

@@ -53,7 +53,9 @@ class ApplySyncOpsTest {
             "stroke",
             mapOf(
                 "page_id" to page, "color" to -16777216L, "pen_width_min" to 7L, "pen_width_max" to 35L,
-                "points" to StrokeSerializer.encode(emptyList()), "z" to 0L, "created_at" to opTs,
+                "points" to StrokeSerializer.encode(emptyList()),
+                "brush_kind" to "fountain", "brush_version" to 1L, "brush_seed" to 123L,
+                "point_dynamics" to null, "z" to 0L, "created_at" to opTs,
             ),
         ),
     )

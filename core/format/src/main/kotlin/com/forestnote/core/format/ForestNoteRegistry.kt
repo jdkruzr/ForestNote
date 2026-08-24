@@ -15,7 +15,7 @@ import io.rhizome.core.TableDef
  * hand-rolled [SyncWire]/[SyncMerge] declarations.
  *
  * **Live-cutover invariant:** [Registry.schemaHash] MUST equal ForestNote's production hash —
- * currently **v4** `74e6b5d7…`, which added `notebook.aspect_long_axis` (guarded by
+ * currently **v5**, which adds portable brushes, point dynamics, and exact notebook geometry
  * `ForestNoteRegistryHashTest`, and matched on the server by UltraBridge's `registry.ForestNote()`).
  * The prior v3 `724411eb…` was retired from UltraBridge's `AcceptsSchemaHash` grace window with UB
  * v1.4.0. Only column NAMES affect the hash; types drive the wire codec
@@ -58,6 +58,8 @@ object ForestNoteRegistry {
                     // Per-notebook page aspect (v4): virtual long-axis captured from the creating
                     // device. Synced so a note keeps its native shape across devices. NULL = legacy.
                     ColumnDef("aspect_long_axis", IntCol, nullable = true),
+                    ColumnDef("page_width", IntCol, nullable = true),
+                    ColumnDef("page_height", IntCol, nullable = true),
                 ),
             ),
             TableDef(
@@ -78,7 +80,11 @@ object ForestNoteRegistry {
                     ColumnDef("color", ColorInt),
                     ColumnDef("pen_width_min", IntCol),
                     ColumnDef("pen_width_max", IntCol),
+                    ColumnDef("brush_kind", Text),
+                    ColumnDef("brush_version", IntCol),
+                    ColumnDef("brush_seed", IntCol),
                     ColumnDef("points", Blob),
+                    ColumnDef("point_dynamics", Blob, nullable = true),
                     ColumnDef("z", IntCol),
                     ts("created_at"),
                     ts("deleted_at", nullable = true),

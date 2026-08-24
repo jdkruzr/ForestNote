@@ -40,6 +40,12 @@ data class Settings(
     /** UltraBridge sync credentials (Basic auth over TLS). Blank = sync not configured. */
     val syncUsername: String = "",
     val syncPassword: String = "",
+    /**
+     * Explicit network-sync switch. Null is the v1.x compatibility state: infer enabled only when
+     * a complete server configuration already exists. Fresh installs therefore stay local-only,
+     * while upgraded configured installs do not mysteriously stop syncing.
+     */
+    val syncEnabled: Boolean? = null,
     /** Periodic background sync interval in minutes while the app is open. 0 = no timer. */
     val syncIntervalMinutes: Int = 15,
     /**
@@ -85,6 +91,9 @@ data class Settings(
      */
     val viwoodsNativePreview: Boolean = true,
 ) {
+    fun isSyncEnabled(hasCompleteConfiguration: Boolean): Boolean =
+        syncEnabled ?: hasCompleteConfiguration
+
     companion object {
         /**
          * The shared codec for the settings blob. `ignoreUnknownKeys` lets older

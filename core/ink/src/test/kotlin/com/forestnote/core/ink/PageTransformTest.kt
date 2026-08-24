@@ -247,6 +247,21 @@ class PageTransformTest {
     }
 
     @Test
+    fun updatePagePreservesExactCreatorGeometryInEitherOrientation() {
+        val portrait = PageTransform().apply { updatePage(1072, 1307, 1072, 1307) }
+        assertEquals(1072, portrait.virtualWidth)
+        assertEquals(1307, portrait.virtualHeight)
+        assertEquals(1f, portrait.fitScale, 0.0001f)
+        assertEquals(1072f, portrait.pageRectScreen().right, 0.001f)
+        assertEquals(1307f, portrait.pageRectScreen().bottom, 0.001f)
+
+        val landscape = PageTransform().apply { updatePage(1307, 1072, 1072, 1307) }
+        assertEquals(1072, landscape.virtualWidth)
+        assertEquals(1307, landscape.virtualHeight)
+        assertEquals(1072f / 1307f, landscape.fitScale, 0.0001f)
+    }
+
+    @Test
     fun roundTripVirtualToScreenAndBackPreservesValue() {
         val transform = PageTransform()
         transform.update(1440, 1920)

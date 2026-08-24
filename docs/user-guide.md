@@ -9,15 +9,16 @@ chooser (pens, erasers, fonts, templates).
 
 ## Writing
 
-Pick a pen from the **Fountain** cell. Tapping it opens a popup with three pen types and a
-row of width chips:
+Pick a pen from the **Fountain** cell. Tapping it opens a modal chooser with 17 brushes and a
+row of width chips. The families include fountain, HB/2B/4B/6B/8B pencils, brush, ballpoint,
+translucent and opaque markers, fineliner, four calligraphy nibs, highlighter, and dashed line.
 
 - **Fountain** — varies with pen pressure, like a real fountain nib.
 - **Fineliner** — an even line that ignores pressure.
 - **Highlighter** — a translucent wash that's drawn *behind* your ink, so it never covers what
   you've already written and never darkens where two strokes overlap.
 
-The seven width chips set the line thickness. Each pen type remembers its own width, so a thin
+The seven width chips set the line thickness. Each brush remembers its own width, so a thin
 Fineliner and a fat Highlighter coexist without re-picking every time you switch.
 
 Finger touches are ignored — only the stylus draws. That's deliberate, so you can rest your
@@ -121,8 +122,9 @@ server is UltraBridge; other servers keep the task itself just fine.
 
 ## Syncing across devices
 
-ForestNote syncs notebooks against a self-hosted **UltraBridge** server. Configure it under
-**Settings → Sync**: the server URL, username, and password. Once set, the app syncs when it
+ForestNote starts as a **local-only app**. Nothing in the note library needs an account or server.
+If you want sync, configure a self-hosted **UltraBridge** server under **Settings → Sync**, save
+the URL/credentials, and turn on **Enable network sync**. Once enabled, the app syncs when it
 comes to the foreground, on a periodic timer, and when you close the Library or recycle bin with
 unsaved changes.
 
@@ -130,7 +132,19 @@ Sync is **multi-master** — edit the same notebook on two devices and the chang
 last-writer-wins, without a manual conflict step. Credentials are stored encrypted (Android
 Keystore), not in plain settings.
 
-If you don't run an UltraBridge server, leave Sync blank and ForestNote works fully offline.
+Turning sync off does not hide, delete, or downgrade local notes.
+
+## Exporting and backing up
+
+In the Library, tap **Select**, choose one or more notebooks, then tap **Export**. Pick PDF or SVG
+and choose a destination in Android's file picker. A single notebook becomes one PDF; a single-page
+SVG becomes one SVG. Multiple notebooks—or a multi-page SVG notebook—are packaged as a ZIP with
+stable page ordering.
+
+For a complete local copy, open **Settings → Local data → Create backup**. A
+`.forestnote-backup` contains the whole notebook database and app settings but never passwords.
+**Restore backup** validates the archive, keeps the current database beside the replacement as a
+pre-restore recovery copy, then restarts ForestNote on the restored library.
 
 ## Settings reference
 
@@ -139,7 +153,8 @@ Reach Settings from the gear in the Library header.
 | Section | What it controls |
 |---------|------------------|
 | Startup | Start in the Library or your last notebook; pre-fill new notebook names with a timestamp; sync when you close an overlay |
-| Sync | UltraBridge server URL and credentials |
+| Local data | Complete backup and restore; credentials are excluded |
+| Sync | Explicit network-sync switch, UltraBridge URL, and credentials |
 | Calendar (CalDAV tasks) | CalDAV collection URL and credentials, plus a connection test |
 | Recognition models | Download or delete handwriting languages |
 | Recycle bin | How many days before the bin auto-empties |

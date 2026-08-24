@@ -14,6 +14,7 @@ data class PenParams(
     val wMin: Int,
     val wMax: Int,
     val behind: Boolean,
+    val brushKind: BrushKind = BrushKind.FOUNTAIN,
 ) {
     companion object {
         /** Opaque black ink (Fountain, Fineliner). */
@@ -34,15 +35,21 @@ data class PenParams(
         fun of(variant: PenVariant, level: PenWidthLevel): PenParams {
             val (baseMin, baseMax) = PenWidthScale.pair(level)
             return when (variant) {
-                PenVariant.FOUNTAIN ->
-                    PenParams(BLACK, baseMin, baseMax, behind = false)
-                PenVariant.FINELINER -> {
+                PenVariant.FOUNTAIN, PenVariant.PENCIL_HB, PenVariant.PENCIL_2B,
+                PenVariant.PENCIL_4B, PenVariant.PENCIL_6B, PenVariant.PENCIL_8B,
+                PenVariant.BRUSH, PenVariant.CALLIGRAPHY, PenVariant.CALLIGRAPHY_REVERSE,
+                PenVariant.CALLIGRAPHY_BROAD, PenVariant.CALLIGRAPHY_CHISEL,
+                PenVariant.DASHED ->
+                    PenParams(BLACK, baseMin, baseMax, behind = false, variant.brushKind)
+                PenVariant.FINELINER, PenVariant.BALLPOINT -> {
                     val w = (baseMin + baseMax) / 2
-                    PenParams(BLACK, w, w, behind = false)
+                    PenParams(BLACK, w, w, behind = false, variant.brushKind)
                 }
+                PenVariant.MARKER, PenVariant.TRANSLUCENT_MARKER ->
+                    PenParams(BLACK, baseMax, baseMax * 2, behind = false, variant.brushKind)
                 PenVariant.HIGHLIGHTER -> {
                     val w = baseMax * 5 / 2 // ≈ 2.5× base max, integer
-                    PenParams(HIGHLIGHTER_GRAY, w, w, behind = true)
+                    PenParams(HIGHLIGHTER_GRAY, w, w, behind = true, variant.brushKind)
                 }
             }
         }

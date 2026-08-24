@@ -1,0 +1,15 @@
+-- ForestNote 2.0 / wire v5: portable brush identity + optional pen dynamics and exact page shape.
+ALTER TABLE notebook ADD COLUMN page_width INTEGER;
+ALTER TABLE notebook ADD COLUMN page_height INTEGER;
+
+UPDATE notebook
+SET page_width = 10000,
+    page_height = coalesce(aspect_long_axis, 13333);
+
+ALTER TABLE stroke ADD COLUMN brush_kind TEXT NOT NULL DEFAULT 'fountain';
+ALTER TABLE stroke ADD COLUMN brush_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE stroke ADD COLUMN brush_seed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE stroke ADD COLUMN point_dynamics BLOB;
+
+-- Highlighter was historically identifiable only by its reserved opaque gray.
+UPDATE stroke SET brush_kind = 'highlighter' WHERE color = -2302756;

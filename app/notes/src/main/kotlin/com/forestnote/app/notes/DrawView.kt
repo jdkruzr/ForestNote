@@ -19,6 +19,7 @@ import android.view.MotionEvent
 import android.view.View
 import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.ink.DisplayMode
+import com.forestnote.core.ink.CanonicalBrushRenderer
 import com.forestnote.core.ink.InkBackend
 import com.forestnote.core.ink.InkPhase
 import com.forestnote.core.ink.InkSample
@@ -236,7 +237,8 @@ class DrawView @JvmOverloads constructor(
     // creating device). Defaults to the legacy 3:4 page; MainActivity sets it on notebook/page load
     // via [setNotebookLongAxis]. Drives PageTransform.update so the page letterboxes (never distorts)
     // when shown on a device whose aspect differs from the note's.
-    private var currentNotebookLongAxis: Int = PageTransform.VIRTUAL_LONG_AXIS
+    private var currentPageWidth: Int = PageTransform.VIRTUAL_SHORT_AXIS
+    private var currentPageHeight: Int = PageTransform.VIRTUAL_LONG_AXIS
 
     // ===== Lasso selection state (A6) — kept off the fast-ink writing buffer =====
     private val lassoPoints = mutableListOf<LassoSelectionLogic.Point>()
@@ -339,8 +341,8 @@ class DrawView @JvmOverloads constructor(
         val centreX = (combined.minX + combined.maxX) / 2
         val centreY = (combined.minY + combined.maxY) / 2
         // Offset to centre the union on the tap, clamped so the combined bbox stays on-page.
-        val dx = clampOffset(tapVx - centreX, -combined.minX, PageTransform.VIRTUAL_SHORT_AXIS - combined.maxX)
-        val dy = clampOffset(tapVy - centreY, -combined.minY, transform.virtualLongAxis - combined.maxY)
+        val dx = clampOffset(tapVx - centreX, -combined.minX, transform.virtualWidth - combined.maxX)
+        val dy = clampOffset(tapVy - centreY, -combined.minY, transform.virtualHeight - combined.maxY)
 
         // Fresh ULIDs so the originals and the pasted copies coexist in the DB.
         val pastedStrokes = LassoSelectionLogic.translate(payload.strokes, dx, dy) { Ulid.generate() }
@@ -472,7 +474,7 @@ class DrawView @JvmOverloads constructor(
         super.onSizeChanged(w, h, oldw, oldh)
         // Update transform with actual screen dimensions + the active notebook's page shape so
         // coordinate conversion (and letterboxing) is accurate.
-        transform.update(w, h, currentNotebookLongAxis)
+        transform.updatePage(w, h, currentPageWidth, currentPageHeight)
         applyEditorZoomSetting(recompose = false, preserveCenter = false)
         // Ensure bitmap matches new size
         ensureBitmap()
@@ -568,10 +570,18 @@ class DrawView @JvmOverloads constructor(
      */
     fun setNotebookLongAxis(longAxis: Int) {
         val resolved = if (longAxis > 0) longAxis else PageTransform.VIRTUAL_LONG_AXIS
-        if (resolved == currentNotebookLongAxis && transform.virtualLongAxis == resolved) return
-        currentNotebookLongAxis = resolved
+        setNotebookGeometry(PageTransform.VIRTUAL_SHORT_AXIS, resolved)
+    }
+
+    fun setNotebookGeometry(pageWidth: Int, pageHeight: Int) {
+        val resolvedWidth = pageWidth.takeIf { it > 0 } ?: PageTransform.VIRTUAL_SHORT_AXIS
+        val resolvedHeight = pageHeight.takeIf { it > 0 } ?: PageTransform.VIRTUAL_LONG_AXIS
+        if (resolvedWidth == currentPageWidth && resolvedHeight == currentPageHeight &&
+            transform.virtualWidth == resolvedWidth && transform.virtualHeight == resolvedHeight) return
+        currentPageWidth = resolvedWidth
+        currentPageHeight = resolvedHeight
         if (width <= 0 || height <= 0) return
-        transform.update(width, height, resolved)
+        transform.updatePage(width, height, resolvedWidth, resolvedHeight)
         applyEditorZoomSetting(recompose = true, preserveCenter = false)
     }
 
@@ -987,8 +997,8 @@ class DrawView @JvmOverloads constructor(
                     val b = dragBounds
                     if (b != null) {
                         // Clamp the move so the selection bbox stays fully on-page.
-                        dragDx = clampOffset(vx - dragStartVx, -b.minX, PageTransform.VIRTUAL_SHORT_AXIS - b.maxX)
-                        dragDy = clampOffset(vy - dragStartVy, -b.minY, transform.virtualLongAxis - b.maxY)
+                        dragDx = clampOffset(vx - dragStartVx, -b.minX, transform.virtualWidth - b.maxX)
+                        dragDy = clampOffset(vy - dragStartVy, -b.minY, transform.virtualHeight - b.maxY)
                     } else {
                         dragDx = vx - dragStartVx
                         dragDy = vy - dragStartVy
@@ -1279,8 +1289,8 @@ class DrawView @JvmOverloads constructor(
                 val dx = transform.toVirtualX(x) - gestureStartVx
                 val dy = transform.toVirtualY(y) - gestureStartVy
                 if (dx != 0 || dy != 0) gestureMoved = true
-                val nx = clampOffset(orig.x + dx, 0, PageTransform.VIRTUAL_SHORT_AXIS - orig.width)
-                val ny = clampOffset(orig.y + dy, 0, transform.virtualLongAxis - orig.height)
+                val nx = clampOffset(orig.x + dx, 0, transform.virtualWidth - orig.width)
+                val ny = clampOffset(orig.y + dy, 0, transform.virtualHeight - orig.height)
                 transformBox = orig.copy(x = nx, y = ny)
                 invalidate()
             }
@@ -1367,10 +1377,10 @@ class DrawView @JvmOverloads constructor(
         if (right - left < minW) { if (handle == 0 || handle == 2) left = right - minW else right = left + minW }
         if (bottom - top < minH) { if (handle == 0 || handle == 1) top = bottom - minH else bottom = top + minH }
         // Keep on-page.
-        left = left.coerceIn(0, PageTransform.VIRTUAL_SHORT_AXIS)
-        right = right.coerceIn(0, PageTransform.VIRTUAL_SHORT_AXIS)
-        top = top.coerceIn(0, transform.virtualLongAxis)
-        bottom = bottom.coerceIn(0, transform.virtualLongAxis)
+        left = left.coerceIn(0, transform.virtualWidth)
+        right = right.coerceIn(0, transform.virtualWidth)
+        top = top.coerceIn(0, transform.virtualHeight)
+        bottom = bottom.coerceIn(0, transform.virtualHeight)
         return box.copy(x = left, y = top, width = right - left, height = bottom - top)
     }
 
@@ -1427,8 +1437,8 @@ class DrawView @JvmOverloads constructor(
         // recomputes the actual rendered height via measureTextBoxHeightPx on Done.
         val minH = activeTextFontSize * 2
         val h = max(vy1 - vy0, minH)
-        val x = clampOffset(vx0, 0, PageTransform.VIRTUAL_SHORT_AXIS - w)
-        val y = clampOffset(vy0, 0, transform.virtualLongAxis - h)
+        val x = clampOffset(vx0, 0, transform.virtualWidth - w)
+        val y = clampOffset(vy0, 0, transform.virtualHeight - h)
 
         val box = TextBox(
             x = x, y = y, width = w, height = h,
@@ -1457,8 +1467,8 @@ class DrawView @JvmOverloads constructor(
         val minH = activeTextFontSize * 2
         val h = if (tap) minH else max(dragH, minH)
         // Anchor at the rect's top-left (tap anchors at the pen-down point), clamped fully on-page.
-        val x = clampOffset(if (tap) downVx else min(downVx, upVx), 0, PageTransform.VIRTUAL_SHORT_AXIS - w)
-        val y = clampOffset(if (tap) downVy else min(downVy, upVy), 0, transform.virtualLongAxis - h)
+        val x = clampOffset(if (tap) downVx else min(downVx, upVx), 0, transform.virtualWidth - w)
+        val y = clampOffset(if (tap) downVy else min(downVy, upVy), 0, transform.virtualHeight - h)
 
         val box = TextBox(
             x = x, y = y, width = w, height = h,
@@ -1567,32 +1577,51 @@ class DrawView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 val params = PenParams.of(activePenVariant, activePenWidthLevel)
                 strokeSink.begin(Tool.Pen, params)
-                strokeSink.accept(sampleOf(event.x, event.y, event.pressure), InkPhase.DOWN)
+                strokeSink.accept(sampleOf(event), InkPhase.DOWN)
             }
 
             MotionEvent.ACTION_MOVE -> {
                 // Historical points are sub-frame samples the system batched into this event.
                 for (i in 0 until event.historySize) {
                     strokeSink.accept(
-                        sampleOf(event.getHistoricalX(i), event.getHistoricalY(i), event.getHistoricalPressure(i)),
+                        sampleOf(event, i),
                         InkPhase.MOVE
                     )
                 }
-                strokeSink.accept(sampleOf(event.x, event.y, event.pressure), InkPhase.MOVE)
+                strokeSink.accept(sampleOf(event), InkPhase.MOVE)
                 // One coalesced display push for the whole batch (matches the pre-refactor cadence).
                 strokeSink.flush()
             }
 
             MotionEvent.ACTION_UP -> {
-                strokeSink.accept(sampleOf(event.x, event.y, event.pressure), InkPhase.UP)
+                strokeSink.accept(sampleOf(event), InkPhase.UP)
             }
         }
         return true
     }
 
-    /** Map a captured screen point to a device-agnostic [InkSample] via the active transform. */
-    private fun sampleOf(screenX: Float, screenY: Float, pressure: Float): InkSample =
-        InkSample.from(screenX, screenY, pressure, System.currentTimeMillis(), transform)
+    /** Map a captured MotionEvent sample, including optional USI/EMR tilt, to portable ink. */
+    private fun sampleOf(event: MotionEvent, historyIndex: Int? = null): InkSample {
+        val historical = historyIndex != null
+        val i = historyIndex ?: 0
+        val x = if (historical) event.getHistoricalX(i) else event.x
+        val y = if (historical) event.getHistoricalY(i) else event.y
+        val pressure = if (historical) event.getHistoricalPressure(i) else event.pressure
+        val tilt = if (historical) {
+            event.getHistoricalAxisValue(MotionEvent.AXIS_TILT, i)
+        } else {
+            event.getAxisValue(MotionEvent.AXIS_TILT)
+        }.takeIf { it.isFinite() && it > 0f }
+        val orientation = if (historical) {
+            event.getHistoricalAxisValue(MotionEvent.AXIS_ORIENTATION, i)
+        } else {
+            event.getAxisValue(MotionEvent.AXIS_ORIENTATION)
+        }.takeIf { it.isFinite() }
+        return InkSample.from(
+            x, y, pressure, System.currentTimeMillis(), transform,
+            tiltRadians = tilt, orientationRadians = orientation,
+        )
+    }
 
     /**
      * The pen-tool ingest pipeline, extracted behind the [StrokeSink] seam (core:ink) so a
@@ -1639,7 +1668,7 @@ class DrawView @JvmOverloads constructor(
         }
 
         override fun accept(sample: InkSample, phase: InkPhase) {
-            val admitted = gate.admit(sample, phase, transform.virtualLongAxis) ?: return
+            val admitted = gate.admit(sample, phase, transform.virtualWidth, transform.virtualHeight) ?: return
             when (phase) {
                 InkPhase.DOWN -> {
                     // Lazily materialize the stroke now that the DOWN is confirmed on-page.
@@ -1648,7 +1677,10 @@ class DrawView @JvmOverloads constructor(
                     beginBackendStroke()
                     // Resolve colour/xfermode (highlighter composites DST_OVER) for the live paint.
                     configureStrokePaintFor(params.color)
-                    currentStroke = StrokeBuilder(params.color, params.wMin, params.wMax)
+                    currentStroke = StrokeBuilder(
+                        params.color, params.wMin, params.wMax,
+                        brushKind = params.brushKind,
+                    )
 
                     currentStroke?.addPoint(admitted.toPoint())
                     // Seed the segment origin in screen space for the first MOVE.
@@ -1674,14 +1706,20 @@ class DrawView @JvmOverloads constructor(
                 }
 
                 InkPhase.UP -> {
-                    // Matches the pre-refactor UP: append the final point to the model but draw
-                    // NO segment to it (the 900ms repaint blits the bitmap as-is), then finalize.
+                    // Append the final point, then replace the cheap live preview inside this
+                    // stroke's dirty rectangle with the canonical portable-brush rendering. This
+                    // keeps the retained bitmap (screenshots/reloads/exports) and the vendor's
+                    // ephemeral ink layer in agreement immediately after pen-up.
                     val stroke = currentStroke ?: return
                     stroke.addPoint(admitted.toPoint())
 
                     val completed = stroke.toStroke()
                     completedStrokes.add(completed)
                     currentStroke = null
+
+                    val canonicalDirty = canonicalStrokeDirtyRect(completed)
+                    composeStaticBitmap(canonicalDirty)
+                    hasDirty = false
 
                     backend?.endStroke()
 
@@ -1699,10 +1737,10 @@ class DrawView @JvmOverloads constructor(
                         // now (so a later render-toggle can't lose it) and un-freeze the panel for touch
                         // gestures. invalidate() is a no-op here (the DrawView is transparent; the panel
                         // shows the surface), so this REPLACES the 900ms quality redraw below.
-                        commitFirmwareStroke(stroke)
+                        commitFirmwareStroke(canonicalDirty)
                     } else {
-                        // Redraw on e-ink for quality output (postDelayed prevents excessive redraws).
-                        postDelayed({ invalidate() }, 900)
+                        // The retained bitmap is already canonical; publish only the touched area.
+                        invalidate(canonicalDirty)
                     }
                 }
             }
@@ -1715,29 +1753,35 @@ class DrawView @JvmOverloads constructor(
          * sized); a single-point tap has no MOVE bounds ([hasDirty] false) so we box the down point
          * ([prevX]/[prevY]). Padded by the stroke's max half-width so round caps aren't clipped.
          */
-        private fun commitFirmwareStroke(stroke: StrokeBuilder) {
+        private fun commitFirmwareStroke(rect: Rect) {
             val bmp = writingBitmap ?: return
-            val pad = transform.toScreenSize(stroke.penWidthMax.toFloat()).toInt() + 2
-            val rect = if (hasDirty) {
-                Rect(
-                    (dMinX.toInt() - pad).coerceAtLeast(0),
-                    (dMinY.toInt() - pad).coerceAtLeast(0),
-                    (dMaxX.toInt() + pad).coerceAtMost(bmp.width),
-                    (dMaxY.toInt() + pad).coerceAtMost(bmp.height),
-                )
-            } else {
-                Rect(
-                    (prevX.toInt() - pad).coerceAtLeast(0),
-                    (prevY.toInt() - pad).coerceAtLeast(0),
-                    (prevX.toInt() + pad).coerceAtMost(bmp.width),
-                    (prevY.toInt() + pad).coerceAtMost(bmp.height),
-                )
-            }
-            hasDirty = false
             if (rect.isEmpty) return
             val loc = IntArray(2)
             getLocationOnScreen(loc)
             backend?.commitInkStroke(bmp, loc, rect)
+        }
+
+        private fun canonicalStrokeDirtyRect(stroke: Stroke): Rect {
+            val bmp = writingBitmap
+            val pad = transform.toScreenSize(stroke.penWidthMax.toFloat()).toInt() + 4
+            val points = stroke.points
+            if (points.isEmpty() || bmp == null) return Rect()
+            var minX = Float.POSITIVE_INFINITY
+            var minY = Float.POSITIVE_INFINITY
+            var maxX = Float.NEGATIVE_INFINITY
+            var maxY = Float.NEGATIVE_INFINITY
+            for (point in points) {
+                val x = transform.toScreenX(point.x)
+                val y = transform.toScreenY(point.y)
+                minX = min(minX, x); minY = min(minY, y)
+                maxX = max(maxX, x); maxY = max(maxY, y)
+            }
+            return Rect(
+                (minX.toInt() - pad).coerceAtLeast(0),
+                (minY.toInt() - pad).coerceAtLeast(0),
+                (maxX.toInt() + pad + 1).coerceAtMost(bmp.width),
+                (maxY.toInt() + pad + 1).coerceAtMost(bmp.height),
+            )
         }
 
         override fun erase(samples: List<InkSample>, tool: Tool) {
@@ -1796,7 +1840,7 @@ class DrawView @JvmOverloads constructor(
         }
 
         private fun InkSample.toPoint(): StrokePoint =
-            StrokePoint(vx, vy, millipressure, timestampMs)
+            StrokePoint(vx, vy, millipressure, timestampMs, tiltRadians, orientationRadians)
     }
 
     /**
@@ -2112,20 +2156,20 @@ class DrawView @JvmOverloads constructor(
      */
     private fun renderTemplateLayer(canvas: Canvas) {
         if (templateType == PageTemplate.BLANK) return
-        val shortAxis = PageTransform.VIRTUAL_SHORT_AXIS
-        val longAxis = transform.virtualLongAxis
+        val pageWidth = transform.virtualWidth
+        val pageHeight = transform.virtualHeight
         val pitchVirtual = transform.templatePitchVirtual(templatePitchMm.toFloat())
         if (pitchVirtual <= 0f) return
 
         // Page rectangle in screen space — clip the grid to the page so the letterbox stays blank.
         val left = transform.toScreenX(0)
         val top = transform.toScreenY(0)
-        val right = transform.toScreenX(shortAxis)
-        val bottom = transform.toScreenY(longAxis)
+        val right = transform.toScreenX(pageWidth)
+        val bottom = transform.toScreenY(pageHeight)
         if (right <= left || bottom <= top) return
 
-        val xs = TemplateGeometry.lineOffsets(shortAxis.toFloat(), pitchVirtual)
-        val ys = TemplateGeometry.lineOffsets(longAxis.toFloat(), pitchVirtual)
+        val xs = TemplateGeometry.lineOffsets(pageWidth.toFloat(), pitchVirtual)
+        val ys = TemplateGeometry.lineOffsets(pageHeight.toFloat(), pitchVirtual)
 
         val saved = canvas.save()
         canvas.clipRect(left, top, right, bottom)
@@ -2166,28 +2210,7 @@ class DrawView @JvmOverloads constructor(
 
     private fun drawStrokeToBitmap(stroke: Stroke) {
         val canvas = writingCanvas ?: return
-        val points = stroke.points
-        if (points.size < 2) return
-
-        // Per-stroke colour + composite mode (highlighter → DST_OVER, behind ink).
-        // During z-order replay this still lands highlighter beneath ink because
-        // ink pixels are already present when the (later-z) highlighter draws.
-        configureStrokePaintFor(stroke.color)
-
-        for (i in 1 until points.size) {
-            val prev = points[i - 1]
-            val curr = points[i]
-            val w = PressureCurve.width(curr.pressure, stroke.penWidthMin, stroke.penWidthMax)
-            strokePaint.strokeWidth = transform.toScreenSize(w)
-            canvas.drawLine(
-                transform.toScreenX(prev.x), transform.toScreenY(prev.y),
-                transform.toScreenX(curr.x), transform.toScreenY(curr.y),
-                strokePaint
-            )
-        }
-
-        // Leave the shared paint in a clean (normal-composite) state.
-        strokePaint.xfermode = null
+        CanonicalBrushRenderer.drawStroke(canvas, stroke, transform, strokePaint, useDstOver = true)
     }
 
     /**
@@ -2197,14 +2220,21 @@ class DrawView @JvmOverloads constructor(
      * here and the bands can't drift. Boxes mid-resize/move ([transformingBoxId]) are skipped here
      * — they're drawn live in [onDraw] at the gesture's current rect.
      */
-    private fun composeStaticBitmap() {
+    private fun composeStaticBitmap(clipRect: Rect? = null) {
         val canvas = writingCanvas ?: return
-        writingBitmap?.eraseColor(Color.TRANSPARENT)
+        val saveCount = canvas.save()
+        if (clipRect == null) {
+            writingBitmap?.eraseColor(Color.TRANSPARENT)
+        } else {
+            canvas.clipRect(clipRect)
+            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        }
         renderTemplateLayer(canvas)
         for (box in textBoxes) if (box.zBand == ZBand.BOTTOM && box.id.isStaticallyDrawn()) drawTextBox(canvas, box)
         for (stroke in completedStrokes) drawStrokeToBitmap(stroke)
         for (box in textBoxes) if (box.zBand == ZBand.TOP && box.id.isStaticallyDrawn()) drawTextBox(canvas, box)
         renderPageBoundary(canvas) // last: the page-edge marker stays visible over everything
+        canvas.restoreToCount(saveCount)
     }
 
     /**
@@ -2220,8 +2250,8 @@ class DrawView @JvmOverloads constructor(
         if (w <= 0f || h <= 0f) return
         val left = transform.toScreenX(0)
         val top = transform.toScreenY(0)
-        val right = transform.toScreenX(PageTransform.VIRTUAL_SHORT_AXIS)
-        val bottom = transform.toScreenY(transform.virtualLongAxis)
+        val right = transform.toScreenX(transform.virtualWidth)
+        val bottom = transform.toScreenY(transform.virtualHeight)
         // The page's visible span on each axis, clamped to the view, so a marker doesn't run past
         // the page's own extent into a corner that isn't the note.
         val spanTop = top.coerceIn(0f, h)

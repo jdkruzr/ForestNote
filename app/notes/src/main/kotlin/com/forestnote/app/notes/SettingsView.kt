@@ -75,6 +75,8 @@ class SettingsView {
         caldavDrainer: CalDavOutboxDrainer,
         showViwoodsNativePreview: Boolean,
         onViwoodsNativePreviewChanged: (Boolean) -> Unit,
+        onBackup: () -> Unit,
+        onRestore: () -> Unit,
         onClose: () -> Unit,
     ) {
         if (isShowing) return
@@ -89,6 +91,8 @@ class SettingsView {
         root = view
 
         view.findViewById<View>(R.id.btn_settings_back).setOnClickListener { onClose() }
+        view.findViewById<View>(R.id.btn_backup_library).setOnClickListener { onBackup() }
+        view.findViewById<View>(R.id.btn_restore_library).setOnClickListener { onRestore() }
 
         bind(view, store, showViwoodsNativePreview)
     }
@@ -151,6 +155,7 @@ class SettingsView {
         val debugLogsCheck = view.findViewById<CheckBox>(R.id.check_debug_logs)
         val prefillTimestampCheck = view.findViewById<CheckBox>(R.id.check_prefill_timestamp)
         val syncOnCloseCheck = view.findViewById<CheckBox>(R.id.check_sync_on_close)
+        val syncEnabledCheck = view.findViewById<CheckBox>(R.id.check_sync_enabled)
         val viwoodsNativePreviewCheck = view.findViewById<CheckBox>(R.id.check_viwoods_native_preview)
         viwoodsNativePreviewCheck.visibility = if (showViwoodsNativePreview) View.VISIBLE else View.GONE
 
@@ -174,6 +179,10 @@ class SettingsView {
             val syncCreds = secureCreds?.syncCreds()
             syncUserInput.setText(syncCreds?.username ?: s.syncUsername)
             syncPassInput.setText(syncCreds?.password ?: s.syncPassword)
+            val hasSyncConfig = s.syncServerUrl.isNotBlank() &&
+                !(syncCreds?.username ?: s.syncUsername).isBlank() &&
+                !(syncCreds?.password ?: s.syncPassword).isBlank()
+            syncEnabledCheck.isChecked = s.isSyncEnabled(hasSyncConfig)
             syncIntervalInput.setText(s.syncIntervalMinutes.toString())
             selectionInput.setText(s.selectionRecognitionUrl)
             fulltextInput.setText(s.fullTextTranscriptionUrl)
@@ -205,6 +214,11 @@ class SettingsView {
         syncOnCloseCheck.setOnCheckedChangeListener { _, checked ->
             if (loading) return@setOnCheckedChangeListener
             store.updateSettings({ it.copy(syncOnClose = checked) })
+        }
+
+        syncEnabledCheck.setOnCheckedChangeListener { _, checked ->
+            if (loading) return@setOnCheckedChangeListener
+            store.updateSettings({ it.copy(syncEnabled = checked) })
         }
 
         viwoodsNativePreviewCheck.setOnCheckedChangeListener { _, checked ->

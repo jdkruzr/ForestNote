@@ -6,8 +6,8 @@ package com.forestnote.app.notes
 /** Pure cache-key + eviction logic for the Library thumbnail disk cache (AC4.2). */
 object ThumbnailCacheLogic {
     /** "{pageId}_{strokeCount}_{modifiedAt}" — pageId is a ULID (no underscores). */
-    fun key(pageId: String, strokeCount: Long, modifiedAt: Long): String =
-        "${pageId}_${strokeCount}_${modifiedAt}"
+    fun key(pageId: String, strokeCount: Long, modifiedAt: Long, pageWidth: Int = 0, pageHeight: Int = 0): String =
+        "${pageId}_${strokeCount}_${modifiedAt}" + if (pageWidth > 0 && pageHeight > 0) "_${pageWidth}x$pageHeight" else ""
 
     /** True if [fileBaseName] (no extension) belongs to [pageId] (same prefix). */
     fun belongsTo(pageId: String, fileBaseName: String): Boolean =

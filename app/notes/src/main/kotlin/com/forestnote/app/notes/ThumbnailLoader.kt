@@ -32,7 +32,7 @@ class ThumbnailLoader(
         store.thumbnailSource(notebookId) { src ->
             if (stale(target, notebookId)) return@thumbnailSource
             if (src == null) return@thumbnailSource  // empty notebook keeps the placeholder
-            val key = ThumbnailCacheLogic.key(src.pageId, src.strokeCount, src.modifiedAt)
+            val key = ThumbnailCacheLogic.key(src.pageId, src.strokeCount, src.modifiedAt, src.pageWidth, src.pageHeight)
             submit {
                 val cached = cache.read(key)
                 if (cached != null) {
@@ -40,7 +40,7 @@ class ThumbnailLoader(
                 } else {
                     store.loadStrokesForPage(src.pageId) { strokes ->
                         submit {
-                            val bmp = ThumbnailRenderer.render(strokes)
+                            val bmp = ThumbnailRenderer.render(strokes, src.pageWidth, src.pageHeight)
                             cache.write(src.pageId, key, bmp)
                             apply(target, notebookId, bmp)
                         }

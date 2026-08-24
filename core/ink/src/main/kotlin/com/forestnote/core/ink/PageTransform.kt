@@ -51,6 +51,12 @@ class PageTransform {
     var virtualLongAxis: Int = VIRTUAL_LONG_AXIS
         private set
 
+    /** Exact virtual page dimensions. v4 pages are represented as 10,000 × [virtualLongAxis]. */
+    var virtualWidth: Int = VIRTUAL_SHORT_AXIS
+        private set
+    var virtualHeight: Int = VIRTUAL_LONG_AXIS
+        private set
+
     /** Screen width in pixels. */
     var screenWidth: Int = 0
         private set
@@ -74,13 +80,20 @@ class PageTransform {
      * @param longAxis Virtual units along the page's long axis (per-notebook; default = legacy 3:4)
      */
     fun update(widthPx: Int, heightPx: Int, longAxis: Int = VIRTUAL_LONG_AXIS) {
+        updatePage(widthPx, heightPx, VIRTUAL_SHORT_AXIS, longAxis)
+    }
+
+    /** Fit an orientation-preserving page rectangle into the measured drawable view. */
+    fun updatePage(widthPx: Int, heightPx: Int, pageWidth: Int, pageHeight: Int) {
         screenWidth = widthPx
         screenHeight = heightPx
-        virtualLongAxis = longAxis
+        virtualWidth = pageWidth.takeIf { it > 0 } ?: VIRTUAL_SHORT_AXIS
+        virtualHeight = pageHeight.takeIf { it > 0 } ?: VIRTUAL_LONG_AXIS
+        virtualLongAxis = maxOf(virtualWidth, virtualHeight)
 
         fitScale = minOf(
-            widthPx.toFloat() / VIRTUAL_SHORT_AXIS,
-            heightPx.toFloat() / longAxis,
+            widthPx.toFloat() / virtualWidth,
+            heightPx.toFloat() / virtualHeight,
         )
         scale = fitScale * zoom
         clampViewport()
@@ -115,8 +128,8 @@ class PageTransform {
     fun pageRectScreen(): ScreenRect = ScreenRect(
         left = toScreenX(0f),
         top = toScreenY(0f),
-        right = toScreenX(VIRTUAL_SHORT_AXIS.toFloat()),
-        bottom = toScreenY(virtualLongAxis.toFloat()),
+        right = toScreenX(virtualWidth.toFloat()),
+        bottom = toScreenY(virtualHeight.toFloat()),
     )
 
     /** Convert virtual width/distance to screen pixels. */
@@ -176,8 +189,8 @@ class PageTransform {
     }
 
     private fun clampViewport() {
-        val maxX = (VIRTUAL_SHORT_AXIS - visibleVirtualWidth()).coerceAtLeast(0f)
-        val maxY = (virtualLongAxis - visibleVirtualHeight()).coerceAtLeast(0f)
+        val maxX = (virtualWidth - visibleVirtualWidth()).coerceAtLeast(0f)
+        val maxY = (virtualHeight - visibleVirtualHeight()).coerceAtLeast(0f)
         viewportX = viewportX.coerceIn(0f, maxX)
         viewportY = viewportY.coerceIn(0f, maxY)
     }

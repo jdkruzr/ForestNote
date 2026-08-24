@@ -24,11 +24,15 @@ class PageBoundsGate {
      * or null if it must be dropped. A DOWN off-page latches the whole stroke off.
      */
     fun admit(sample: InkSample, phase: InkPhase, longAxis: Int): InkSample? {
+        return admit(sample, phase, PageTransform.VIRTUAL_SHORT_AXIS, longAxis)
+    }
+
+    fun admit(sample: InkSample, phase: InkPhase, width: Int, height: Int): InkSample? {
         if (rejected) return null
-        if (phase == InkPhase.DOWN && !PageBounds.contains(sample.vx, sample.vy, longAxis)) {
+        if (phase == InkPhase.DOWN && !PageBounds.contains(sample.vx, sample.vy, width, height)) {
             rejected = true
             return null
         }
-        return PageBounds.clamp(sample, longAxis)
+        return PageBounds.clamp(sample, width, height)
     }
 }

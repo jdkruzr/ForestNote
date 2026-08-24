@@ -5,7 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import com.forestnote.core.ink.PageTransform
-import com.forestnote.core.ink.PressureCurve
+import com.forestnote.core.ink.CanonicalBrushRenderer
 import com.forestnote.core.ink.Stroke
 
 // pattern: Imperative Shell
@@ -20,33 +20,25 @@ object ThumbnailRenderer {
     const val WIDTH_PX = 300
     const val HEIGHT_PX = 400  // 3:4, matches the card tile
 
-    fun render(strokes: List<Stroke>): Bitmap {
+    fun render(
+        strokes: List<Stroke>,
+        pageWidth: Int = PageTransform.VIRTUAL_SHORT_AXIS,
+        pageHeight: Int = PageTransform.VIRTUAL_LONG_AXIS,
+    ): Bitmap {
         val bmp = Bitmap.createBitmap(WIDTH_PX, HEIGHT_PX, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         canvas.drawColor(Color.WHITE)
 
-        val transform = PageTransform().apply { update(WIDTH_PX, HEIGHT_PX) }
+        val transform = PageTransform().apply { updatePage(WIDTH_PX, HEIGHT_PX, pageWidth, pageHeight) }
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
         }
-        for (stroke in strokes) {
-            val pts = stroke.points
-            if (pts.size < 2) continue
-            paint.color = stroke.color
-            for (i in 1 until pts.size) {
-                val prev = pts[i - 1]
-                val curr = pts[i]
-                val w = PressureCurve.width(curr.pressure, stroke.penWidthMin, stroke.penWidthMax)
-                paint.strokeWidth = transform.toScreenSize(w)
-                canvas.drawLine(
-                    transform.toScreenX(prev.x), transform.toScreenY(prev.y),
-                    transform.toScreenX(curr.x), transform.toScreenY(curr.y),
-                    paint
-                )
-            }
-        }
+        strokes.filter { CanonicalBrushRenderer.isBehind(it.brushKind) }
+            .forEach { CanonicalBrushRenderer.drawStroke(canvas, it, transform, paint) }
+        strokes.filterNot { CanonicalBrushRenderer.isBehind(it.brushKind) }
+            .forEach { CanonicalBrushRenderer.drawStroke(canvas, it, transform, paint) }
         return bmp
     }
 }

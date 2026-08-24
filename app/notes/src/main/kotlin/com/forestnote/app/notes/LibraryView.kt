@@ -36,6 +36,7 @@ class LibraryView {
         val onOpenSearch: () -> Unit,
         // Bulk actions on the current selection (D1 wires the UI; D2/D3 fill in the dialogs).
         val onBulkMove: (Set<String>) -> Unit,
+        val onBulkExport: (Set<String>) -> Unit,
         val onBulkDelete: (Set<String>) -> Unit
     )
 
@@ -138,6 +139,9 @@ class LibraryView {
         view.findViewById<View>(R.id.btn_select_done).setOnClickListener { exitSelectMode() }
         view.findViewById<View>(R.id.btn_select_move).setOnClickListener {
             if (selectedIds.isNotEmpty()) this.callbacks?.onBulkMove(selectedIds.toSet())
+        }
+        view.findViewById<View>(R.id.btn_select_export).setOnClickListener {
+            if (selectedIds.isNotEmpty()) this.callbacks?.onBulkExport(selectedIds.toSet())
         }
         view.findViewById<View>(R.id.btn_select_delete).setOnClickListener {
             if (selectedIds.isNotEmpty()) this.callbacks?.onBulkDelete(selectedIds.toSet())
@@ -255,6 +259,9 @@ class LibraryView {
             SelectModeLogic.countLabel(selectedIds.size)
         val actionsEnabled = SelectModeLogic.actionsEnabled(selectedIds)
         view.findViewById<View>(R.id.btn_select_move).apply {
+            isEnabled = actionsEnabled; alpha = if (actionsEnabled) 1f else 0.3f
+        }
+        view.findViewById<View>(R.id.btn_select_export).apply {
             isEnabled = actionsEnabled; alpha = if (actionsEnabled) 1f else 0.3f
         }
         view.findViewById<View>(R.id.btn_select_delete).apply {

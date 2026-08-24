@@ -257,7 +257,9 @@ object StrokeGeometry {
                             points = currentRun.toList(),
                             color = stroke.color,
                             penWidthMin = stroke.penWidthMin,
-                            penWidthMax = stroke.penWidthMax
+                            penWidthMax = stroke.penWidthMax,
+                            brushKind = stroke.brushKind,
+                            brushVersion = stroke.brushVersion,
                         )
                     )
                 }
@@ -272,7 +274,9 @@ object StrokeGeometry {
                     points = currentRun.toList(),
                     color = stroke.color,
                     penWidthMin = stroke.penWidthMin,
-                    penWidthMax = stroke.penWidthMax
+                    penWidthMax = stroke.penWidthMax,
+                    brushKind = stroke.brushKind,
+                    brushVersion = stroke.brushVersion,
                 )
             )
         }

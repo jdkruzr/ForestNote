@@ -1,6 +1,6 @@
 # ForestNote
 
-Last verified: 2026-08-23 (Viwoods direct ink / 1.8)
+Last verified: 2026-08-23 (ForestNote 2.0 local-first + portable brushes)
 
 E-ink note-taking app for low-latency stylus handwriting. Two firmware-latency ink paths sit behind one `InkBackend` seam: the **Viwoods AiPaper Mini** via reverse-engineered ENote callbacks (direct digitizer input on ENote's worker thread → app bitmap → partial panel refresh), and **Boox/Onyx** devices via the published Onyx Pen SDK (`TouchHelper`/`RawInputCallback` — firmware renders live ink). A generic `View.invalidate()` fallback covers any other Android device. Backend is auto-detected at launch; stored stroke DATA is identical across platforms (only the live on-panel transport differs).
 
@@ -9,7 +9,7 @@ E-ink note-taking app for low-latency stylus handwriting. Two firmware-latency i
 - Min SDK: 30, Target SDK: 30, Compile SDK: 35
 - Build: Gradle with convention plugins in `build-logic/`
 - Storage: SQLDelight 2.0.2 (SQLite). The single library file (`default.forestnote`) lives at **`/sdcard/ForestNote/`** (top-level shared external storage) so it survives an uninstall/reinstall (chiefly the debug→release signing-key swap) and is Termux-inspectable. Creating a top-level `/sdcard` folder on API 30+ needs `MANAGE_EXTERNAL_STORAGE` ("All files access"), which `MainActivity` requests on first launch; until granted, the datastore falls back to app-private storage and migrates out to `/sdcard` once granted. Redirected via `StorageLocation`/`ExternalStorageContext` in `core:format` — see `core/format/CLAUDE.md`. Secrets (EncryptedSharedPreferences) stay in private storage.
-- Device↔server sync: the **RhizomeSync library** (`io.rhizome:rhizome-core/-sqlite/-http:0.8.2`, published to mavenLocal from `~/rhizome`) — the schema-driven, row-level-LWW, HLC-stamped sync core extracted from FN+UB so the correctness-critical algorithm lives in one place. `core:format` binds it via `SqliteStorageAdapter` (capture/apply/outbox in `rhizome_*` tables) + `ForestNoteRegistry` (the wire schema, hash v4 `74e6b5d7…`); `app:notes` `SyncController` drives `io.rhizome.core.SyncEngine`. `core:sync` is now just the FN-specific `SyncBackoff`/`SyncJoinPlan` policy. (Phase 8 cutover; see `core/sync/CLAUDE.md` + memory `project_rhizome`.)
+- Device↔server sync: the **RhizomeSync library** (`io.rhizome:rhizome-core/-sqlite/-http:0.8.2`, published to mavenLocal from `~/rhizome`) — the schema-driven, row-level-LWW, HLC-stamped sync core extracted from FN+UB so the correctness-critical algorithm lives in one place. `core:format` binds it via `SqliteStorageAdapter` + `ForestNoteRegistry` (wire v5, hash `ed367ffd…`: exact page width/height + portable brush identity/version/seed/dynamics); `app:notes` drives the engine. Sync is explicitly opt-in; a fresh install is a complete local-only app.
 - Geometry: Jetpack Ink API 1.0.0 (brush/geometry/strokes)
 - Boox/Onyx ink: Onyx Pen SDK (`onyxsdk-pen:1.5.4` + `-device:1.3.5` + `-base:1.8.5`) + `hiddenapibypass:6.1`, used only by `BooxInkBackend` in `core:ink`, runtime-gated to Onyx devices (inert elsewhere); cleartext-HTTP Maven repo. See `core/ink/CLAUDE.md` for the firmware raw-drawing model (two independent firmware switches, canvas-only surface, freeze-toggle reconcile)
 - UI: Android Views (no Compose), Material 3
@@ -46,6 +46,8 @@ E-ink note-taking app for low-latency stylus handwriting. Two firmware-latency i
 - Virtual coordinate space everywhere above PageTransform; screen pixels below it
 - Defensive coding: catch-and-log, never crash on I/O or reflection failures
 - All strokes stored in virtual units (short axis = 10,000)
+- New notebooks persist the exact creator-canvas aspect as a virtual width/height pair (short axis 10,000); legacy notebooks fall back to the historical 10,000 × long-axis shape
+- `BrushKind` is the portable stroke identity. Vendor brush enums are preview-only; `CanonicalBrushRenderer` owns committed pixels on every device and export path
 - Pressure stored as millipressure (0-1000 integer)
 - Notebook/page/stroke identity is a client-minted ULID (String), assigned at construction — no "unsaved" id state
 - All DB access is off the main thread, serialized through `NotebookStore` (single background thread); UI never touches `NotebookRepository` directly

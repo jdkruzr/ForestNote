@@ -9,15 +9,15 @@ import kotlin.test.assertEquals
  * data-corruption risk — it fails loudly. Mirrors UltraBridge's `internal/syncstore/parity_test.go`
  * and the Go server's `registry.ForestNote()`; all three MUST agree.
  *
- * v4 adds `notebook.aspect_long_axis` (per-notebook page aspect ratio). The prior v3
- * (`724411eb…`) was RETIRED from UltraBridge's `AcceptsSchemaHash` grace window with UB v1.4.0.
+ * v5 adds exact notebook page geometry and portable brush metadata. UltraBridge accepts the
+ * immediately preceding v4 hash for one release so existing devices can upgrade without a flag day.
  */
 class ForestNoteRegistryHashTest {
 
-    private val v4 = "74e6b5d790c919290d0e1fca3462800a5dc4abb288042dda2b48d4eb0482bbf2"
+    private val v5 = "ed367ffd86b24c3b53f7a85b4f46b7f0cb69e0c6fbd0e1048289a659b4c967dd"
 
     @Test
-    fun registryReproducesV4Hash() {
-        assertEquals(v4, ForestNoteRegistry.registry.schemaHash())
+    fun registryReproducesV5Hash() {
+        assertEquals(v5, ForestNoteRegistry.registry.schemaHash())
     }
 }

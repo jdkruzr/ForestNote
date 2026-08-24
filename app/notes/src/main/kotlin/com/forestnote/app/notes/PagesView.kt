@@ -89,7 +89,8 @@ class PagesView {
         val recycler = grid ?: return
         val density = recycler.resources.displayMetrics.density
         recycler.layoutManager = GridLayoutManager(recycler.context, PageBrowserLogic.spanCount(recycler.width.coerceAtLeast(recycler.resources.displayMetrics.widthPixels), density))
-        val newAdapter = Adapter(pages, active, settings, notebook?.aspectLongAxis ?: com.forestnote.core.ink.PageTransform.VIRTUAL_LONG_AXIS, notebook?.modifiedAt ?: 0L, loader!!, callbacks!!)
+        val geometry = NotebookAspectPolicy.resolve(notebook)
+        val newAdapter = Adapter(pages, active, settings, geometry.width, geometry.height, notebook?.modifiedAt ?: 0L, loader!!, callbacks!!)
         adapter = newAdapter; recycler.adapter = newAdapter
     }
 
@@ -98,7 +99,8 @@ class PagesView {
     private fun dp(n: Int) = (n * (host?.resources?.displayMetrics?.density ?: 1f)).toInt()
 
     private class Adapter(
-        private val pages: List<PageMeta>, private val active: String, private val settings: Settings, private val longAxis: Int, private val modifiedAt: Long,
+        private val pages: List<PageMeta>, private val active: String, private val settings: Settings,
+        private val pageWidth: Int, private val pageHeight: Int, private val modifiedAt: Long,
         private val loader: PagePreviewLoader, private val callbacks: Callbacks,
     ) : RecyclerView.Adapter<Holder>() {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
@@ -115,7 +117,7 @@ class PagesView {
             val page = pages[position]; holder.label.text = PageBrowserLogic.pageLabel(position) + if (page.id == active) "  ✓" else ""
             holder.root.background = GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(if (page.id == active) 3 else 1, Color.BLACK) }
             holder.root.setOnClickListener { callbacks.onSelectPage(page.id) }
-            loader.load(page, settings, longAxis, modifiedAt, holder.image)
+            loader.load(page, settings, pageWidth, pageHeight, modifiedAt, holder.image)
         }
     }
     private class Holder(val root: View, val image: ImageView, val label: TextView) : RecyclerView.ViewHolder(root)

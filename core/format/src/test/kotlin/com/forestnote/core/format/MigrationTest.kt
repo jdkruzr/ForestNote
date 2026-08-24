@@ -307,23 +307,39 @@ class MigrationTest {
      * way up, so a full v2 -> current chain exercises both their creation and their drop.
      */
     @Test
-    fun v18ToV19DropsLegacySyncTablesButKeepsSyncStateAndViews() {
+    fun legacyDatabaseReachesPortableBrushAndExactPageSchema() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         createV2Schema(driver)
 
-        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = NotebookDatabase.Schema.version)
+        // Stop immediately before 19.sqm, seed a real v19 row, then exercise the v20 migration.
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 2L, newVersion = 19L)
+        driver.execute(null,
+            "INSERT INTO notebook(id, name, sort_order, created_at, modified_at) VALUES ('n1', 'N', 0, 1, 1)", 0)
+        driver.execute(null,
+            "INSERT INTO page(id, notebook_id, sort_order, created_at) VALUES ('p1', 'n1', 0, 1)", 0)
+        driver.execute(null,
+            "INSERT INTO stroke(id, page_id, color, pen_width_min, pen_width_max, points, z, created_at) " +
+                "VALUES ('s1', 'p1', -2302756, 7, 35, x'', 0, 1)", 0)
+        NotebookDatabase.Schema.migrate(driver, oldVersion = 19L, newVersion = NotebookDatabase.Schema.version)
 
         assertFalse(tableExists(driver, "outbox"), "outbox is dropped by 18.sqm")
         assertFalse(tableExists(driver, "sync_row_meta"), "sync_row_meta is dropped by 18.sqm")
         assertTrue(tableExists(driver, "sync_state"), "sync_state (local-only state) is retained")
         assertTrue(viewExists(driver, "notebook_live"), "notebook_live view survives the drop migration")
         assertTrue(viewExists(driver, "folder_live"), "folder_live view survives the drop migration")
+        assertTrue(columnNames(driver, "notebook").containsAll(setOf("page_width", "page_height")))
+        assertTrue(columnNames(driver, "stroke").containsAll(
+            setOf("brush_kind", "brush_version", "brush_seed", "point_dynamics"),
+        ))
+        assertEquals("highlighter", readString(driver, "SELECT brush_kind FROM stroke WHERE id = 's1'"),
+            "the reserved legacy highlighter color migrates to its portable brush identity")
 
         // The migrated DB is usable end-to-end (openExisting reads notebook_live during bootstrap).
         val repo = NotebookRepository.openExisting(driver)
         val stroke = Stroke(points = listOf(StrokePoint(1, 2, 3, 4L)))
         repo.saveStroke(stroke)
-        assertEquals(1, repo.loadStrokes().size, "migrated v19 DB accepts and returns strokes")
+        assertEquals(setOf("s1", stroke.id), repo.loadStrokes().map { it.id }.toSet(),
+            "migrated v20 DB preserves old strokes and accepts new ones")
 
         driver.close()
     }

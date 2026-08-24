@@ -257,8 +257,10 @@ class ViwoodsBackend : InkBackend {
     override fun commitInkStroke(bitmap: Bitmap, viewLocation: IntArray, dirtyRect: Rect) {
         if (!controllerUsesDirectInput) return
         updateBitmapAndLocation(bitmap, viewLocation)
-        // The ENote worker bitmap already shows the stroke. This updates the ordinary retained View
-        // underneath it, so screencap/dialog/compositor transactions reveal the same completed ink.
+        // DrawView has replaced the cheap live preview with ForestNote's canonical brush pixels.
+        // Refresh the worker bitmap and publish just that dirty region so what remains on glass is
+        // the same thing screenshots/reloads/exports see, even for brushes the firmware approximates.
+        reconcilePreviewFromCurrent(render = true, dirtyRect = dirtyRect)
         host?.invalidate(dirtyRect)
     }
 
@@ -557,7 +559,10 @@ class ViwoodsBackend : InkBackend {
         val pressure = event.pressure.coerceIn(0f, 1f)
         view.post {
             val pageTransform = transform ?: return@post
-            val sample = InkSample.from(x, y, pressure, System.currentTimeMillis(), pageTransform)
+            val sample = InkSample.from(
+                x, y, pressure, System.currentTimeMillis(), pageTransform,
+                tiltRadians = event.tilt.takeIf { it.isFinite() && it > 0f },
+            )
             when (action) {
                 ViwoodsInkAction.DOWN -> {
                     sink.begin(Tool.Pen, params)

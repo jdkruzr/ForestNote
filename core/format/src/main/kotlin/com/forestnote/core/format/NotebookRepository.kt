@@ -8,6 +8,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.forestnote.core.ink.Stroke
+import com.forestnote.core.ink.BrushKind
 import io.rhizome.core.Op
 import io.rhizome.sqlite.SqliteHandle
 import io.rhizome.sqlite.SqliteStorageAdapter
@@ -17,6 +18,7 @@ import com.forestnote.core.ink.TextBox
 import com.forestnote.core.ink.Ulid
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.File
 
 /** Public notebook metadata so the UI never touches generated row types. */
 data class NotebookMeta(
@@ -30,6 +32,9 @@ data class NotebookMeta(
      * default (PageTransform.VIRTUAL_LONG_AXIS).
      */
     val aspectLongAxis: Int? = null,
+    /** Exact v5 virtual page geometry; both null means use the legacy portrait aspect. */
+    val pageWidth: Int? = null,
+    val pageHeight: Int? = null,
 )
 
 /**
@@ -251,7 +256,7 @@ class NotebookRepository private constructor(
             val nid = Ulid.generate()
             // Bootstrap notebook gets a NULL aspect → legacy 3:4 default; a real shape is captured
             // only when the user creates a notebook from a device with a known canvas size.
-            db.notebookQueries.insertNotebook(nid, DEFAULT_NOTEBOOK_NAME, 0, now, now, null, null)
+            db.notebookQueries.insertNotebook(nid, DEFAULT_NOTEBOOK_NAME, 0, now, now, null, null, null, null)
             notebooks = db.notebookQueries.listNotebooks().executeAsList()
         }
         val state = db.notebookQueries.getAppState().executeAsOneOrNull()
@@ -438,9 +443,23 @@ class NotebookRepository private constructor(
         return next
     }
 
+    /** Create a transactionally consistent standalone SQLite snapshot while this connection owns DB access. */
+    fun writeSnapshot(destination: File) {
+        require(!destination.exists()) { "snapshot destination already exists" }
+        driver.execute(null, "VACUUM INTO ?", 1) { bindString(0, destination.absolutePath) }
+    }
+
     fun listNotebooks(): List<NotebookMeta> =
         db.notebookQueries.listNotebooks().executeAsList()
-            .map { NotebookMeta(it.id, it.name, it.created_at, it.modified_at, it.aspect_long_axis?.toInt()) }
+            .map {
+                NotebookMeta(
+                    it.id, it.name, it.created_at, it.modified_at,
+                    it.aspect_long_axis?.toInt(), it.page_width?.toInt(), it.page_height?.toInt(),
+                )
+            }
+
+    fun notebook(notebookId: String): NotebookMeta? =
+        listNotebooks().firstOrNull { it.id == notebookId }
 
     /** Notebooks directly inside [folderId] (null = root) with page counts, for the Library grid. */
     fun listNotebookCardsInFolder(folderId: String?): List<NotebookCard> =
@@ -457,7 +476,10 @@ class NotebookRepository private constructor(
         db.notebookQueries.countPagesForNotebook(notebookId).executeAsOne()
 
     fun listPagesForCurrentNotebook(): List<PageMeta> =
-        db.notebookQueries.listPagesForNotebook(currentNotebookId).executeAsList()
+        listPagesForNotebook(currentNotebookId)
+
+    fun listPagesForNotebook(notebookId: String): List<PageMeta> =
+        db.notebookQueries.listPagesForNotebook(notebookId).executeAsList()
             .map {
                 PageMeta(
                     id = it.id,
@@ -507,13 +529,22 @@ class NotebookRepository private constructor(
      * Create a notebook appended at sort_order = max+1, with one initial page (AC2.1).
      * [folderId] places it inside a folder (C4); null = root (the editor's default).
      */
-    fun createNotebook(name: String, folderId: String? = null, aspectLongAxis: Int? = null): String {
+    fun createNotebook(
+        name: String,
+        folderId: String? = null,
+        aspectLongAxis: Int? = null,
+        pageWidth: Int? = null,
+        pageHeight: Int? = null,
+    ): String {
         val nid = Ulid.generate()
         val now = clock()
         val so = db.notebookQueries.nextNotebookSortOrder().executeAsOne()
         val (seedTemplate, seedPitch) = defaultTemplateSeed()
         db.transaction {
-            db.notebookQueries.insertNotebook(nid, name, so, now, now, folderId, aspectLongAxis?.toLong())
+            db.notebookQueries.insertNotebook(
+                nid, name, so, now, now, folderId, aspectLongAxis?.toLong(),
+                pageWidth?.toLong(), pageHeight?.toLong(),
+            )
             // A notebook always has at least one page; its first page is seeded with the
             // global default (concrete), since it has no predecessor to copy (B4).
             val pid = Ulid.generate()
@@ -542,6 +573,17 @@ class NotebookRepository private constructor(
     fun setNotebookAspect(notebookId: String, aspectLongAxis: Int) {
         db.transaction {
             db.notebookQueries.setNotebookAspectLongAxis(aspectLongAxis.toLong(), notebookId)
+            enqueueOp("notebook", notebookId, clock())
+        }
+    }
+
+    /** Persist exact creator geometry while keeping the v4 long-axis projection populated. */
+    fun setNotebookPageGeometry(notebookId: String, width: Int, height: Int) {
+        val longAxis = maxOf(width, height)
+        db.transaction {
+            db.notebookQueries.setNotebookPageGeometry(
+                longAxis.toLong(), width.toLong(), height.toLong(), notebookId,
+            )
             enqueueOp("notebook", notebookId, clock())
         }
     }
@@ -866,7 +908,11 @@ class NotebookRepository private constructor(
                 color = stroke.color.toLong(),
                 pen_width_min = stroke.penWidthMin.toLong(),
                 pen_width_max = stroke.penWidthMax.toLong(),
+                brush_kind = stroke.brushKind.wireId,
+                brush_version = stroke.brushVersion.toLong(),
+                brush_seed = stroke.brushSeed.toLong(),
                 points = StrokeSerializer.encode(stroke.points),
+                point_dynamics = PointDynamicsSerializer.encode(stroke.points),
                 z = z,
                 created_at = now
             )
@@ -887,10 +933,13 @@ class NotebookRepository private constructor(
             .map { row ->
                 Stroke(
                     id = row.id,
-                    points = StrokeSerializer.decode(row.points),
+                    points = PointDynamicsSerializer.apply(StrokeSerializer.decode(row.points), row.point_dynamics),
                     color = row.color.toInt(),
                     penWidthMin = row.pen_width_min.toInt(),
-                    penWidthMax = row.pen_width_max.toInt()
+                    penWidthMax = row.pen_width_max.toInt(),
+                    brushKind = BrushKind.fromWireId(row.brush_kind),
+                    brushVersion = row.brush_version.toInt(),
+                    brushSeed = row.brush_seed.toInt().takeIf { it != 0 } ?: BrushKind.seedFor(row.id),
                 )
             }
     }
@@ -908,10 +957,13 @@ class NotebookRepository private constructor(
         db.notebookQueries.getStrokesForPage(pageId).executeAsList().map { row ->
             Stroke(
                 id = row.id,
-                points = StrokeSerializer.decode(row.points),
+                points = PointDynamicsSerializer.apply(StrokeSerializer.decode(row.points), row.point_dynamics),
                 color = row.color.toInt(),
                 penWidthMin = row.pen_width_min.toInt(),
-                penWidthMax = row.pen_width_max.toInt()
+                penWidthMax = row.pen_width_max.toInt(),
+                brushKind = BrushKind.fromWireId(row.brush_kind),
+                brushVersion = row.brush_version.toInt(),
+                brushSeed = row.brush_seed.toInt().takeIf { it != 0 } ?: BrushKind.seedFor(row.id),
             )
         }
 
@@ -958,7 +1010,11 @@ class NotebookRepository private constructor(
                     color = stroke.color.toLong(),
                     pen_width_min = stroke.penWidthMin.toLong(),
                     pen_width_max = stroke.penWidthMax.toLong(),
+                    brush_kind = stroke.brushKind.wireId,
+                    brush_version = stroke.brushVersion.toLong(),
+                    brush_seed = stroke.brushSeed.toLong(),
                     points = StrokeSerializer.encode(stroke.points),
+                    point_dynamics = PointDynamicsSerializer.encode(stroke.points),
                     z = z,
                     created_at = now
                 )

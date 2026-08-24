@@ -130,8 +130,47 @@
                 android:textColor="@color/black"
                 android:text="Pre-fill new-notebook names with timestamp (YYYYMMDD_HHMMSS)" />
 
+            <!-- ===== Local data ===== -->
+            <TextView style="@style/SettingsSection" android:text="Local data" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/gray_dark"
+                android:textSize="13sp"
+                android:text="Backups contain notebooks and app settings. Passwords are never included." />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingTop="8dp">
+
+                <Button
+                    android:id="@+id/btn_backup_library"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Create backup…" />
+
+                <Button
+                    android:id="@+id/btn_restore_library"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:text="Restore backup…" />
+            </LinearLayout>
+
             <!-- ===== Sync ===== -->
             <TextView style="@style/SettingsSection" android:text="Sync" />
+
+            <CheckBox
+                android:id="@+id/check_sync_enabled"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minHeight="44dp"
+                android:textSize="15sp"
+                android:textColor="@color/black"
+                android:text="Enable network sync (off means this device stays local-only)" />
 
             <TextView style="@style/SettingsLabel" android:text="Sync server URL" />
             <EditText

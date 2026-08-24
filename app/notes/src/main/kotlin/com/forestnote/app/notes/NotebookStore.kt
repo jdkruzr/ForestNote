@@ -29,6 +29,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
+import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,7 +42,13 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 // Pure geometry (StrokeGeometry.reconcileErase) is delegated to core:ink.
 
 /** The cheap inputs to a notebook's first-page thumbnail cache key (C3b). */
-data class ThumbnailSource(val pageId: String, val strokeCount: Long, val modifiedAt: Long)
+data class ThumbnailSource(
+    val pageId: String,
+    val strokeCount: Long,
+    val modifiedAt: Long,
+    val pageWidth: Int,
+    val pageHeight: Int,
+)
 
 /** Complete, immutable input for an arbitrary-page browser preview. */
 data class PagePreviewSource(
@@ -50,8 +57,24 @@ data class PagePreviewSource(
     val textBoxes: List<TextBox>,
     val template: PageTemplate,
     val pitchMm: Int,
-    val notebookLongAxis: Int,
+    val pageWidth: Int,
+    val pageHeight: Int,
     val notebookModifiedAt: Long,
+)
+
+data class ExportPageSnapshot(
+    val page: PageMeta,
+    val strokes: List<Stroke>,
+    val textBoxes: List<TextBox>,
+    val template: PageTemplate,
+    val pitchMm: Int,
+)
+
+data class ExportNotebookSnapshot(
+    val notebook: NotebookMeta,
+    val pageWidth: Int,
+    val pageHeight: Int,
+    val pages: List<ExportPageSnapshot>,
 )
 
 /**
@@ -223,7 +246,8 @@ class NotebookStore(
             val src = runCatching {
                 val r = repo ?: return@runCatching null
                 val pageId = r.firstPageIdForNotebook(notebookId) ?: return@runCatching null
-                ThumbnailSource(pageId, r.countStrokesForPage(pageId), r.modifiedAtOf(notebookId))
+                val geometry = NotebookAspectPolicy.resolve(r.notebook(notebookId))
+                ThumbnailSource(pageId, r.countStrokesForPage(pageId), r.modifiedAtOf(notebookId), geometry.width, geometry.height)
             }.onFailure { android.util.Log.e(TAG, "failed to read thumbnail source", it) }
                 .getOrNull()
             poster { onResult(src) }
@@ -240,6 +264,38 @@ class NotebookStore(
         }
     }
 
+    /** Immutable, arbitrary-notebook read used by SAF export; never changes editor context. */
+    suspend fun exportSnapshots(notebookIds: Set<String>): List<ExportNotebookSnapshot> =
+        suspendCancellableCoroutine { continuation ->
+            executor.execute {
+                runCatching {
+                    val r = requireNotNull(repo) { "notebook store not ready" }
+                    val settings = r.settings()
+                    notebookIds.mapNotNull { id ->
+                        val notebook = r.notebook(id) ?: return@mapNotNull null
+                        val geometry = NotebookAspectPolicy.resolve(notebook)
+                        ExportNotebookSnapshot(
+                            notebook = notebook,
+                            pageWidth = geometry.width,
+                            pageHeight = geometry.height,
+                            pages = r.listPagesForNotebook(id).map { page ->
+                                ExportPageSnapshot(
+                                    page = page,
+                                    strokes = r.loadStrokesForPage(page.id),
+                                    textBoxes = r.loadTextBoxesForPage(page.id),
+                                    template = TemplateGeometry.effectiveTemplate(page.template, settings.defaultTemplate),
+                                    pitchMm = TemplateGeometry.effectivePitchMm(page.templatePitchMm, settings.defaultPitchMm),
+                                )
+                            },
+                        )
+                    }
+                }.onSuccess { continuation.resume(it) }
+                    .onFailure { continuation.resumeWithException(it) }
+            }
+        }
+
+    suspend fun writeDatabaseSnapshot(destination: File) = onDb { it.writeSnapshot(destination) }
+
     /**
      * Load an arbitrary page's visible editor layers without changing active-page context.
      * The notebook revision is deliberately included in the cache source: a page-browser preview
@@ -248,7 +304,8 @@ class NotebookStore(
     fun loadPagePreview(
         page: PageMeta,
         settings: Settings,
-        notebookLongAxis: Int,
+        pageWidth: Int,
+        pageHeight: Int,
         notebookModifiedAt: Long,
         onResult: (PagePreviewSource) -> Unit,
     ) {
@@ -261,12 +318,13 @@ class NotebookStore(
                     textBoxes = r?.loadTextBoxesForPage(page.id).orEmpty(),
                     template = TemplateGeometry.effectiveTemplate(page.template, settings.defaultTemplate),
                     pitchMm = TemplateGeometry.effectivePitchMm(page.templatePitchMm, settings.defaultPitchMm),
-                    notebookLongAxis = notebookLongAxis,
+                    pageWidth = pageWidth,
+                    pageHeight = pageHeight,
                     notebookModifiedAt = notebookModifiedAt,
                 )
             }.onFailure { android.util.Log.e(TAG, "failed to load page preview", it) }
                 .getOrElse {
-                    PagePreviewSource(page.id, emptyList(), emptyList(), PageTemplate.BLANK, 5, notebookLongAxis, notebookModifiedAt)
+                    PagePreviewSource(page.id, emptyList(), emptyList(), PageTemplate.BLANK, 5, pageWidth, pageHeight, notebookModifiedAt)
                 }
             poster { onResult(result) }
         }
@@ -524,9 +582,16 @@ class NotebookStore(
      * new notebook id. Does not switch. [aspectLongAxis] is the creating device's page long-axis
      * in virtual units (null = legacy 3:4), captured so the note keeps its native aspect everywhere.
      */
-    fun createNotebook(name: String, folderId: String? = null, aspectLongAxis: Int? = null, onCreated: (newNotebookId: String) -> Unit) {
+    fun createNotebook(
+        name: String,
+        folderId: String? = null,
+        aspectLongAxis: Int? = null,
+        pageWidth: Int? = null,
+        pageHeight: Int? = null,
+        onCreated: (newNotebookId: String) -> Unit,
+    ) {
         executor.execute {
-            val id = runCatching { repo?.createNotebook(name, folderId, aspectLongAxis) ?: "" }
+            val id = runCatching { repo?.createNotebook(name, folderId, aspectLongAxis, pageWidth, pageHeight) ?: "" }
                 .onFailure { android.util.Log.e(TAG, "failed to create notebook", it) }
                 .getOrDefault("")
             poster { onCreated(id) }
@@ -547,6 +612,14 @@ class NotebookStore(
         executor.execute {
             runCatching { repo?.setNotebookAspect(notebookId, aspectLongAxis) }
                 .onFailure { android.util.Log.e(TAG, "failed to set notebook aspect", it) }
+            poster { onDone() }
+        }
+    }
+
+    fun setNotebookPageGeometry(notebookId: String, width: Int, height: Int, onDone: () -> Unit = {}) {
+        executor.execute {
+            runCatching { repo?.setNotebookPageGeometry(notebookId, width, height) }
+                .onFailure { android.util.Log.e(TAG, "failed to set notebook geometry", it) }
             poster { onDone() }
         }
     }

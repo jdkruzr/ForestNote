@@ -72,6 +72,15 @@ class SettingsTest {
     }
 
     @Test
+    fun syncDefaultsLocalButKeepsConfiguredLegacyInstallsWorking() {
+        val fresh = Settings()
+        assertEquals(false, fresh.isSyncEnabled(hasCompleteConfiguration = false))
+        assertEquals(true, fresh.isSyncEnabled(hasCompleteConfiguration = true))
+        assertEquals(false, Settings(syncEnabled = false).isSyncEnabled(true))
+        assertEquals(true, Settings(syncEnabled = true).isSyncEnabled(false))
+    }
+
+    @Test
     fun syncOnCloseDefaultsTrueAndRoundTrips() {
         // Default is true — sync-on-close is opt-out, not opt-in.
         assertEquals(true, Settings().syncOnClose)

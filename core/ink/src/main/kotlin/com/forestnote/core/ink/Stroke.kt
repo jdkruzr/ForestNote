@@ -14,7 +14,10 @@ data class Stroke(
     val points: List<StrokePoint>,
     val color: Int = COLOR_BLACK,
     val penWidthMin: Int = DEFAULT_WIDTH_MIN,
-    val penWidthMax: Int = DEFAULT_WIDTH_MAX
+    val penWidthMax: Int = DEFAULT_WIDTH_MAX,
+    val brushKind: BrushKind = BrushKind.FOUNTAIN,
+    val brushVersion: Int = BrushKind.CURRENT_VERSION,
+    val brushSeed: Int = BrushKind.seedFor(id),
 ) {
     companion object {
         const val COLOR_BLACK = 0xFF000000.toInt()
@@ -35,8 +38,11 @@ data class Stroke(
 class StrokeBuilder(
     val color: Int = Stroke.COLOR_BLACK,
     val penWidthMin: Int = Stroke.DEFAULT_WIDTH_MIN,
-    val penWidthMax: Int = Stroke.DEFAULT_WIDTH_MAX
+    val penWidthMax: Int = Stroke.DEFAULT_WIDTH_MAX,
+    val brushKind: BrushKind = BrushKind.FOUNTAIN,
+    val brushVersion: Int = BrushKind.CURRENT_VERSION,
 ) {
+    private val id = Ulid.generate()
     private val _points = mutableListOf<StrokePoint>()
     val points: List<StrokePoint> get() = _points
 
@@ -45,10 +51,14 @@ class StrokeBuilder(
     }
 
     fun toStroke(): Stroke = Stroke(
+        id = id,
         points = _points.toList(),
         color = color,
         penWidthMin = penWidthMin,
-        penWidthMax = penWidthMax
+        penWidthMax = penWidthMax,
+        brushKind = brushKind,
+        brushVersion = brushVersion,
+        brushSeed = BrushKind.seedFor(id),
     )
 
     fun isEmpty(): Boolean = _points.isEmpty()

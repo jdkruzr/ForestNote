@@ -11,12 +11,16 @@ package com.forestnote.core.ink
  * @param vy Virtual y coordinate
  * @param millipressure Stylus pressure as millipressure (0..1000)
  * @param timestampMs Epoch milliseconds when this point was captured
+ * @param tiltRadians Stylus tilt away from perpendicular, or null when unavailable
+ * @param orientationRadians Stylus azimuth in the page plane, or null when unavailable
  */
 data class InkSample(
     val vx: Int,
     val vy: Int,
     val millipressure: Int,
     val timestampMs: Long,
+    val tiltRadians: Float? = null,
+    val orientationRadians: Float? = null,
 ) {
     companion object {
         /**
@@ -32,11 +36,15 @@ data class InkSample(
             pressure: Float,
             timestampMs: Long,
             transform: PageTransform,
+            tiltRadians: Float? = null,
+            orientationRadians: Float? = null,
         ): InkSample = InkSample(
             vx = transform.toVirtualX(screenX),
             vy = transform.toVirtualY(screenY),
             millipressure = transform.toMillipressure(pressure),
             timestampMs = timestampMs,
+            tiltRadians = tiltRadians,
+            orientationRadians = orientationRadians,
         )
     }
 }
