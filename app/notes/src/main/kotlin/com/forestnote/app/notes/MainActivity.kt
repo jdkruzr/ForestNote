@@ -107,6 +107,12 @@ class MainActivity : Activity() {
     private var pagesBrowserNeedsReload = false
     private var pendingExport: PendingExport? = null
     private var storeClosedForRestore = false
+    /**
+     * Set on the main thread once a validated restore is committed to shutting down this Activity.
+     * Android still calls onPause() while the replacement task starts; that dying lifecycle pass
+     * must not enqueue text saves or a final sync against the store we just closed.
+     */
+    private var restoreRestartPending = false
     /** Drops stale async editor-load callbacks if two navigation requests race. */
     private var editorLoadToken = 0L
 
@@ -1758,15 +1764,18 @@ class MainActivity : Activity() {
                         BackupArchive.extractDatabase(requireNotNull(input), restored)
                     }
                 }
+                // From here onward this Activity is only a staging shell for the atomic swap. Keep
+                // its inevitable onPause() from performing one last write/sync after shutdown.
+                restoreRestartPending = true
                 syncController.stopPeriodic()
                 caldavDrainer.pause()
                 caldavNetworkMonitor.stop()
                 backend.setInputSuspended(true)
                 withContext(Dispatchers.IO) {
                     store.shutdown()
-                    storeClosedForRestore = true
-                    installRestoredDatabase(restored)
                 }
+                storeClosedForRestore = true
+                withContext(Dispatchers.IO) { installRestoredDatabase(restored) }
             }.onSuccess {
                 restartAfterRestore()
             }.onFailure {
@@ -2450,15 +2459,22 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        // Persist any in-progress text edit before backgrounding.
-        textBoxEditOverlay.commitIfShowing()
+        // A successful restore closes the store before launching a clean replacement task. Android
+        // then pauses this outgoing Activity as usual; skip every persistence trigger in that one
+        // lifecycle pass, because its database executor no longer exists.
+        if (!restoreRestartPending) {
+            // Persist any in-progress text edit before backgrounding.
+            textBoxEditOverlay.commitIfShowing()
+        }
         // Don't leak any modal dialog window if we pause with one open.
         searchDialog.dismiss()
         ocrTextDialog.dismiss()
-        // Stop the periodic timer and flush pending changes to UltraBridge.
-        syncController.pause()
-        // Stop the CalDAV drainer's periodic timer (in-flight PUT is allowed to finish).
-        caldavDrainer.pause()
+        if (!restoreRestartPending) {
+            // Stop the periodic timer and flush pending changes to UltraBridge.
+            syncController.pause()
+            // Stop the CalDAV drainer's periodic timer (in-flight PUT is allowed to finish).
+            caldavDrainer.pause()
+        }
         if (isEInk) {
             refreshUiTransition(post = false)
             // Release WritingBufferQueue so other apps (WiNote etc.) can use it

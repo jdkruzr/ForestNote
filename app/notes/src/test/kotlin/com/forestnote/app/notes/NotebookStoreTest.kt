@@ -14,6 +14,7 @@ import com.forestnote.core.ink.TextBox
 import org.junit.Test
 import java.io.File
 import java.util.concurrent.AbstractExecutorService
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -21,6 +22,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -173,6 +175,27 @@ class NotebookStoreTest {
         } finally {
             tmpFile.delete()
         }
+    }
+
+    // Restore/recreate closes the sole DB executor before Android pauses the outgoing Activity.
+    // A late coroutine bridge call must end as ordinary coroutine cancellation, never leak the
+    // executor's RejectedExecutionException into the main-thread uncaught-exception handler.
+    @Test
+    fun syncBridgeAfterShutdownCancelsCleanly() = kotlinx.coroutines.runBlocking {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val store = NotebookStore(
+            repoProvider = { NotebookRepository.forTesting(driver) },
+            executor = Executors.newSingleThreadExecutor(),
+            poster = { it.run() },
+        )
+        store.shutdown()
+
+        val failure = assertFailsWith<CancellationException> { store.syncSettings() }
+        assertTrue(
+            generateSequence<Throwable>(failure) { it.cause }
+                .any { it is java.util.concurrent.RejectedExecutionException },
+            "cancellation keeps the executor rejection as diagnostic context",
+        )
     }
 
     // AC6.2: when draining exceeds the timeout, shutdownNow() is called (no hang).

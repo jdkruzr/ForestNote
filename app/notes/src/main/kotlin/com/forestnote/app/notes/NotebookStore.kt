@@ -27,6 +27,7 @@ import io.rhizome.core.Op
 import io.rhizome.core.SyncLocalStore
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.CancellationException
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.io.File
@@ -870,7 +871,7 @@ class NotebookStore(
                 // sync coroutine still in flight must NOT crash the app with an uncaught
                 // RejectedExecutionException; cancel the caller cleanly instead (a Cancellation
                 // exception is normal coroutine teardown, not a failure).
-                cont.cancel(e)
+                cont.cancel(CancellationException("notebook store is shut down").apply { initCause(e) })
             }
         }
 
