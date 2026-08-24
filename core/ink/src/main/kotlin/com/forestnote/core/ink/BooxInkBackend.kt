@@ -37,8 +37,9 @@ import kotlin.math.hypot
  * renders live ink directly to the panel at near-zero latency, and we feed each firmware point
  * into the shared [StrokeSink] for accumulation + persistence. The app's offscreen bitmap is
  * the source of truth for redraws; after any non-append change (erase, page switch, load) the
- * firmware ink layer is reconciled from that bitmap via the freeze-toggle blit in
- * [reconcileRepaint].
+ * firmware ink layer is discarded after contact and the canonical bitmap is published by the
+ * ordinary host View. The raw-input SurfaceView never owns committed pixels: on Kaleido its scoped
+ * refresh path visibly tints neutral grayscale despite a neutral framebuffer.
  *
  * Every SDK call here was validated on real hardware (Note Air5 C + Go 10.3 II) by the Phase-0
  * spike; the sequences mirror it. Defensive throughout: any SDK/reflection failure logs and
@@ -53,6 +54,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
 
     private var touchHelper: TouchHelper? = null
     private var surfaceView: SurfaceView? = null
+    private var hostView: View? = null
     private var sink: StrokeSink? = null
     private var transform: PageTransform? = null
     private var excludeRects: List<Rect> = emptyList()
@@ -197,10 +199,9 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     private val unfreezeRunnable = Runnable { runUnfreeze() }
 
     /**
-     * The most recent page bitmap handed to [reconcileRepaint], re-blitted once the surface
-     * becomes ready. This makes the initial paint order-independent: whether DrawView's first
-     * layout (which calls reconcileRepaint) happens before or after the surface is created, the
-     * page still lands on the panel.
+     * The most recent page bitmap handed to [reconcileRepaint]. This makes initial reconciliation
+     * order-independent: whether DrawView's first layout happens before or after the firmware
+     * surface is ready, the host page is republished once TouchHelper can drop stale live ink.
      */
     private var lastBitmap: Bitmap? = null
     private var lastViewLocation: IntArray = intArrayOf(0, 0)
@@ -221,7 +222,18 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
 
     override fun ownsInput(): Boolean = true
 
-    override fun ownsPageDisplay(): Boolean = true
+    override fun requiresInputSurface(): Boolean = true
+
+    // TouchHelper still gets a SurfaceView for its direct-to-panel live preview, but committed page
+    // pixels belong to DrawView. On Kaleido hardware, the same neutral RGB gray rendered through
+    // refreshScreenRegion(surface, ...) acquires a green/blue cast while an ordinary Android View
+    // remains neutral. The split preserves firmware latency without letting that surface color the
+    // retained page.
+    override fun ownsPageDisplay(): Boolean = false
+
+    override fun attachHost(host: View) {
+        hostView = host
+    }
 
     override fun init(context: Context): Boolean {
         // MANDATORY on minSdk 30 / Android 11+: the SDK reflects hidden Android APIs blocked from
@@ -861,6 +873,25 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             cleanNextReconcile = false
             val mode = BooxRefreshPolicy.reconcileMode(colorDevice, forceGc)
             try {
+                if (!ownsPageDisplay()) {
+                    // Drop stale direct-to-panel firmware ink, then let the normal Android View
+                    // publish the canonical page. Do not blit/refresh the SurfaceView here: that is
+                    // precisely the path that tints neutral grays on Kaleido even with GC.
+                    th.isRawDrawingRenderEnabled = false
+                    hostView?.let { host -> host.post { host.invalidate() } }
+                    if (forceGc) {
+                        hostView?.postDelayed({
+                            try {
+                                EpdController.repaintEveryThing(UpdateMode.GC)
+                            } catch (t: Throwable) {
+                                Log.w(TAG, "host-page reconcile GC failed", t)
+                            }
+                        }, HOST_REPAINT_SETTLE_MS)
+                    }
+                    Thread.sleep(settleMs)
+                    th.isRawDrawingRenderEnabled = firmwareShouldBeLive()
+                    return@execute
+                }
                 // Suspending firmware render wipes its ink layer globally, so we always repaint the
                 // WHOLE canvas from the bitmap (a partial blit would blank the rest).
                 th.isRawDrawingRenderEnabled = false
@@ -907,6 +938,23 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         lastBitmap = bitmap
         lastViewLocation = viewLocation
         if (surfaceView == null || touchHelper == null) return
+        if (!ownsPageDisplay()) {
+            // DrawView invalidates this region immediately after this callback. Keep the firmware
+            // surface out of the commit path: its live stroke served its purpose, while the ordinary
+            // View now publishes the canonical portable-brush pixels without Kaleido color cast.
+            val traceId = uiTraceId
+            lastCommitTraceId = traceId
+            lastCommitQueuedNs = SystemClock.elapsedRealtimeNanos()
+            mainHandler.removeCallbacks(unfreezeRunnable)
+            val idleDelay = if (explicitCommitRefresh) {
+                EXPLICIT_REFRESH_UNFREEZE_IDLE_MS
+            } else {
+                UNFREEZE_IDLE_MS
+            }
+            mainHandler.postDelayed(unfreezeRunnable, idleDelay)
+            Log.d(TAG, "ink trace id=$traceId committed by host view dirty=$dirtyRect")
+            return
+        }
         // Accumulate this stroke's region into the pending union so a coalesced flurry blits ALL of
         // them (a stroke whose region wasn't committed before the next render-toggle would vanish).
         synchronized(commitDirtyLock) {
@@ -976,6 +1024,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             val startNs = SystemClock.elapsedRealtimeNanos()
             try {
                 th.isRawDrawingRenderEnabled = false
+                if (!ownsPageDisplay()) hostView?.let { host -> host.post { host.invalidate() } }
                 Thread.sleep(settleMs)
                 th.isRawDrawingRenderEnabled = firmwareShouldBeLive()
                 Log.d(
@@ -1100,9 +1149,10 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         } catch (t: Throwable) {
             Log.w(TAG, "release failed", t)
         }
+        hostView = null
     }
 
-    // ===== Display-accelerator methods: no-ops on Boox (firmware draws live; reconcile blits) =====
+    // ===== Display-accelerator methods: no-ops on Boox (firmware previews; host View commits) =====
 
     override fun setDisplayMode(mode: DisplayMode) {}
     override fun startStroke(bitmap: Bitmap, viewLocation: IntArray) {}
@@ -1138,6 +1188,9 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
          * per-stroke region refresh commits ink quickly; keep the un-freeze as delayed housekeeping.
          */
         private const val EXPLICIT_REFRESH_UNFREEZE_IDLE_MS = 8000L
+
+        /** Give an invalidated host View a frame before a requested display-wide GC. */
+        private const val HOST_REPAINT_SETTLE_MS = 32L
 
         /** Mid-pressure width used to approximate app-rendered stroke thickness in Onyx live ink. */
         private const val LIVE_STROKE_REFERENCE_PRESSURE = 500

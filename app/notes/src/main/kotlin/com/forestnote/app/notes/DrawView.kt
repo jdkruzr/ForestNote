@@ -1750,16 +1750,15 @@ class DrawView @JvmOverloads constructor(
                     }
 
                     if (backend?.ownsInput() == true) {
-                        // Boox: the firmware drew this stroke's live ink but it lives only on the
-                        // ephemeral firmware layer — never committed to the surface buffer. Commit it
-                        // now (so a later render-toggle can't lose it) and un-freeze the panel for touch
-                        // gestures. invalidate() is a no-op here (the DrawView is transparent; the panel
-                        // shows the surface), so this REPLACES the 900ms quality redraw below.
+                        // The firmware drew the transient live stroke. Let the backend finish any
+                        // vendor housekeeping, then publish ForestNote's canonical retained pixels
+                        // through DrawView. On Boox/Kaleido this separation is what keeps neutral gray
+                        // from being tinted by SurfaceView-specific refreshes.
                         commitFirmwareStroke(canonicalDirty)
-                    } else {
-                        // The retained bitmap is already canonical; publish only the touched area.
-                        invalidate(canonicalDirty)
                     }
+                    // The retained bitmap is already canonical; publish only the touched area.
+                    // Sole-display backends skip the bitmap in onDraw, so this stays harmless there.
+                    invalidate(canonicalDirty)
                 }
             }
         }
@@ -2056,11 +2055,10 @@ class DrawView @JvmOverloads constructor(
      */
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        // Blit the offscreen bitmap containing all accumulated strokes — UNLESS an input-owning
-        // backend (Boox/Onyx) is the sole display surface for the page. There, the firmware draws
-        // live ink and the backend reconciles the page bitmap onto its own SurfaceView; blitting
-        // here too would double-render the page (a ~window-inset-shifted ghost copy). Overlays
-        // below (lasso/text selection) still draw — they're not in the reconciled bitmap.
+        // Blit the offscreen bitmap containing all accumulated strokes unless a backend explicitly
+        // owns the retained page display. Input ownership is independent: Boox uses a firmware
+        // SurfaceView for transient live ink but keeps this host View as the committed renderer.
+        // Overlays below (lasso/text selection) are not part of the retained bitmap.
         if (backend?.ownsPageDisplay() != true) {
             writingBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
         }

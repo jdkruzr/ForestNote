@@ -28,10 +28,18 @@ interface InkBackend {
     fun ownsInput(): Boolean = false
 
     /**
+     * True when the backend needs a sibling [android.view.SurfaceView] as the firmware raw-input
+     * target. This is deliberately independent from [ownsPageDisplay]: Boox needs the surface for
+     * TouchHelper's live under-the-pen preview, but ForestNote's ordinary View can still own the
+     * committed page. Keeping those responsibilities separate avoids routing retained grayscale
+     * pixels through a vendor surface whose color waveform may tint them on Kaleido panels.
+     */
+    fun requiresInputSurface(): Boolean = false
+
+    /**
      * True only when the backend's own surface is the sole renderer of the retained page bitmap.
-     * Boox needs this because DrawView sits transparently over its sibling SurfaceView. Viwoods may
-     * own raw stylus input, but its WritingSurface is transient: DrawView must keep painting the
-     * ordinary retained frame underneath it.
+     * This is independent from [requiresInputSurface]: a firmware surface can provide transient
+     * live ink while DrawView keeps painting the ordinary retained frame above it.
      */
     fun ownsPageDisplay(): Boolean = false
 
@@ -202,17 +210,11 @@ interface InkBackend {
     fun reconcileRepaint(bitmap: Bitmap, viewLocation: IntArray, dirtyRect: Rect?) {}
 
     /**
-     * Commit a just-finished APPEND stroke onto an input-owning backend's panel — the per-stroke
-     * sibling of [reconcileRepaint]. The two are NOT the same: a reconcile (erase / page-switch /
-     * load) must clear STALE firmware ink, which means suspending render — and suspending render
-     * wipes the firmware ink layer GLOBALLY, forcing a whole-canvas repaint (the flash that makes a
-     * reconcile too heavy to run per stroke). An append has no stale ink: the firmware already drew
-     * exactly this stroke live. So this path leaves render ON (prior strokes stay visible, no global
-     * wipe), blits ONLY [dirtyRect] of [bitmap] onto the surface so the stroke is committed to the
-     * buffer (a later render-toggle then can't lose it), and briefly toggles render to un-freeze the
-     * panel for system touch gestures. Mirrors notable's `refreshUi(dirtyRect)`. [dirtyRect] is in
-     * the bitmap's own coordinate space. No-op on Viwoods/Generic — their live ink already lives in
-     * the bitmap the MotionEvent path blits in `onDraw`.
+     * Finish backend-specific bookkeeping for a just-completed APPEND stroke. The canonical bitmap
+     * has already been composed and [dirtyRect] is in bitmap-local coordinates. A firmware-preview
+     * backend may use this to settle or release its transient layer; it must not reinterpret the
+     * stored brush. The host publishes the canonical dirty region unless [ownsPageDisplay] is true.
+     * No-op by default.
      */
     fun commitInkStroke(bitmap: Bitmap, viewLocation: IntArray, dirtyRect: Rect) {}
 
