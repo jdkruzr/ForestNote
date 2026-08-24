@@ -7,6 +7,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -23,6 +24,7 @@ import com.onyx.android.sdk.utils.DeviceInfoUtil
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.hypot
@@ -121,6 +123,18 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     private var listFired = false
     private val pendingErasePoints = ArrayList<TouchPoint>(2048)
     private var eraseListFired = false
+
+    // One compact trace per firmware stroke. Boox latency bugs are often "only the first stroke"
+    // and differ by pen/device, so aggregate frame timings are nearly useless: keep callback -> UI
+    // ingest -> surface commit timestamps tied to a stable sequence id. Values use the monotonic
+    // elapsed clock; log fields are integer microseconds to keep callback overhead tiny.
+    private val inkTraceIds = AtomicLong()
+    private var rawTraceId = 0L
+    private var rawBeginNs = 0L
+    private var rawFirstMoveNs = 0L
+    @Volatile private var uiTraceId = 0L
+    @Volatile private var lastCommitTraceId = 0L
+    @Volatile private var lastCommitQueuedNs = 0L
 
     /** Reconciles run serialized off the UI thread (each suspends firmware render + sleeps). */
     private val reconcileExecutor = Executors.newSingleThreadExecutor()
@@ -325,6 +339,11 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             th.setRawDrawingEnabled(false)
             th.setLimitRect(mutableListOf(limit)).setExcludeRect(currentExcludeRects())
             applyFirmwareEnableState()
+            Log.i(
+                TAG,
+                "raw drawing relatched limit=$limit page=${transform?.pageRectScreen()} " +
+                    "surface=${surface.width}x${surface.height}"
+            )
         } catch (t: Throwable) {
             Log.w(TAG, "reapplyExcludeRects failed", t)
         }
@@ -572,6 +591,9 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         // stroke from the LIST (one UI-thread post), accumulating per-move only as a fallback for
         // firmware that drops the LIST. begin/move/end stay light so the firmware releases cleanly.
         override fun onBeginRawDrawing(b: Boolean, point: TouchPoint?) {
+            rawTraceId = inkTraceIds.incrementAndGet()
+            rawBeginNs = SystemClock.elapsedRealtimeNanos()
+            rawFirstMoveNs = 0L
             strokeInProgress = true
             // Writing is NOT idle: cancel the debounced un-freeze and re-assert live render NOW. Without
             // this, a stroke begun while a prior un-freeze toggle is mid-settle (render off) is captured
@@ -594,20 +616,28 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         }
 
         override fun onRawDrawingTouchPointMoveReceived(point: TouchPoint?) {
+            if (rawFirstMoveNs == 0L) rawFirstMoveNs = SystemClock.elapsedRealtimeNanos()
             point?.let { pendingPoints.add(TouchPoint(it)) }
         }
 
         override fun onRawDrawingTouchPointListReceived(list: TouchPointList?) {
             val pts = list?.points ?: return
             listFired = true
-            ingestStroke(pts)
+            ingestStroke(pts, "list")
         }
 
         override fun onEndRawDrawing(b: Boolean, point: TouchPoint?) {
             if (!listFired) {
                 point?.let { pendingPoints.add(TouchPoint(it)) }
-                ingestStroke(pendingPoints.toList())
+                ingestStroke(pendingPoints.toList(), "fallback")
             }
+            val endNs = SystemClock.elapsedRealtimeNanos()
+            Log.d(
+                TAG,
+                "ink trace id=$rawTraceId raw-end-us=${elapsedUs(rawBeginNs, endNs)} " +
+                    "first-move-us=${elapsedUsOrMissing(rawBeginNs, rawFirstMoveNs)} " +
+                    "list=$listFired points=${pendingPoints.size}"
+            )
             strokeInProgress = false
             // Apply any exclude-rect clear (popup dismissed BY this stroke's pen-down) or limit-rect
             // change (transform moved mid-stroke) that was deferred — now safe to re-latch the region.
@@ -661,7 +691,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
      * the live ink — this is for the app's bitmap + persistence. First point = DOWN, last = UP, the
      * rest MOVE; a single-point tap emits DOWN then UP so it still finalizes.
      */
-    private fun ingestStroke(points: List<TouchPoint>) {
+    private fun ingestStroke(points: List<TouchPoint>, source: String) {
         // Only the Pen persists firmware strokes. Releasing raw drawing for other tools normally
         // stops these callbacks outright, but guard here too — a stroke that began as Pen and whose
         // tool flipped mid-gesture must not land as ink.
@@ -670,21 +700,40 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         val samples = points.mapNotNull { sampleOf(it) }
         if (samples.isEmpty()) return
         val params = pen
+        val traceId = rawTraceId
+        val beginNs = rawBeginNs
+        val firstMoveNs = rawFirstMoveNs
+        val postedNs = SystemClock.elapsedRealtimeNanos()
         surfaceView?.post {
+            val uiStartNs = SystemClock.elapsedRealtimeNanos()
             val s = sink ?: return@post
-            s.begin(Tool.Pen, params)
-            if (samples.size == 1) {
-                s.accept(samples[0], InkPhase.DOWN)
-                s.accept(samples[0], InkPhase.UP)
-            } else {
-                samples.forEachIndexed { i, sample ->
-                    val phase = when (i) {
-                        0 -> InkPhase.DOWN
-                        samples.lastIndex -> InkPhase.UP
-                        else -> InkPhase.MOVE
+            uiTraceId = traceId
+            try {
+                s.begin(Tool.Pen, params)
+                if (samples.size == 1) {
+                    s.accept(samples[0], InkPhase.DOWN)
+                    s.accept(samples[0], InkPhase.UP)
+                } else {
+                    samples.forEachIndexed { i, sample ->
+                        val phase = when (i) {
+                            0 -> InkPhase.DOWN
+                            samples.lastIndex -> InkPhase.UP
+                            else -> InkPhase.MOVE
+                        }
+                        s.accept(sample, phase)
                     }
-                    s.accept(sample, phase)
                 }
+            } finally {
+                val uiEndNs = SystemClock.elapsedRealtimeNanos()
+                Log.d(
+                    TAG,
+                    "ink trace id=$traceId source=$source samples=${samples.size} " +
+                        "first-move-us=${elapsedUsOrMissing(beginNs, firstMoveNs)} " +
+                        "callback-to-post-us=${elapsedUs(beginNs, postedNs)} " +
+                        "ui-queue-us=${elapsedUs(postedNs, uiStartNs)} " +
+                        "sink-us=${elapsedUs(uiStartNs, uiEndNs)}"
+                )
+                uiTraceId = 0L
             }
         }
     }
@@ -800,6 +849,10 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         synchronized(commitDirtyLock) {
             pendingCommitDirty = pendingCommitDirty?.apply { union(dirtyRect) } ?: Rect(dirtyRect)
         }
+        val traceId = uiTraceId
+        val queuedNs = SystemClock.elapsedRealtimeNanos()
+        lastCommitTraceId = traceId
+        lastCommitQueuedNs = queuedNs
         // COMMIT (per stroke) — blit the region to the surface buffer with render left ON: the
         // firmware ink layer isn't wiped (prior strokes stay on the panel) and live ink keeps flowing
         // uninterrupted. This only populates the buffer so a later render-toggle can reveal it; the
@@ -807,6 +860,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         // per stroke suspends live ink for its settle window and makes fast strokes render late.
         if (commitPending.compareAndSet(false, true)) {
             reconcileExecutor.execute {
+                val commitStartNs = SystemClock.elapsedRealtimeNanos()
                 commitPending.set(false)
                 val surface = surfaceView ?: return@execute
                 val bmp = lastBitmap ?: return@execute
@@ -815,6 +869,12 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
                 } ?: return@execute
                 try {
                     blitCanvasRegion(surface, bmp, dirty)
+                    val commitEndNs = SystemClock.elapsedRealtimeNanos()
+                    Log.d(
+                        TAG,
+                        "ink trace id=$traceId commit queue-us=${elapsedUs(queuedNs, commitStartNs)} " +
+                            "blit-refresh-us=${elapsedUs(commitStartNs, commitEndNs)} dirty=$dirty"
+                    )
                 } catch (t: Throwable) {
                     Log.w(TAG, "commitInkStroke blit failed", t)
                 }
@@ -839,13 +899,21 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         // the stroke's pen-up re-arms the debounce.
         if (strokeInProgress) return
         val settleMs = if (colorDevice) 500L else 300L
+        val traceId = lastCommitTraceId
+        val queuedNs = lastCommitQueuedNs
         reconcileExecutor.execute {
             if (strokeInProgress) return@execute
             val th = touchHelper ?: return@execute
+            val startNs = SystemClock.elapsedRealtimeNanos()
             try {
                 th.isRawDrawingRenderEnabled = false
                 Thread.sleep(settleMs)
                 th.isRawDrawingRenderEnabled = firmwareShouldBeLive()
+                Log.d(
+                    TAG,
+                    "ink trace id=$traceId unfreeze commit-to-start-us=${elapsedUs(queuedNs, startNs)} " +
+                        "pulse-ms=$settleMs"
+                )
             } catch (t: Throwable) {
                 Log.w(TAG, "post-stroke un-freeze failed", t)
             }
@@ -948,6 +1016,12 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     override fun endStroke() {}
     override fun pushBackgroundBitmap(bitmap: Bitmap, viewLocation: IntArray) {}
     override fun resetOverlay(bitmap: Bitmap, viewLocation: IntArray, screenWidth: Int, screenHeight: Int) {}
+
+    private fun elapsedUs(startNs: Long, endNs: Long): Long =
+        if (startNs <= 0L || endNs < startNs) -1L else (endNs - startNs) / 1_000L
+
+    private fun elapsedUsOrMissing(startNs: Long, endNs: Long): String =
+        if (endNs <= 0L) "na" else elapsedUs(startNs, endNs).toString()
 
     private companion object {
         const val TAG = "BooxInkBackend"

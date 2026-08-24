@@ -1,6 +1,7 @@
 package com.forestnote.app.notes
 
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
@@ -32,15 +33,15 @@ class ToolBar(
     private val firmwareOwnsInput: () -> Boolean = { false },
     private val onToolSelected: (Tool) -> Unit
 ) {
-    /**
-     * Fired when a settings PopupWindow opens (true) / dismisses (false). On an input-owning
-     * backend (Boox/Onyx) the host wires this to suspend raw drawing while the popup is up — the
-     * firmware otherwise captures the capacitive grid, so an `isOutsideTouchable` PopupWindow never
-     * gets its dismiss touch and, unrendered in SCRIBBLE mode, sits invisibly eating taps. Suspending
-     * raw drawing releases the grid so the popup renders + takes touches normally (the `notable`
-     * approach). No-op default → Viwoods/Generic behave exactly as before.
-     */
+    /** Fired when a settings PopupWindow opens (true) / dismisses (false). */
     var onPopupVisibilityChanged: ((Boolean) -> Unit)? = null
+
+    /**
+     * Screen-space bounds of the showing popup, or null once dismissed. Firmware-input hosts carve
+     * out exactly this rectangle while leaving the rest of the canvas live; that lets a pen-down on
+     * the page dismiss the chooser AND remain the first complete ink stroke.
+     */
+    var onPopupBoundsChanged: ((Rect?) -> Unit)? = null
 
     private var activeClearCallback: (() -> Unit)? = null
     private var penVariantCallback: ((PenVariant) -> Unit)? = null
@@ -98,9 +99,30 @@ class ToolBar(
         onPopupVisibilityChanged?.invoke(true)
         popup.setOnDismissListener {
             openPopup = null
+            onPopupBoundsChanged?.invoke(null)
             onPopupVisibilityChanged?.invoke(false)
         }
         popup.showAsDropDown(anchor)
+        // PopupWindow has real screen geometry only after showAsDropDown/layout. Keep firmware input
+        // suspended for this tiny setup window; MainActivity resumes it as soon as this rect arrives.
+        popup.contentView.post {
+            if (openPopup !== popup || !popup.isShowing) return@post
+            val location = IntArray(2)
+            popup.contentView.getLocationOnScreen(location)
+            onPopupBoundsChanged?.invoke(
+                Rect(
+                    location[0],
+                    location[1],
+                    location[0] + popup.contentView.width,
+                    location[1] + popup.contentView.height,
+                )
+            )
+        }
+    }
+
+    /** Dismiss the active chooser, if any (used by firmware draw-to-dismiss pen-down). */
+    fun dismissOpenPopup() {
+        openPopup?.dismiss()
     }
 
     /**

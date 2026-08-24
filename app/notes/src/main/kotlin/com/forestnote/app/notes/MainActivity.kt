@@ -540,10 +540,26 @@ class MainActivity : Activity() {
             // Only needed on a real tool change. No-op on Viwoods/Generic.
             if (backend.ownsPageDisplay() && toolChanged) drawView.refreshPanelForUi()
         }
-        // Infra kept for Phase-3 over-canvas UI (dialogs/chooser): suspend raw drawing while shown so
-        // it renders + takes touches (the notable approach). No popups open on Boox today, so this is
-        // dormant there; no-op on Viwoods/Generic.
-        toolBar.onPopupVisibilityChanged = { open -> backend.setInputSuspended(open) }
+        // Firmware chooser coexistence: suspend only for the one layout frame before PopupWindow has
+        // measurable bounds, then carve out exactly the popup and resume live ink everywhere else.
+        // A page pen-down is therefore BOTH a complete first stroke and a draw-to-dismiss signal —
+        // Android no longer consumes the beginning of that stroke merely to close the chooser.
+        toolBar.onPopupVisibilityChanged = { open ->
+            if (backend.ownsInput()) {
+                if (open) backend.setInputSuspended(true)
+                else {
+                    backend.setOverlayExcludeScreenRect(null)
+                    backend.setInputSuspended(false)
+                }
+            }
+        }
+        toolBar.onPopupBoundsChanged = { bounds ->
+            if (backend.ownsInput()) {
+                backend.setOverlayExcludeScreenRect(bounds)
+                if (bounds != null) backend.setInputSuspended(false)
+            }
+        }
+        backend.setOnFirmwarePenDown { toolBar.dismissOpenPopup() }
         // Propagate pen-variant choice to the canvas (affects width/colour/compositing).
         // Switching variant brings that variant's remembered width level forward (A10).
         toolBar.setOnPenVariantSelected { variant ->
