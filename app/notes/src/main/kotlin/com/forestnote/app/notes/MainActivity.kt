@@ -101,6 +101,8 @@ class MainActivity : Activity() {
     private var pagesBrowserNeedsReload = false
     private var pendingExport: PendingExport? = null
     private var storeClosedForRestore = false
+    /** Drops stale async editor-load callbacks if two navigation requests race. */
+    private var editorLoadToken = 0L
 
     /** Per-notebook, session-only undo/redo of canvas content edits (see [EditHistory]). */
     private val editHistory = EditHistory()
@@ -305,6 +307,9 @@ class MainActivity : Activity() {
 
         // Find views by ID
         drawView = findViewById(R.id.draw_view)
+        // Geometry arrives from the DB asynchronously. Keep the canvas out of the first frame until
+        // loadEditor/goToNotebook can compose it with the active notebook's exact shape.
+        drawView.visibility = View.INVISIBLE
         val toolBarRoot: View = findViewById(R.id.toolbar)
 
         // Configure DrawView
@@ -469,7 +474,6 @@ class MainActivity : Activity() {
                     // and reveal the editor. One-launch flicker; self-corrects from here.
                     if (cachedStartLibrary) {
                         libraryView.hide()
-                        revealEditorChrome()
                     }
                     loadEditor()
                 }
@@ -1266,10 +1270,14 @@ class MainActivity : Activity() {
     /** Reload whatever page the repo currently considers active (after a delete). */
     private fun reloadCurrentPage() {
         textBoxEditOverlay.commitIfShowing()
-        drawView.clearAll()
-        drawView.resetViewportForPage()
-        store.load { strokes ->
-            drawView.mergeLoadedStrokes(strokes)
+        val loadToken = ++editorLoadToken
+        drawView.visibility = View.INVISIBLE
+        store.loadEditorPage { page ->
+            if (loadToken != editorLoadToken) return@loadEditorPage
+            applyNotebookGeometryBeforePaint(page.notebook)
+            drawView.resetViewportForPage(recompose = false)
+            drawView.replaceLoadedPage(page.strokes, page.textBoxes)
+            revealEditorChrome()
             drawView.fullRefresh()
             refreshPageIndicator() // chains refreshOcrButtonState
         }
@@ -1280,17 +1288,19 @@ class MainActivity : Activity() {
      *  so GC-refresh to clear any overlay ghost (and it counts as the editor's first paint). */
     private fun goToNotebook(notebookId: String) {
         textBoxEditOverlay.commitIfShowing()
-        // If we eagerly hid the editor at launch (start-in-Library), reveal it now so
-        // the freshly opened notebook actually paints. Idempotent otherwise.
-        revealEditorChrome()
-        editorLoaded = true
+        val loadToken = ++editorLoadToken
+        drawView.visibility = View.INVISIBLE
         editorOpenedFromLibrary = true // navigated in from the Library → Back returns there (#29)
         editHistory.clear() // undo history is per-notebook — a fresh notebook starts empty
         refreshUndoRedoButtons()
-        drawView.clearAll()
-        drawView.resetViewportForPage()
-        store.switchNotebook(notebookId) { strokes ->
-            drawView.mergeLoadedStrokes(strokes)
+        store.switchNotebook(notebookId) { page ->
+            if (loadToken != editorLoadToken) return@switchNotebook
+            applyNotebookGeometryBeforePaint(page.notebook)
+            libraryView.hide()
+            drawView.resetViewportForPage(recompose = false)
+            drawView.replaceLoadedPage(page.strokes, page.textBoxes)
+            editorLoaded = true
+            revealEditorChrome()
             refreshEditorTransition()
             refreshPageIndicator() // chains refreshOcrButtonState
         }
@@ -1305,16 +1315,19 @@ class MainActivity : Activity() {
      */
     private fun goToNotebookPage(notebookId: String, pageId: String) {
         textBoxEditOverlay.commitIfShowing()
-        // Same revival as goToNotebook — search can route us here from the eager Library.
-        revealEditorChrome()
-        editorLoaded = true
+        val loadToken = ++editorLoadToken
+        drawView.visibility = View.INVISIBLE
         editorOpenedFromLibrary = true // navigated in from the Library → Back returns there (#29)
         editHistory.clear() // undo history is per-notebook — a fresh notebook starts empty
         refreshUndoRedoButtons()
-        drawView.clearAll()
-        drawView.resetViewportForPage()
-        store.switchNotebookToPage(notebookId, pageId) { strokes ->
-            drawView.mergeLoadedStrokes(strokes)
+        store.switchNotebookToPage(notebookId, pageId) { page ->
+            if (loadToken != editorLoadToken) return@switchNotebookToPage
+            applyNotebookGeometryBeforePaint(page.notebook)
+            libraryView.hide()
+            drawView.resetViewportForPage(recompose = false)
+            drawView.replaceLoadedPage(page.strokes, page.textBoxes)
+            editorLoaded = true
+            revealEditorChrome()
             refreshEditorTransition()
             refreshPageIndicator() // chains refreshOcrButtonState
         }
@@ -1327,13 +1340,24 @@ class MainActivity : Activity() {
      * ghost under the overlay), then call it the first time the editor actually becomes visible.
      */
     private fun loadEditor() {
-        editorLoaded = true
-        drawView.resetViewportForPage()
-        store.load { strokes ->
-            drawView.mergeLoadedStrokes(strokes)
+        val loadToken = ++editorLoadToken
+        drawView.visibility = View.INVISIBLE
+        store.loadEditorPage { page ->
+            if (loadToken != editorLoadToken) return@loadEditorPage
+            applyNotebookGeometryBeforePaint(page.notebook)
+            drawView.resetViewportForPage(recompose = false)
+            drawView.replaceLoadedPage(page.strokes, page.textBoxes)
+            editorLoaded = true
+            revealEditorChrome()
+            refreshEditorTransition(post = true)
             refreshPageIndicator() // chains refreshOcrButtonState
         }
-        store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
+    }
+
+    /** Set the exact page transform without composing a visible legacy-aspect intermediate frame. */
+    private fun applyNotebookGeometryBeforePaint(notebook: NotebookMeta?) {
+        val geometry = NotebookAspectPolicy.resolve(notebook)
+        drawView.setNotebookGeometry(geometry.width, geometry.height, recompose = false)
     }
 
     /**
@@ -1474,7 +1498,7 @@ class MainActivity : Activity() {
         }
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
         libraryView.show(content, store, LibraryView.Callbacks(
-            onOpenNotebook = { card -> libraryView.hide(); goToNotebook(card.id) },
+            onOpenNotebook = { card -> goToNotebook(card.id) },
             onNotebookProperties = { card ->
                 // Build a NotebookMeta from the card to reuse the A9 Properties dialog (AC4.5).
                 openNotebookProperties(
@@ -1743,18 +1767,11 @@ class MainActivity : Activity() {
      */
     private fun closeLibrary() {
         libraryView.hide()
-        // revealEditorChrome() below resumes firmware input ownership (paired with openLibrary's
-        // suspend) — it's the shared editor-entry chokepoint, so the resume lives there now.
-        revealEditorChrome()
         if (!editorLoaded) {
-            // First reveal of the editor this session, OR a deferred reload after a
-            // delete-while-Library-showing. Wipe any stale bitmap (deleted notebook's
-            // content, or template residue from launch-into-Library) before merging the
-            // active notebook's strokes in. Safe now — DrawView is the topmost View again.
-            drawView.clearAll()
+            // loadEditor keeps the canvas hidden until geometry + ink share the first frame.
             loadEditor()
-            refreshEditorTransition(post = true)
         } else {
+            revealEditorChrome()
             refreshEditorTransition()
         }
         // syncIfDirty kicks the NotebookStore executor off the main thread, so it can't
@@ -1809,8 +1826,8 @@ class MainActivity : Activity() {
         if (searchDialog.isShowing) return
         searchDialog.show(this, store, com.forestnote.app.notes.search.SearchDialog.Callbacks(
             onOpenFolder = { folderId -> libraryView.navigateToFolder(folderId) },
-            onOpenNotebook = { notebookId -> libraryView.hide(); goToNotebook(notebookId) },
-            onOpenPage = { notebookId, pageId -> libraryView.hide(); goToNotebookPage(notebookId, pageId) }
+            onOpenNotebook = { notebookId -> goToNotebook(notebookId) },
+            onOpenPage = { notebookId, pageId -> goToNotebookPage(notebookId, pageId) }
         ))
     }
 
@@ -2101,7 +2118,7 @@ class MainActivity : Activity() {
                         pageHeight = creatorGeometry?.height,
                     ) { newId ->
                         pendingAspectCaptureId = if (creatorGeometry == null) newId else null
-                        libraryView.hide(); goToNotebook(newId)
+                        goToNotebook(newId)
                     }
                 }
                 .setNegativeButton("Cancel", null)

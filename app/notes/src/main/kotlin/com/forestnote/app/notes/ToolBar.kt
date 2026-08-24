@@ -521,7 +521,12 @@ class ToolBar(
         }
         val popup = PopupWindow(
             container,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
+            // WRAP_CONTENT can freeze at the variant-list width on PopupWindow implementations,
+            // clipping the seven-chip thickness strip after level 4. Reserve the complete strip.
+            minOf(
+                (PEN_POPUP_WIDTH_DP * density).toInt(),
+                ctx.resources.displayMetrics.widthPixels - (POPUP_SCREEN_MARGIN_DP * 2 * density).toInt(),
+            ),
             ViewGroup.LayoutParams.WRAP_CONTENT,
             true
         )
@@ -669,6 +674,9 @@ class ToolBar(
 
     companion object {
         private const val DEFAULT_TEXT_SIZE_V = 240
+        /** Seven 40dp chips + 16dp strip padding + border/rounding allowance. */
+        private const val PEN_POPUP_WIDTH_DP = 300
+        private const val POPUP_SCREEN_MARGIN_DP = 8
         // Text size presets live in [TextStylePresets.SIZES] — shared with the per-text-box
         // Options dialog so the two choosers can't drift.
         private val TEXT_SIZES = TextStylePresets.SIZES

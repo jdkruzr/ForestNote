@@ -77,6 +77,13 @@ data class ExportNotebookSnapshot(
     val pages: List<ExportPageSnapshot>,
 )
 
+/** Everything the editor needs to compose one correct first frame. */
+data class EditorPageSnapshot(
+    val strokes: List<Stroke>,
+    val textBoxes: List<TextBox>,
+    val notebook: NotebookMeta?,
+)
+
 /**
  * Single owner of all persistence. Runs every database operation on one background
  * thread (the serialization point — single writer, no lock contention), and posts
@@ -115,6 +122,25 @@ class NotebookStore(
                 .onFailure { android.util.Log.e(TAG, "failed to load strokes", it) }
                 .getOrDefault(emptyList())
             poster { onLoaded(strokes) }
+        }
+    }
+
+    /**
+     * Load the active page together with its notebook geometry in one serialized DB hop. The UI
+     * applies geometry before its first visible composite, avoiding a legacy-3:4 startup frame.
+     */
+    fun loadEditorPage(onLoaded: (EditorPageSnapshot) -> Unit) {
+        executor.execute {
+            val result = runCatching {
+                val r = requireNotNull(repo) { "notebook store not ready" }
+                EditorPageSnapshot(
+                    strokes = r.loadStrokes(),
+                    textBoxes = r.loadTextBoxes(),
+                    notebook = r.notebook(r.currentNotebookId()),
+                )
+            }.onFailure { android.util.Log.e(TAG, "failed to load editor page", it) }
+                .getOrDefault(EditorPageSnapshot(emptyList(), emptyList(), null))
+            poster { onLoaded(result) }
         }
     }
 
@@ -387,16 +413,21 @@ class NotebookStore(
         }
     }
 
-    /** Switch the active notebook, then load and post its active/first page's strokes. */
-    fun switchNotebook(notebookId: String, onLoaded: (List<Stroke>) -> Unit) {
+    /** Switch notebook, then load all content needed for its active page's first frame. */
+    fun switchNotebook(notebookId: String, onLoaded: (EditorPageSnapshot) -> Unit) {
         executor.execute {
-            val strokes = runCatching {
-                repo?.switchNotebook(notebookId)
-                repo?.loadStrokes() ?: emptyList()
+            val result = runCatching {
+                val r = requireNotNull(repo) { "notebook store not ready" }
+                r.switchNotebook(notebookId)
+                EditorPageSnapshot(
+                    strokes = r.loadStrokes(),
+                    textBoxes = r.loadTextBoxes(),
+                    notebook = r.notebook(r.currentNotebookId()),
+                )
             }
                 .onFailure { android.util.Log.e(TAG, "failed to switch notebook", it) }
-                .getOrDefault(emptyList())
-            poster { onLoaded(strokes) }
+                .getOrDefault(EditorPageSnapshot(emptyList(), emptyList(), null))
+            poster { onLoaded(result) }
         }
     }
 
@@ -407,16 +438,25 @@ class NotebookStore(
      * switchPage doesn't validate cross-notebook ids), so callers should pass a hit's own
      * (notebookId, pageId) pair.
      */
-    fun switchNotebookToPage(notebookId: String, pageId: String, onLoaded: (List<Stroke>) -> Unit) {
+    fun switchNotebookToPage(
+        notebookId: String,
+        pageId: String,
+        onLoaded: (EditorPageSnapshot) -> Unit,
+    ) {
         executor.execute {
-            val strokes = runCatching {
-                repo?.switchNotebook(notebookId)
-                repo?.switchPage(pageId)
-                repo?.loadStrokes() ?: emptyList()
+            val result = runCatching {
+                val r = requireNotNull(repo) { "notebook store not ready" }
+                r.switchNotebook(notebookId)
+                r.switchPage(pageId)
+                EditorPageSnapshot(
+                    strokes = r.loadStrokes(),
+                    textBoxes = r.loadTextBoxes(),
+                    notebook = r.notebook(r.currentNotebookId()),
+                )
             }
                 .onFailure { android.util.Log.e(TAG, "failed to switch notebook to page", it) }
-                .getOrDefault(emptyList())
-            poster { onLoaded(strokes) }
+                .getOrDefault(EditorPageSnapshot(emptyList(), emptyList(), null))
+            poster { onLoaded(result) }
         }
     }
 

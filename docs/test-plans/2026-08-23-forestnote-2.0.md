@@ -48,6 +48,14 @@ fast curves, pressure ramps, crossings, and tilted calligraphy strokes.
 
 ## Exact canvas geometry
 
+Mini RC follow-up (2026-08-23): stored extent looked correct—fit/zoom could not expose any hidden
+bottom area—but editor entry briefly painted the legacy 3:4 transform before applying the notebook
+geometry. The candidate fix loads geometry + strokes + text boxes as one snapshot, composes once
+while the canvas is invisible, and rejects stale navigation callbacks. Re-test cold launch,
+Library → notebook, search → page, and rapid double-selection; none may show the intermediate
+right-side letterbox or omit text boxes. Also confirm the pen popup exposes all width levels 1–7;
+its width is now explicit rather than delegated to Viwoods' clipped `WRAP_CONTENT` measurement.
+
 For every device/orientation, create a notebook only after the editor has settled. Record the
 actual drawing-view pixel width/height (screen minus nav/toolbar), then verify the stored virtual
 pair preserves that exact aspect: the short axis is 10,000 and the other is

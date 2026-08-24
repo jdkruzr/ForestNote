@@ -10,6 +10,7 @@ import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.format.Settings
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
+import com.forestnote.core.ink.TextBox
 import org.junit.Test
 import java.io.File
 import java.util.concurrent.AbstractExecutorService
@@ -289,9 +290,29 @@ class NotebookStoreTest {
         // Put a stroke in the bootstrap notebook so "empty after switch" is meaningful.
         store.save(horizontalStroke())
 
-        val newNotebookId = awaitResult<String> { cb -> store.createNotebook("B") { cb(it) } }
-        val strokesInB = awaitResult<List<Stroke>> { cb -> store.switchNotebook(newNotebookId) { cb(it) } }
-        assertTrue(strokesInB.isEmpty(), "the new notebook's active page starts empty")
+        val newNotebookId = awaitResult<String> { cb ->
+            store.createNotebook("B", pageWidth = 10_000, pageHeight = 15_000) { cb(it) }
+        }
+        val loaded = awaitResult<EditorPageSnapshot> { cb -> store.switchNotebook(newNotebookId, cb) }
+        assertTrue(loaded.strokes.isEmpty(), "the new notebook's active page starts empty")
+        assertTrue(loaded.textBoxes.isEmpty(), "the new notebook's text layer starts empty")
+        assertEquals(10_000, loaded.notebook?.pageWidth, "switch returns geometry with content")
+        assertEquals(15_000, loaded.notebook?.pageHeight, "switch returns geometry with content")
+
+        val box = TextBox(
+            id = "box-in-b",
+            x = 100,
+            y = 200,
+            width = 2_000,
+            height = 800,
+            text = "snapshot me",
+            fontName = "",
+            fontSize = 240,
+        )
+        store.saveTextBox(box)
+        val reloaded = awaitResult<EditorPageSnapshot> { cb -> store.loadEditorPage(cb) }
+        assertEquals(listOf(box.id), reloaded.textBoxes.map { it.id }, "editor snapshot includes text")
+        assertEquals(10_000, reloaded.notebook?.pageWidth, "editor snapshot keeps geometry atomic")
 
         // The active notebook is now B.
         val activeNotebookId = awaitResult<String> { cb ->

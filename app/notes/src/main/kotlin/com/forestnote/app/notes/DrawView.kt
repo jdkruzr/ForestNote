@@ -573,7 +573,7 @@ class DrawView @JvmOverloads constructor(
         setNotebookGeometry(PageTransform.VIRTUAL_SHORT_AXIS, resolved)
     }
 
-    fun setNotebookGeometry(pageWidth: Int, pageHeight: Int) {
+    fun setNotebookGeometry(pageWidth: Int, pageHeight: Int, recompose: Boolean = true) {
         val resolvedWidth = pageWidth.takeIf { it > 0 } ?: PageTransform.VIRTUAL_SHORT_AXIS
         val resolvedHeight = pageHeight.takeIf { it > 0 } ?: PageTransform.VIRTUAL_LONG_AXIS
         if (resolvedWidth == currentPageWidth && resolvedHeight == currentPageHeight &&
@@ -582,11 +582,11 @@ class DrawView @JvmOverloads constructor(
         currentPageHeight = resolvedHeight
         if (width <= 0 || height <= 0) return
         transform.updatePage(width, height, resolvedWidth, resolvedHeight)
-        applyEditorZoomSetting(recompose = true, preserveCenter = false)
+        applyEditorZoomSetting(recompose = recompose, preserveCenter = false)
     }
 
-    fun resetViewportForPage() {
-        applyEditorZoomSetting(recompose = true, preserveCenter = false)
+    fun resetViewportForPage(recompose: Boolean = true) {
+        applyEditorZoomSetting(recompose = recompose, preserveCenter = false)
     }
 
     fun currentZoom(): Float = transform.zoom
@@ -668,6 +668,21 @@ class DrawView @JvmOverloads constructor(
     }
 
     /**
+     * Replace the in-memory page and compose it once. Navigation callers first install the exact
+     * notebook geometry, then use this instead of visibly painting an empty legacy-shaped page,
+     * strokes, and text boxes as three separate frames.
+     */
+    fun replaceLoadedPage(strokes: List<Stroke>, boxes: List<TextBox>) {
+        clearAll(repaint = false)
+        completedStrokes.addAll(strokes.distinctBy { it.id })
+        textBoxes.addAll(boxes.distinctBy { it.id })
+        ensureBitmap()
+        composeStaticBitmap()
+        invalidate()
+        reconcileIfOwned()
+    }
+
+    /**
      * Force re-provide bitmap to backend on next touch.
      * Called on resume after pause to re-acquire WritingBufferQueue.
      */
@@ -679,7 +694,7 @@ class DrawView @JvmOverloads constructor(
      * Clear all strokes from the page: erases the bitmap and removes all strokes from memory.
      * Does NOT persist to the database — caller must handle database deletion.
      */
-    fun clearAll(clearTextBoxes: Boolean = true) {
+    fun clearAll(clearTextBoxes: Boolean = true, repaint: Boolean = true) {
         completedStrokes.clear()
         currentStroke = null
         // The Clear tool is ink-only (clearTextBoxes = false) — boxes stay on the page. Page/
@@ -694,6 +709,7 @@ class DrawView @JvmOverloads constructor(
             boxGesture = BoxGesture.NONE
             clearBoxSelection()
         }
+        if (!repaint) return
         composeStaticBitmap() // clearing ink leaves the page template (and kept boxes) in place
         writingBitmap?.let { bmp ->
             val loc = IntArray(2)
