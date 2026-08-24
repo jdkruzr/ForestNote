@@ -56,7 +56,7 @@ canonical renderer.
 | Fountain / steel | `FOUNTAIN` |
 | Fineliner / ball / thin tube | `PENCIL` or `SQUARE_PEN` after device testing |
 | Pencil grades | `PENCIL`, `CHARCOAL`, or `CHARCOAL_V2` |
-| Brush | `NEO_BRUSH` |
+| Brush | `FOUNTAIN` (Boox Notes' ordinary Brush path; `NEO_BRUSH` is its separate New Brush) |
 | Marker / highlighter | `MARKER` |
 | Dashed | `DASH` |
 | Calligraphy / angled nib | `SQUARE_PEN` or `NEO_BRUSH` |

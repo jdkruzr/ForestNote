@@ -15,6 +15,7 @@ import android.view.View
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.api.device.epd.UpdateMode
 import com.onyx.android.sdk.data.note.TouchPoint
+import com.onyx.android.sdk.device.Device
 import com.onyx.android.sdk.pen.RawInputCallback
 import com.onyx.android.sdk.pen.TouchHelper
 import com.onyx.android.sdk.pen.data.TouchPointList
@@ -553,10 +554,12 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
 
     private fun applyPen() {
         try {
+            val style = liveStrokeStyle(pen.brushKind)
             touchHelper
-                ?.setStrokeStyle(liveStrokeStyle(pen.brushKind))
+                ?.setStrokeStyle(style)
                 ?.setStrokeColor(pen.color)
                 ?.setStrokeWidth(liveStrokeWidthPx())
+            applyNativeBrushPressure(style)
         } catch (t: Throwable) {
             Log.w(TAG, "applyPen failed", t)
         }
@@ -566,19 +569,36 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         applyFirmwareEnableState()
     }
 
-    /** Closest Onyx raw-ink preview only; committed rendering always uses BrushKind itself. */
+    /**
+     * Closest Onyx raw-ink preview only; committed rendering always uses BrushKind itself.
+     *
+     * The names in Onyx's public SDK are misleading here. Reverse engineering the shipping Boox
+     * Notes app shows that its ordinary Brush (shape type 5 / FountainScribbleShape) deliberately
+     * uses stroke style 1, [StrokeStyle.FOUNTAIN]. [StrokeStyle.NEO_BRUSH] is reserved for its
+     * separate "New Brush" shape type 21. NEO_BRUSH visibly drops the low-pressure beginning of an
+     * occasional first USI stroke on the Go 6 II even though the raw callback and stored stroke are
+     * complete; FOUNTAIN is the native Notes path and renders that onset correctly.
+     */
     private fun liveStrokeStyle(brush: BrushKind): Int = when (brush) {
-        BrushKind.FOUNTAIN, BrushKind.CALLIGRAPHY -> StrokeStyle.FOUNTAIN
+        BrushKind.FOUNTAIN, BrushKind.CALLIGRAPHY, BrushKind.BRUSH -> StrokeStyle.FOUNTAIN
         BrushKind.PENCIL_HB, BrushKind.PENCIL_2B -> StrokeStyle.PENCIL
         BrushKind.PENCIL_4B, BrushKind.PENCIL_6B -> StrokeStyle.CHARCOAL
         BrushKind.PENCIL_8B -> StrokeStyle.CHARCOAL_V2
-        BrushKind.BRUSH -> StrokeStyle.NEO_BRUSH
         BrushKind.BALLPOINT, BrushKind.FINELINER -> StrokeStyle.SQUARE_PEN
         BrushKind.TRANSLUCENT_MARKER, BrushKind.MARKER, BrushKind.HIGHLIGHTER -> StrokeStyle.MARKER
         BrushKind.DASHED -> StrokeStyle.DASH
         BrushKind.CALLIGRAPHY_REVERSE,
         BrushKind.CALLIGRAPHY_BROAD,
         BrushKind.CALLIGRAPHY_CHISEL -> StrokeStyle.SQUARE_PEN
+    }
+
+    /** Match Boox Notes' default pressure parameter for its ordinary Brush renderer. */
+    private fun applyNativeBrushPressure(style: Int) {
+        if (pen.brushKind != BrushKind.BRUSH || style != StrokeStyle.FOUNTAIN) return
+        val parameters = Device.currentDevice().getStrokeParameters(style) ?: return
+        if (parameters.isEmpty() || parameters[0] == BOOX_BRUSH_PRESSURE_SENSITIVITY) return
+        parameters[0] = BOOX_BRUSH_PRESSURE_SENSITIVITY
+        Device.currentDevice().setStrokeParameters(style, parameters)
     }
 
     // ===== Firmware raw-input → StrokeSink =====
@@ -1081,5 +1101,8 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         /** Wide committed strokes resolve a little heavier, so bias their live width up slightly. */
         private const val WIDE_LIVE_STROKE_REFERENCE_PRESSURE = 600
         private const val WIDE_LIVE_STROKE_MIN_WIDTH = 50
+
+        /** Default returned by Boox Notes' NotePenInfoUtils for shape type 5 (ordinary Brush). */
+        private const val BOOX_BRUSH_PRESSURE_SENSITIVITY = 0.3f
     }
 }
