@@ -85,9 +85,14 @@ For each combination run ten cold editor entries and ten resume cycles:
 1. **Passed 2026-08-23:** with UltraBridge v5 deployed, the installed ForestNote 1.8/v4 client made
    two `/sync/v1` requests; both returned HTTP 200. The already-current library produced no new ops.
    Existing v4 rows had already been materialized with legacy geometry and Fountain-v1 defaults.
-2. Install ForestNote 2.0/v5 and sync a newly created exact-page, multi-brush notebook. Verify
-   UltraBridge stores the new columns, its Files preview/PDF keeps page shape, and a second v5 device
-   reproduces the brushes.
+2. **Deployment/migration passed 2026-08-23; new-content validation remains:** GitHub Actions run
+   `32675571406` built commit `3c3a499` with the same release certificate as installed 1.8. The
+   in-place upgrade preserved the 103 MB library and migrated it to local schema v20: 96 notebooks,
+   117 pages, and 29,837 strokes remained; every notebook received exact geometry; legacy strokes
+   became Fountain-v1 or Highlighter-v1. The first v5 catch-up completed 46 HTTP-200 requests and
+   stopped normally. Next, sync a newly created exact-page, multi-brush notebook. Verify UltraBridge
+   stores the new columns, its Files preview/PDF keeps page shape, and a second v5 device reproduces
+   the brushes.
 3. Confirm a v3 hash receives HTTP 409. Remove v4 from the grace set in the release after all known
    devices have upgraded.
 
