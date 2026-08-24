@@ -2,6 +2,7 @@ package com.forestnote.app.notes
 
 import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.ink.BrushKind
+import com.forestnote.core.ink.CalligraphyNib
 import com.forestnote.core.ink.PressureCurve
 import com.forestnote.core.ink.PencilTexture
 import com.forestnote.core.ink.Stroke
@@ -85,12 +86,7 @@ object SvgPageRenderer {
     }
 
     private fun appendNib(out: StringBuilder, stroke: Stroke, a: StrokePoint, b: StrokePoint) {
-        val fallback = when (stroke.brushKind) {
-            BrushKind.CALLIGRAPHY_REVERSE -> -.75f
-            BrushKind.CALLIGRAPHY_BROAD -> 0f
-            BrushKind.CALLIGRAPHY_CHISEL -> 1.05f
-            else -> .75f
-        }
+        val fallback = CalligraphyNib.fallbackAngle(stroke.brushKind) ?: .75f
         val angle = b.orientationRadians ?: fallback
         val half = widthAt(stroke, b.pressure) / 2f
         val ox = cos(angle) * half; val oy = sin(angle) * half

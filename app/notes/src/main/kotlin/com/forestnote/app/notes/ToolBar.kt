@@ -6,6 +6,7 @@ import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.ScrollView
@@ -501,7 +502,7 @@ class ToolBar(
     }
 
     /**
-     * Pen-settings popup under the Fountain cell (A10): the variant rows plus a 7-chip width
+     * Pen-settings popup under the Fountain cell (A10): the variant rows plus a 9-chip width
      * strip (chips drawn as actual thickness samples) acting on the active variant. Unlike the
      * generic dropdown, tapping a variant or width updates the popup IN PLACE (no dismiss) so
      * variant + width can both be adjusted in one session; tap-outside dismisses.
@@ -522,7 +523,8 @@ class ToolBar(
         val popup = PopupWindow(
             container,
             // WRAP_CONTENT can freeze at the variant-list width on PopupWindow implementations,
-            // clipping the seven-chip thickness strip after level 4. Reserve the complete strip.
+            // clipping the thickness strip after level 4. Reserve the complete nine-chip strip;
+            // buildWidthStrip remains horizontally scrollable on narrower screens.
             minOf(
                 (PEN_POPUP_WIDTH_DP * density).toInt(),
                 ctx.resources.displayMetrics.widthPixels - (POPUP_SCREEN_MARGIN_DP * 2 * density).toInt(),
@@ -594,7 +596,7 @@ class ToolBar(
     }
 
     /**
-     * A horizontal strip of 7 width chips (1…7). Each chip shows an actual thickness sample
+     * A horizontal strip of 9 width chips (1…9). Each chip shows an actual thickness sample
      * (a black bar whose height tracks the level's base max width) over its label; the [active]
      * chip gets a 1dp border. Tapping a chip calls [onPick].
      */
@@ -613,8 +615,8 @@ class ToolBar(
         val sampleArea = (24 * density).toInt()
         PenWidthLevel.entries.forEach { level ->
             val baseMax = PenWidthScale.pair(level).second
-            // Scale the level's base max into a visible bar height (XL=70 → ~10dp), min 1px.
-            val barH = (baseMax / 70f * 10f * density).toInt().coerceAtLeast(1)
+            // Scale the level's base max into a visible bar height (level 9 = 140 → 14dp).
+            val barH = (baseMax / MAX_WIDTH_SAMPLE_V * 14f * density).toInt().coerceAtLeast(1)
             val chip = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
@@ -645,7 +647,11 @@ class ToolBar(
             }
             strip.addView(chip)
         }
-        return strip
+        return HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = false
+            isFillViewport = true
+            addView(strip)
+        }
     }
 
     /** The erase group's two variants, in dropdown order. */
@@ -674,9 +680,10 @@ class ToolBar(
 
     companion object {
         private const val DEFAULT_TEXT_SIZE_V = 240
-        /** Seven 40dp chips + 16dp strip padding + border/rounding allowance. */
-        private const val PEN_POPUP_WIDTH_DP = 300
+        /** Nine 40dp chips + 16dp strip padding + border/rounding allowance. */
+        private const val PEN_POPUP_WIDTH_DP = 380
         private const val POPUP_SCREEN_MARGIN_DP = 8
+        private const val MAX_WIDTH_SAMPLE_V = 140f
         // Text size presets live in [TextStylePresets.SIZES] — shared with the per-text-box
         // Options dialog so the two choosers can't drift.
         private val TEXT_SIZES = TextStylePresets.SIZES

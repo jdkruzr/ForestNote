@@ -118,12 +118,7 @@ object CanonicalBrushRenderer {
 
     private fun drawNib(canvas: Canvas, stroke: Stroke, t: PageTransform, paint: Paint) {
         if (stroke.points.size < 2) return drawPressureSegments(canvas, stroke, t, paint)
-        val fallbackAngle = when (stroke.brushKind) {
-            BrushKind.CALLIGRAPHY_REVERSE -> -0.75f
-            BrushKind.CALLIGRAPHY_BROAD -> 0f
-            BrushKind.CALLIGRAPHY_CHISEL -> 1.05f
-            else -> 0.75f
-        }
+        val fallbackAngle = CalligraphyNib.fallbackAngle(stroke.brushKind) ?: 0.75f
         paint.style = Paint.Style.FILL
         for (i in 1 until stroke.points.size) {
             val a = stroke.points[i - 1]; val b = stroke.points[i]

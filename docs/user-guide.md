@@ -18,7 +18,8 @@ translucent and opaque markers, fineliner, four calligraphy nibs, highlighter, a
 - **Highlighter** — a translucent wash that's drawn *behind* your ink, so it never covers what
   you've already written and never darkens where two strokes overlap.
 
-The seven width chips set the line thickness. Each brush remembers its own width, so a thin
+The nine width chips set the line thickness. Levels 8 and 9 extend beyond the old extra-large
+setting for pens whose pressure range otherwise feels too light. Each brush remembers its own width, so a thin
 Fineliner and a fat Highlighter coexist without re-picking every time you switch.
 
 Finger touches are ignored — only the stylus draws. That's deliberate, so you can rest your
@@ -30,6 +31,10 @@ On a supported Viwoods firmware, ForestNote receives pen samples directly from t
 service and sends only the changed bitmap region to the panel. This is enabled by default and gives
 ForestNote native-class writing latency. It runs inside the ordinary ForestNote app: **root is not
 required**, and the app does not invoke `su` or install a privileged helper.
+
+Calligraphy brushes use their canonical nib angle in the live Mini preview. Viwoods reports tilt
+magnitude but not pen azimuth, so the four nibs use stable brush-specific angles until pen-up rather
+than pretending the preview can rotate with the physical pen.
 
 If a Viwoods firmware update causes trouble, turn off **Settings → Debug → Use fastest Viwoods ink**.
 ForestNote will restart its ink controller and use the compatible Android-input fallback. This

@@ -43,23 +43,23 @@ class PenParamsTest {
 
     @Test
     fun `width level scales each variant from one base pair`() {
-        // A higher level widens every variant. Use 7 vs 1 to make the ordering unambiguous.
+        // A higher level widens every variant. Use 9 vs 1 to make the ordering unambiguous.
         val (level1Min, level1Max) = PenWidthScale.pair(PenWidthLevel.LEVEL_1)
-        val (level7Min, level7Max) = PenWidthScale.pair(PenWidthLevel.LEVEL_7)
+        val (level9Min, level9Max) = PenWidthScale.pair(PenWidthLevel.LEVEL_9)
 
         val fountain1 = PenParams.of(PenVariant.FOUNTAIN, PenWidthLevel.LEVEL_1)
-        val fountain7 = PenParams.of(PenVariant.FOUNTAIN, PenWidthLevel.LEVEL_7)
+        val fountain9 = PenParams.of(PenVariant.FOUNTAIN, PenWidthLevel.LEVEL_9)
         assertEquals(level1Min, fountain1.wMin); assertEquals(level1Max, fountain1.wMax)
-        assertEquals(level7Min, fountain7.wMin); assertEquals(level7Max, fountain7.wMax)
-        assertTrue(fountain7.wMax > fountain1.wMax, "Fountain widens with level")
+        assertEquals(level9Min, fountain9.wMin); assertEquals(level9Max, fountain9.wMax)
+        assertTrue(fountain9.wMax > fountain1.wMax, "Fountain widens with level")
 
         assertTrue(
-            PenParams.of(PenVariant.FINELINER, PenWidthLevel.LEVEL_7).wMin >
+            PenParams.of(PenVariant.FINELINER, PenWidthLevel.LEVEL_9).wMin >
                 PenParams.of(PenVariant.FINELINER, PenWidthLevel.LEVEL_1).wMin,
             "Fineliner constant width widens with level"
         )
         assertTrue(
-            PenParams.of(PenVariant.HIGHLIGHTER, PenWidthLevel.LEVEL_7).wMax >
+            PenParams.of(PenVariant.HIGHLIGHTER, PenWidthLevel.LEVEL_9).wMax >
                 PenParams.of(PenVariant.HIGHLIGHTER, PenWidthLevel.LEVEL_1).wMax,
             "Highlighter band widens with level"
         )

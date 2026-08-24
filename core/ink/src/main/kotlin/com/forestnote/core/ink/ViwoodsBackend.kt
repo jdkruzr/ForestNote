@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
@@ -22,9 +23,11 @@ import io.github.vwunofficial.ink.ViwoodsInkRenderer
 import java.lang.reflect.Method
 import java.util.Date
 import kotlin.math.ceil
+import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 /**
  * Viwoods AiPaper backend.
@@ -484,9 +487,28 @@ class ViwoodsBackend : InkBackend {
             val pressure = (event.pressure * 1000f).toInt().coerceIn(0, 1000)
             val penWidth = PressureCurve.width(pressure, params.wMin, params.wMax) * virtualToScreenScale
             previewPaint.color = params.color
-            previewPaint.strokeWidth = penWidth.coerceAtLeast(1f)
             previewPaint.xfermode = if (params.behind) PorterDuffXfermode(PorterDuff.Mode.DST_OVER) else null
-            canvas.drawLine(directPrevX, directPrevY, x, y, previewPaint)
+            val nibAngle = CalligraphyNib.fallbackAngle(params.brushKind)
+            if (nibAngle != null) {
+                // ENote gives tilt magnitude but no azimuth, so use the same per-brush fallback
+                // angle as the committed renderer. A swept nib polygon is a much closer live
+                // preview than the old round line and settles with far less shape change at UP.
+                val half = penWidth.coerceAtLeast(1f) / 2f
+                val ox = cos(nibAngle) * half
+                val oy = sin(nibAngle) * half
+                previewPaint.style = Paint.Style.FILL
+                canvas.drawPath(Path().apply {
+                    moveTo(directPrevX - ox, directPrevY - oy)
+                    lineTo(directPrevX + ox, directPrevY + oy)
+                    lineTo(x + ox, y + oy)
+                    lineTo(x - ox, y - oy)
+                    close()
+                }, previewPaint)
+                previewPaint.style = Paint.Style.STROKE
+            } else {
+                previewPaint.strokeWidth = penWidth.coerceAtLeast(1f)
+                canvas.drawLine(directPrevX, directPrevY, x, y, previewPaint)
+            }
             penWidth
         }
         val pad = ceil(width / 2f).toInt() + DIRECT_DIRTY_PADDING_PX

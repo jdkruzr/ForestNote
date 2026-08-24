@@ -13,15 +13,15 @@ class PenWidthSettingsTest {
         val levels = mapOf(
             PenVariant.FOUNTAIN to PenWidthLevel.LEVEL_2,
             PenVariant.FINELINER to PenWidthLevel.LEVEL_4,
-            PenVariant.HIGHLIGHTER to PenWidthLevel.LEVEL_7
+            PenVariant.HIGHLIGHTER to PenWidthLevel.LEVEL_9
         )
         assertEquals(levels, PenWidthSettings.decode(PenWidthSettings.encode(levels)))
     }
 
     @Test
     fun `encode uses numeric labels`() {
-        val encoded = PenWidthSettings.encode(mapOf(PenVariant.FOUNTAIN to PenWidthLevel.LEVEL_6))
-        assertEquals(mapOf("FOUNTAIN" to "6"), encoded)
+        val encoded = PenWidthSettings.encode(mapOf(PenVariant.FOUNTAIN to PenWidthLevel.LEVEL_9))
+        assertEquals(mapOf("FOUNTAIN" to "9"), encoded)
     }
 
     @Test

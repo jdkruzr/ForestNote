@@ -32,7 +32,7 @@ Use a fresh install or throwaway library for destructive restore checks.
 
 ## Portable brushes
 
-On each device create the same 17-row brush sheet at width levels 2, 4, and 6, including slow and
+On each device create the same 17-row brush sheet at width levels 2, 4, 6, and 9, including slow and
 fast curves, pressure ramps, crossings, and tilted calligraphy strokes.
 
 - Live ink may use the closest vendor preview while the pen is down.
@@ -45,6 +45,9 @@ fast curves, pressure ramps, crossings, and tilted calligraphy strokes.
 - Hardware eraser honors the last selected stroke/pixel eraser mode after pen-tool switches.
 - Opening/dismissing every brush/tool/template dialog produces no ink, dead zone, stale firmware
   capture, gray-page state, or missing strokes.
+- On the Mini, all four calligraphy brushes preview as swept angled nibs while the pen is down and
+  settle without changing into a round-line-derived shape at pen-up. Physical pen azimuth is not
+  expected because Viwoods' ENote callback exposes only tilt magnitude.
 
 ## Exact canvas geometry
 
@@ -53,7 +56,7 @@ bottom area—but editor entry briefly painted the legacy 3:4 transform before a
 geometry. The candidate fix loads geometry + strokes + text boxes as one snapshot, composes once
 while the canvas is invisible, and rejects stale navigation callbacks. Re-test cold launch,
 Library → notebook, search → page, and rapid double-selection; none may show the intermediate
-right-side letterbox or omit text boxes. Also confirm the pen popup exposes all width levels 1–7;
+right-side letterbox or omit text boxes. Also confirm the pen popup exposes all width levels 1–9;
 its width is now explicit rather than delegated to Viwoods' clipped `WRAP_CONTENT` measurement.
 
 For every device/orientation, create a notebook only after the editor has settled. Record the

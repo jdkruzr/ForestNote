@@ -406,9 +406,9 @@ class ToolBarLogicTest {
         val logic = ToolSelectionLogic()
         logic.selectPenVariant(PenVariant.FOUNTAIN)
 
-        logic.selectPenWidth(PenWidthLevel.LEVEL_7)
+        logic.selectPenWidth(PenWidthLevel.LEVEL_9)
 
-        assertEquals(PenWidthLevel.LEVEL_7, logic.penWidthFor(PenVariant.FOUNTAIN), "Fountain took 7")
+        assertEquals(PenWidthLevel.LEVEL_9, logic.penWidthFor(PenVariant.FOUNTAIN), "Fountain took 9")
         assertEquals(PenWidthLevel.LEVEL_4, logic.penWidthFor(PenVariant.FINELINER), "Fineliner untouched")
         assertEquals(PenWidthLevel.LEVEL_4, logic.penWidthFor(PenVariant.HIGHLIGHTER), "Highlighter untouched")
     }
@@ -420,13 +420,13 @@ class ToolBarLogicTest {
         logic.selectPenVariant(PenVariant.FOUNTAIN)
         logic.selectPenWidth(PenWidthLevel.LEVEL_2)
         logic.selectPenVariant(PenVariant.HIGHLIGHTER)
-        logic.selectPenWidth(PenWidthLevel.LEVEL_7)
+        logic.selectPenWidth(PenWidthLevel.LEVEL_9)
 
         logic.selectPenVariant(PenVariant.FOUNTAIN)
         assertEquals(PenWidthLevel.LEVEL_2, logic.activePenWidth(), "Fountain's width returns")
 
         logic.selectPenVariant(PenVariant.HIGHLIGHTER)
-        assertEquals(PenWidthLevel.LEVEL_7, logic.activePenWidth(), "Highlighter's width returns")
+        assertEquals(PenWidthLevel.LEVEL_9, logic.activePenWidth(), "Highlighter's width returns")
     }
 
     @Test

@@ -1,7 +1,7 @@
 package com.forestnote.core.ink
 
 /**
- * One of seven numeric pen widths (library-and-tools AC10). Chosen per [PenVariant] and
+ * One of nine numeric pen widths (library-and-tools AC10). Chosen per [PenVariant] and
  * persisted; [LEVEL_4] is the v1 default so existing strokes render unchanged. See
  * [PenWidthScale] for the actual widths.
  */
@@ -12,7 +12,9 @@ enum class PenWidthLevel(val value: Int) {
     LEVEL_4(4),
     LEVEL_5(5),
     LEVEL_6(6),
-    LEVEL_7(7);
+    LEVEL_7(7),
+    LEVEL_8(8),
+    LEVEL_9(9);
 
     val label: String get() = value.toString()
 

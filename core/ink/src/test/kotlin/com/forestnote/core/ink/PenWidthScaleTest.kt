@@ -4,7 +4,7 @@ import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** The 7-level width scale (AC10.3): 4 is the v1 default and levels increase monotonically. */
+/** The 9-level width scale (AC10.3): 4 is the v1 default and levels increase monotonically. */
 class PenWidthScaleTest {
 
     @Test
@@ -14,7 +14,7 @@ class PenWidthScaleTest {
     }
 
     @Test
-    fun `min and max both increase monotonically across 1 to 7`() {
+    fun `min and max both increase monotonically across 1 to 9`() {
         val levels = PenWidthLevel.entries
         val pairs = levels.map { PenWidthScale.pair(it) }
         for (i in 1 until pairs.size) {
@@ -37,5 +37,11 @@ class PenWidthScaleTest {
         assertEquals(5 to 24, PenWidthScale.pair(PenWidthLevel.LEVEL_2))
         assertEquals(10 to 50, PenWidthScale.pair(PenWidthLevel.LEVEL_6))
         assertEquals(14 to 70, PenWidthScale.pair(PenWidthLevel.LEVEL_7))
+    }
+
+    @Test
+    fun `levels 8 and 9 extend beyond the legacy XL anchor`() {
+        assertEquals(20 to 100, PenWidthScale.pair(PenWidthLevel.LEVEL_8))
+        assertEquals(28 to 140, PenWidthScale.pair(PenWidthLevel.LEVEL_9))
     }
 }

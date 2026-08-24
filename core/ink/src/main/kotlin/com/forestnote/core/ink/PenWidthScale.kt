@@ -5,7 +5,8 @@ package com.forestnote.core.ink
  * 10,000), which [PenParams.of] then transforms per variant. [PenWidthLevel.LEVEL_4] is exactly the
  * v1 default `(7, 35)` (= [Stroke.DEFAULT_WIDTH_MIN]/[Stroke.DEFAULT_WIDTH_MAX]) so default
  * rendering is byte-for-byte unchanged. The old XS/S/M/L/XL anchors map to 1/2/4/6/7, with
- * 3 and 5 filling the new intermediate steps.
+ * 3 and 5 filling the intermediate steps. Levels 8 and 9 extend beyond the old XL anchor for
+ * pens/devices whose pressure range otherwise produces an undersized canonical stroke.
  */
 object PenWidthScale {
     fun pair(level: PenWidthLevel): Pair<Int, Int> = when (level) {
@@ -16,5 +17,7 @@ object PenWidthScale {
         PenWidthLevel.LEVEL_5 -> 8 to 42
         PenWidthLevel.LEVEL_6 -> 10 to 50
         PenWidthLevel.LEVEL_7 -> 14 to 70
+        PenWidthLevel.LEVEL_8 -> 20 to 100
+        PenWidthLevel.LEVEL_9 -> 28 to 140
     }
 }
