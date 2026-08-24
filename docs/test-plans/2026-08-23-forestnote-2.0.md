@@ -56,6 +56,9 @@ fast curves, pressure ramps, crossings, and tilted calligraphy strokes.
   flashing the whole page, or leaving doubled pixels.
 - Screenshot, reopen, thumbnail, PDF, and SVG must agree on brush identity, geometry, opacity,
   dash pattern, and deterministic pencil texture.
+- On a Boox color device, one Translucent Marker stroke must settle to light gray with template
+  lines still visible through it; drawing slowly must not make the stroke turn black from segment
+  overlap. Opaque Marker remains black. Verify both the live preview and a post-pen-up screenshot.
 - Sync the sheet Viwoods → Boox → Viwoods. Editing on each side must preserve every existing brush;
   unknown/future brush ids fall back visibly to Fountain without corrupting stored data.
 - Hardware eraser honors the last selected stroke/pixel eraser mode after pen-tool switches.

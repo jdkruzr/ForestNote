@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
+import android.graphics.RectF
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
@@ -30,6 +31,16 @@ object CanonicalBrushRenderer {
         val points = stroke.points
         if (points.isEmpty()) return
         configurePaint(paint, stroke, transform, useDstOver)
+        val groupedAlpha = BrushAppearance.alpha(stroke.brushKind)
+        val layerSave = if (groupedAlpha < 255) {
+            // Alpha belongs to the whole physical stroke, not every tiny sample-to-sample line.
+            // Applying it per segment makes a slowly drawn marker turn black where its wide
+            // segments overlap. A bounded layer composites the complete stroke exactly once.
+            paint.alpha = 255
+            canvas.saveLayerAlpha(strokeBounds(stroke, transform), groupedAlpha)
+        } else {
+            -1
+        }
         when (stroke.brushKind) {
             BrushKind.DASHED -> drawDashed(canvas, stroke, transform, paint)
             BrushKind.PENCIL_HB, BrushKind.PENCIL_2B, BrushKind.PENCIL_4B,
@@ -39,6 +50,7 @@ object CanonicalBrushRenderer {
                 drawNib(canvas, stroke, transform, paint)
             else -> drawPressureSegments(canvas, stroke, transform, paint)
         }
+        if (layerSave >= 0) canvas.restoreToCount(layerSave)
         paint.pathEffect = null
         paint.xfermode = null
         paint.alpha = 255
@@ -56,12 +68,28 @@ object CanonicalBrushRenderer {
         }
         paint.strokeJoin = Paint.Join.ROUND
         paint.alpha = when (stroke.brushKind) {
-            BrushKind.TRANSLUCENT_MARKER -> 80
-            BrushKind.MARKER -> 190
+            BrushKind.TRANSLUCENT_MARKER, BrushKind.MARKER -> 255
             else -> 255
         }
         paint.xfermode = if (useDstOver && isBehind(stroke.brushKind)) dstOver else null
         paint.strokeWidth = t.toScreenSize(stroke.penWidthMax.toFloat()).coerceAtLeast(1f)
+    }
+
+    private fun strokeBounds(stroke: Stroke, t: PageTransform): RectF {
+        var left = Float.POSITIVE_INFINITY
+        var top = Float.POSITIVE_INFINITY
+        var right = Float.NEGATIVE_INFINITY
+        var bottom = Float.NEGATIVE_INFINITY
+        for (point in stroke.points) {
+            val x = t.toScreenX(point.x)
+            val y = t.toScreenY(point.y)
+            left = minOf(left, x)
+            top = minOf(top, y)
+            right = maxOf(right, x)
+            bottom = maxOf(bottom, y)
+        }
+        val pad = t.toScreenSize(stroke.penWidthMax.toFloat()) / 2f + 2f
+        return RectF(left - pad, top - pad, right + pad, bottom + pad)
     }
 
     private fun widthAt(stroke: Stroke, pressure: Int): Float {

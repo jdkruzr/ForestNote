@@ -557,7 +557,9 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             val style = liveStrokeStyle(pen.brushKind)
             touchHelper
                 ?.setStrokeStyle(style)
-                ?.setStrokeColor(pen.color)
+                // Onyx's raw layer ignores color alpha. Give it the white-page composite so a
+                // translucent marker previews gray instead of becoming an opaque black roller.
+                ?.setStrokeColor(BrushAppearance.previewColorOnWhite(pen.brushKind, pen.color))
                 ?.setStrokeWidth(liveStrokeWidthPx())
             applyNativeBrushPressure(style)
         } catch (t: Throwable) {

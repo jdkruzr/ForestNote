@@ -42,4 +42,37 @@ class SvgPageRendererTest {
         assertTrue(first.contains("data-forestnote-brush=\"pencil_4b\""))
         assertTrue(first.count { it == '<' } > 5, "graphite flecks add vector circles")
     }
+
+    @Test
+    fun markerOpacityAndHighlighterLayeringMatchTheCanonicalPage() {
+        fun stroke(id: String, kind: BrushKind) = Stroke(
+            id = id,
+            points = listOf(StrokePoint(100, 100, 500, 1L), StrokePoint(1000, 500, 500, 2L)),
+            brushKind = kind,
+        )
+        val translucent = stroke("01KTRANSLUCENT00000000000", BrushKind.TRANSLUCENT_MARKER)
+        val opaque = stroke("01KOPAQUEMARKER0000000000", BrushKind.MARKER)
+        val highlighter = stroke("01KHIGHLIGHTER00000000000", BrushKind.HIGHLIGHTER)
+        val page = ExportPageSnapshot(
+            PageMeta("p", 1L),
+            listOf(translucent, opaque, highlighter),
+            emptyList(),
+            PageTemplate.RULED,
+            5,
+        )
+        val notebook = ExportNotebookSnapshot(
+            NotebookMeta("n", "N", 1L, 1L, pageWidth = 10_000, pageHeight = 13_333),
+            10_000, 13_333, listOf(page),
+        )
+
+        val svg = SvgPageRenderer.render(notebook, page).decodeToString()
+        val translucentGroup = svg.substring(svg.indexOf("data-forestnote-brush=\"translucent_marker\""))
+        val opaqueGroup = svg.substring(svg.indexOf("data-forestnote-brush=\"marker\""))
+        assertTrue(translucentGroup.startsWith("data-forestnote-brush=\"translucent_marker\" stroke=\"#000000\" fill=\"#000000\" opacity=\"0.3137255\""))
+        assertTrue(opaqueGroup.startsWith("data-forestnote-brush=\"marker\" stroke=\"#000000\" fill=\"#000000\" opacity=\"1.0\""))
+        assertTrue(
+            svg.indexOf("data-forestnote-brush=\"highlighter\"") < svg.indexOf("<g stroke=\"#bebebe\""),
+            "highlighter must be behind the page template",
+        )
+    }
 }

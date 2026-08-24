@@ -26,9 +26,10 @@ object PagePreviewRenderer {
         val transform = PageTransform().apply {
             updatePage(WIDTH_PX, HEIGHT_PX, source.pageWidth, source.pageHeight)
         }
+        drawBehindInk(canvas, transform, source)
         drawTemplate(canvas, transform, source.template, source.pitchMm)
         PagePreviewRenderOrder.bottom(source.textBoxes).forEach { drawText(canvas, transform, it) }
-        drawInk(canvas, transform, source)
+        drawFrontInk(canvas, transform, source)
         PagePreviewRenderOrder.top(source.textBoxes).forEach { drawText(canvas, transform, it) }
         return bitmap
     }
@@ -53,10 +54,14 @@ object PagePreviewRenderer {
         canvas.restore()
     }
 
-    private fun drawInk(canvas: Canvas, t: PageTransform, source: PagePreviewSource) {
+    private fun drawBehindInk(canvas: Canvas, t: PageTransform, source: PagePreviewSource) {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
         source.strokes.filter { CanonicalBrushRenderer.isBehind(it.brushKind) }
             .forEach { CanonicalBrushRenderer.drawStroke(canvas, it, t, paint) }
+    }
+
+    private fun drawFrontInk(canvas: Canvas, t: PageTransform, source: PagePreviewSource) {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
         source.strokes.filterNot { CanonicalBrushRenderer.isBehind(it.brushKind) }
             .forEach { CanonicalBrushRenderer.drawStroke(canvas, it, t, paint) }
     }

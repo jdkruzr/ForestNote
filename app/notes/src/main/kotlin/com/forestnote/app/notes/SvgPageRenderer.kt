@@ -2,6 +2,7 @@ package com.forestnote.app.notes
 
 import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.ink.BrushKind
+import com.forestnote.core.ink.BrushAppearance
 import com.forestnote.core.ink.CalligraphyNib
 import com.forestnote.core.ink.PressureCurve
 import com.forestnote.core.ink.PencilTexture
@@ -19,9 +20,11 @@ object SvgPageRenderer {
             .append("\" height=\"").append(notebook.pageHeight).append("\" viewBox=\"0 0 ")
             .append(notebook.pageWidth).append(' ').append(notebook.pageHeight).append("\">\n")
         append("<rect width=\"100%\" height=\"100%\" fill=\"white\"/>\n")
+        page.strokes.filter { it.brushKind == BrushKind.HIGHLIGHTER }
+            .forEach { appendStroke(this, it) }
         appendTemplate(this, notebook, page)
         page.textBoxes.filter { it.zBand == ZBand.BOTTOM }.forEach { appendTextBox(this, it) }
-        page.strokes.sortedBy { if (it.brushKind == BrushKind.HIGHLIGHTER) 0 else 1 }
+        page.strokes.filter { it.brushKind != BrushKind.HIGHLIGHTER }
             .forEach { appendStroke(this, it) }
         page.textBoxes.filter { it.zBand == ZBand.TOP }.forEach { appendTextBox(this, it) }
         append("</svg>\n")
@@ -48,8 +51,7 @@ object SvgPageRenderer {
     private fun appendStroke(out: StringBuilder, stroke: Stroke) {
         if (stroke.points.isEmpty()) return
         val opacity = when (stroke.brushKind) {
-            BrushKind.TRANSLUCENT_MARKER -> .31f
-            BrushKind.MARKER -> .75f
+            BrushKind.TRANSLUCENT_MARKER -> BrushAppearance.alpha(stroke.brushKind) / 255f
             BrushKind.PENCIL_HB, BrushKind.PENCIL_2B, BrushKind.PENCIL_4B,
             BrushKind.PENCIL_6B, BrushKind.PENCIL_8B -> PencilTexture.gradeOpacity(stroke.brushKind)
             else -> 1f

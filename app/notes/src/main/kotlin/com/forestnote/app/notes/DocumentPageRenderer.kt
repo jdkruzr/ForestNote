@@ -18,12 +18,12 @@ object DocumentPageRenderer {
         val transform = PageTransform().apply {
             updatePage(widthPx, heightPx, notebook.pageWidth, notebook.pageHeight)
         }
-        drawTemplate(canvas, transform, page)
-        page.textBoxes.filter { it.zBand == com.forestnote.core.ink.ZBand.BOTTOM }
-            .forEach { drawText(canvas, transform, it) }
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         page.strokes.filter { CanonicalBrushRenderer.isBehind(it.brushKind) }
             .forEach { CanonicalBrushRenderer.drawStroke(canvas, it, transform, paint) }
+        drawTemplate(canvas, transform, page)
+        page.textBoxes.filter { it.zBand == com.forestnote.core.ink.ZBand.BOTTOM }
+            .forEach { drawText(canvas, transform, it) }
         page.strokes.filterNot { CanonicalBrushRenderer.isBehind(it.brushKind) }
             .forEach { CanonicalBrushRenderer.drawStroke(canvas, it, transform, paint) }
         page.textBoxes.filter { it.zBand == com.forestnote.core.ink.ZBand.TOP }

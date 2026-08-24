@@ -18,6 +18,7 @@ import android.text.TextPaint
 import android.view.MotionEvent
 import android.view.View
 import com.forestnote.core.format.PageTemplate
+import com.forestnote.core.ink.BrushAppearance
 import com.forestnote.core.ink.DisplayMode
 import com.forestnote.core.ink.CanonicalBrushRenderer
 import com.forestnote.core.ink.InkBackend
@@ -379,18 +380,15 @@ class DrawView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
     }
 
-    /** Composite-behind mode for the highlighter (paints under existing ink). */
-    private val dstOverXfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OVER)
-
     /**
-     * Set [strokePaint]'s colour + xfermode for a stroke. Highlighter strokes
-     * (carrying [PenParams.HIGHLIGHTER_GRAY]) composite DST_OVER so they land
-     * behind ink and, being opaque, never darken on overlap.
+     * Configure the cheap in-progress app preview. Canonical layering happens on pen-up; using a
+     * white-page preview color here prevents incremental translucent segments from accumulating
+     * into black while remaining compatible with vendor bitmap paths that ignore alpha.
      */
-    private fun configureStrokePaintFor(color: Int) {
-        strokePaint.color = color
-        strokePaint.xfermode =
-            if (color == PenParams.HIGHLIGHTER_GRAY) dstOverXfermode else null
+    private fun configureLiveStrokePaint(params: PenParams) {
+        strokePaint.color = BrushAppearance.previewColorOnWhite(params.brushKind, params.color)
+        strokePaint.alpha = 255
+        strokePaint.xfermode = null
     }
 
     // Eraser paint — clears pixels with PorterDuff CLEAR, same as WiNote
@@ -444,6 +442,11 @@ class DrawView @JvmOverloads constructor(
         color = TEMPLATE_LINE_COLOR
         style = Paint.Style.FILL
         strokeWidth = TEMPLATE_LINE_PX
+    }
+    private val pageBackgroundPaint = Paint().apply {
+        isAntiAlias = false
+        color = Color.WHITE
+        style = Paint.Style.FILL
     }
 
     // The page-edge boundary marker (see [renderPageBoundary]). Bold + distinct from the template.
@@ -1691,8 +1694,7 @@ class DrawView @JvmOverloads constructor(
                     val params = pendingParams ?: return
                     ensureBitmap()
                     beginBackendStroke()
-                    // Resolve colour/xfermode (highlighter composites DST_OVER) for the live paint.
-                    configureStrokePaintFor(params.color)
+                    configureLiveStrokePaint(params)
                     currentStroke = StrokeBuilder(
                         params.color, params.wMin, params.wMax,
                         brushKind = params.brushKind,
@@ -2226,7 +2228,16 @@ class DrawView @JvmOverloads constructor(
 
     private fun drawStrokeToBitmap(stroke: Stroke) {
         val canvas = writingCanvas ?: return
-        CanonicalBrushRenderer.drawStroke(canvas, stroke, transform, strokePaint, useDstOver = true)
+        CanonicalBrushRenderer.drawStroke(canvas, stroke, transform, strokePaint)
+    }
+
+    /** Opaque page pixels are required because vendor-owned ink surfaces discard bitmap alpha. */
+    private fun renderPageBackground(canvas: Canvas) {
+        val left = transform.toScreenX(0)
+        val top = transform.toScreenY(0)
+        val right = transform.toScreenX(transform.virtualWidth)
+        val bottom = transform.toScreenY(transform.virtualHeight)
+        canvas.drawRect(left, top, right, bottom, pageBackgroundPaint)
     }
 
     /**
@@ -2245,9 +2256,17 @@ class DrawView @JvmOverloads constructor(
             canvas.clipRect(clipRect)
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
         }
+        renderPageBackground(canvas)
+        // Highlighter is a true behind-ink layer. Draw it before the template and bottom text so
+        // those remain readable without relying on transparency in the final vendor bitmap.
+        for (stroke in completedStrokes) {
+            if (CanonicalBrushRenderer.isBehind(stroke.brushKind)) drawStrokeToBitmap(stroke)
+        }
         renderTemplateLayer(canvas)
         for (box in textBoxes) if (box.zBand == ZBand.BOTTOM && box.id.isStaticallyDrawn()) drawTextBox(canvas, box)
-        for (stroke in completedStrokes) drawStrokeToBitmap(stroke)
+        for (stroke in completedStrokes) {
+            if (!CanonicalBrushRenderer.isBehind(stroke.brushKind)) drawStrokeToBitmap(stroke)
+        }
         for (box in textBoxes) if (box.zBand == ZBand.TOP && box.id.isStaticallyDrawn()) drawTextBox(canvas, box)
         renderPageBoundary(canvas) // last: the page-edge marker stays visible over everything
         canvas.restoreToCount(saveCount)
