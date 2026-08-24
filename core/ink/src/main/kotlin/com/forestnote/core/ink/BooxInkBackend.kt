@@ -112,12 +112,13 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     private var explicitCommitRefresh = false
 
     /**
-     * Per-move accumulation, the FALLBACK ingest for firmware where the batch
-     * [RawInputCallback.onRawDrawingTouchPointListReceived] is unreliable (Phase-0: the Note Air5 C
-     * fired it 4/11). The PRIMARY path is the batch itself (the Go 10.3 II fires it 5/5) — notable's
-     * structure, which also lets [RawInputCallback.onEndRawDrawing] stay light so the firmware
-     * cleanly releases the touch after a stroke (heavy work there blocks the release → a stuck
-     * toolbar). Touched only on the single firmware callback thread.
+     * Canonical begin + per-move accumulation. The completed Onyx batch is useful as a completion
+     * signal, but cannot be trusted as the point source: on Go 6 II + Maxeye USI it occasionally
+     * begins at the SECOND leg of a stroke (a `W` arrived starting at its first bottom vertex), even
+     * though [onBeginRawDrawing] supplied the real top-left down point. We therefore preserve this
+     * stream and append only the batch's final endpoint. This also covers firmware where the batch
+     * callback itself is intermittent, while keeping [onEndRawDrawing] light enough for clean touch
+     * release. Touched only on the single firmware callback thread.
      */
     private val pendingPoints = ArrayList<TouchPoint>(2048)
     private var listFired = false
@@ -587,9 +588,9 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
     // fired 4/11 strokes) — we ingest from the per-move callback only.
 
     private val rawCallback = object : RawInputCallback() {
-        // Documented order (per the Onyx SDK): begin -> move… -> LIST -> end. We ingest the whole
-        // stroke from the LIST (one UI-thread post), accumulating per-move only as a fallback for
-        // firmware that drops the LIST. begin/move/end stay light so the firmware releases cleanly.
+        // Documented order (per the Onyx SDK): begin -> move… -> LIST -> end. LIST signals that the
+        // stroke is complete, but [pendingPoints] is canonical because some USI batches omit their
+        // initial segment. begin/move/end stay light so the firmware releases cleanly.
         override fun onBeginRawDrawing(b: Boolean, point: TouchPoint?) {
             rawTraceId = inkTraceIds.incrementAndGet()
             rawBeginNs = SystemClock.elapsedRealtimeNanos()
@@ -623,7 +624,32 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         override fun onRawDrawingTouchPointListReceived(list: TouchPointList?) {
             val pts = list?.points ?: return
             listFired = true
-            ingestStroke(pts, "list")
+            val accumulatedFirst = pendingPoints.firstOrNull()
+            val batchFirst = pts.firstOrNull()
+            if (accumulatedFirst != null && batchFirst != null) {
+                val prefixJumpPx = hypot(
+                    (batchFirst.x - accumulatedFirst.x).toDouble(),
+                    (batchFirst.y - accumulatedFirst.y).toDouble(),
+                ).toInt()
+                Log.d(
+                    TAG,
+                    "ink trace id=$rawTraceId prefix-jump-px=$prefixJumpPx " +
+                        "begin=(${accumulatedFirst.x},${accumulatedFirst.y}) " +
+                        "batch-begin=(${batchFirst.x},${batchFirst.y})"
+                )
+            }
+            val canonical = pendingPoints.mapTo(ArrayList(pendingPoints.size + 1)) { TouchPoint(it) }
+            // The per-move callback may stop at the last MOVE while LIST includes the UP endpoint.
+            // Append that endpoint only when it is spatially distinct; a duplicate is harmless but
+            // needlessly fattens every stored stroke.
+            pts.lastOrNull()?.let { last ->
+                val accumulatedLast = canonical.lastOrNull()
+                if (accumulatedLast == null || accumulatedLast.x != last.x || accumulatedLast.y != last.y) {
+                    canonical.add(TouchPoint(last))
+                }
+            }
+            // Defensive fallback for odd firmware that supplies LIST but no begin/move callbacks.
+            ingestStroke(if (canonical.isEmpty()) pts else canonical, "begin-moves+list-end")
         }
 
         override fun onEndRawDrawing(b: Boolean, point: TouchPoint?) {
