@@ -5,8 +5,8 @@ inking on the [Viwoods AiPaper Mini](https://www.viwoods.com/) and Boox/Onyx dev
 so the ink keeps up with your pen instead of lagging a few strokes behind. On any other
 Android device it falls back to a standard canvas.
 
-> **Status:** version 2.0 release candidate. Viwoods and the Boox USI/EMR device paths are validated
-> on-device; the remaining release checks are the final portability/error-path cases.
+> **Status:** version 2.0 release candidate, validated on Viwoods and Boox USI/EMR devices and ready
+> for the final release tag.
 
 ## What you can do
 

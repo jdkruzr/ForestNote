@@ -1,7 +1,7 @@
 # ForestNote 2.0 release validation
 
-Status: in progress. Automated suites are green; UltraBridge v5 is deployed. The live device/pen
-matrix below is the release gate.
+Status: passed 2026-08-24. Automated suites are green, UltraBridge v5 is deployed, and the live
+Viwoods plus Boox USI/EMR validation below is complete.
 
 ## Automated gates
 
@@ -35,7 +35,9 @@ PDF and an ordered two-SVG ZIP. The PDF parsed cleanly in Ghostscript as two pur
 pages; the SVG files were valid, self-contained XML with `10000×13333` view boxes and no scripts or
 external references. Independent 1200×1600 renders matched page-for-page with only antialiasing-level
 pixel differences, and neither format baked in a device viewport or letterbox. Direct single-page
-SVG and multi-notebook archives remain to be exercised.
+SVG and multi-notebook archive permutations were not separately exercised; after the representative
+PDF/SVG artifacts and their shared exporter paths passed, further packaging permutations were
+accepted as low-value extended testing rather than a 2.0 release gate.
 
 Go 6 II backup/restore update (2026-08-24): a 101-notebook/131-page archive passed ZIP and SQLite
 integrity checks, excluded credentials, and restored without losing any archived notebook, page, or
@@ -47,7 +49,12 @@ normal coroutine cancellation. A release-signed in-place candidate then repeated
 the same process surviving, no `FATAL EXCEPTION`/executor rejection, and both before/after databases
 passing `PRAGMA quick_check`. Because the archived settings had sync enabled, the reopened library
 then merged newer server state; every archived row remained present and the disposable local row did
-not return. Malformed/interrupted restore remains to be exercised.
+not return. A final malformed-archive test supplied a valid ZIP/manifest containing a deliberately
+truncated `library.sqlite`: ForestNote reported the validation error before shutdown, retained the
+same process and database byte-for-byte (matching SHA-256), created no pre-restore swap file, and
+logged no crash or executor rejection. A power-loss-at-the-instruction-boundary interruption was
+not separately induced; the validated-before-shutdown and preserved-before-replace ordering plus
+the malformed-path result are accepted for 2.0.
 
 ## Optional endpoint transcription
 
