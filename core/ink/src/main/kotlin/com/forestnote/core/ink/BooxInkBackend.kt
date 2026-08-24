@@ -169,6 +169,14 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
      * [commitDirtyLock]: written from the UI thread ([commitInkStroke]), drained on [reconcileExecutor].
      */
     private var pendingCommitDirty: Rect? = null
+
+    /**
+     * True when the coalesced commit contains alpha-composited ink whose final gray/color must be
+     * reproduced by a color-capable waveform. The Tab Ultra C Pro's fast handwriting waveform can
+     * turn neutral gray live ink green on the physical Kaleido panel even though screenshots remain
+     * perfectly neutral. Guarded by [commitDirtyLock] alongside [pendingCommitDirty].
+     */
+    private var pendingCommitNeedsAccurateColor = false
     private val commitDirtyLock = Any()
 
     /**
@@ -557,9 +565,11 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             val style = liveStrokeStyle(pen.brushKind)
             touchHelper
                 ?.setStrokeStyle(style)
-                // Onyx's raw layer ignores color alpha. Give it the white-page composite so a
-                // translucent marker previews gray instead of becoming an opaque black roller.
-                ?.setStrokeColor(BrushAppearance.previewColorOnWhite(pen.brushKind, pen.color))
+                // Onyx's raw layer ignores alpha. Mono panels can safely preview the white-page
+                // composite, but Kaleido's fast handwriting waveform renders neutral gray as green
+                // pigment. Use the opaque source color while the pen is down there; the canonical
+                // gray replaces it at pen-up via an accurate REGAL_PLUS region refresh.
+                ?.setStrokeColor(liveStrokeColor())
                 ?.setStrokeWidth(liveStrokeWidthPx())
             applyNativeBrushPressure(style)
         } catch (t: Throwable) {
@@ -570,6 +580,13 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         // stylus and the popup can no longer be dismissed by an outside tap (it draws instead).
         applyFirmwareEnableState()
     }
+
+    private fun liveStrokeColor(): Int =
+        if (colorDevice && BooxRefreshPolicy.needsAccurateColor(pen.brushKind)) {
+            pen.color or Color.BLACK
+        } else {
+            BrushAppearance.previewColorOnWhite(pen.brushKind, pen.color)
+        }
 
     /**
      * Closest Onyx raw-ink preview only; committed rendering always uses BrushKind itself.
@@ -836,21 +853,18 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             // (every later reconcileRepaint early-returns without consuming the flag), so the ghost-clear
             // never fires. Proven on-device: entering the editor from the Library queued a REGAL pass,
             // then set cleanNextReconcile while it was pending → the pass still ran REGAL and the folder
-            // icons ghosted. Panel-class default: REGAL is flash-free on colour Kaleido, ANIMATION_MONO
-            // cleanest on mono; a forced GC is the full ghost-clear for editor/overlay transitions.
+            // icons ghosted. Panel-class default: REGAL_PLUS matches Boox Notes' accurate editor
+            // render mode on colour Kaleido (plain REGAL made neutral translucent ink turn green),
+            // while ANIMATION_MONO is cleanest on mono; forced GC remains the full transition clean.
             val forceGc = cleanNextReconcile
             cleanNextReconcile = false
-            val mode = when {
-                forceGc -> UpdateMode.GC
-                colorDevice -> UpdateMode.REGAL
-                else -> UpdateMode.ANIMATION_MONO
-            }
+            val mode = BooxRefreshPolicy.reconcileMode(colorDevice, forceGc)
             try {
                 // Suspending firmware render wipes its ink layer globally, so we always repaint the
                 // WHOLE canvas from the bitmap (a partial blit would blank the rest).
                 th.isRawDrawingRenderEnabled = false
                 blitFullCanvas(surface, bmp)
-                EpdController.refreshScreenRegion(surface, 0, canvasTopOffset, w, h, mode)
+                refreshRegion(surface, 0, canvasTopOffset, w, h, mode)
                 Thread.sleep(settleMs)
                 // Restore render to the state the ACTIVE TOOL + suspension want — NOT unconditionally
                 // true. A blanket true re-lit the firmware ink passthrough under non-pen tools (the
@@ -896,6 +910,8 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         // them (a stroke whose region wasn't committed before the next render-toggle would vanish).
         synchronized(commitDirtyLock) {
             pendingCommitDirty = pendingCommitDirty?.apply { union(dirtyRect) } ?: Rect(dirtyRect)
+            pendingCommitNeedsAccurateColor = pendingCommitNeedsAccurateColor ||
+                BooxRefreshPolicy.needsAccurateColor(pen.brushKind)
         }
         val traceId = uiTraceId
         val queuedNs = SystemClock.elapsedRealtimeNanos()
@@ -912,11 +928,15 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
                 commitPending.set(false)
                 val surface = surfaceView ?: return@execute
                 val bmp = lastBitmap ?: return@execute
-                val dirty = synchronized(commitDirtyLock) {
-                    val d = pendingCommitDirty; pendingCommitDirty = null; d
+                val (dirty, needsAccurateColor) = synchronized(commitDirtyLock) {
+                    val d = pendingCommitDirty
+                    pendingCommitDirty = null
+                    val accurate = pendingCommitNeedsAccurateColor
+                    pendingCommitNeedsAccurateColor = false
+                    d?.let { it to accurate }
                 } ?: return@execute
                 try {
-                    blitCanvasRegion(surface, bmp, dirty)
+                    blitCanvasRegion(surface, bmp, dirty, needsAccurateColor)
                     val commitEndNs = SystemClock.elapsedRealtimeNanos()
                     Log.d(
                         TAG,
@@ -974,7 +994,12 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
      * surface content outside it, so prior strokes are untouched. The locked region is laid white
      * first (the page bitmap is transparent; the Onyx buffer is opaque) then the bitmap region drawn.
      */
-    private fun blitCanvasRegion(surface: SurfaceView, bitmap: Bitmap, canvasRect: Rect) {
+    private fun blitCanvasRegion(
+        surface: SurfaceView,
+        bitmap: Bitmap,
+        canvasRect: Rect,
+        needsAccurateColor: Boolean,
+    ) {
         val src = Rect(canvasRect)
         if (!src.intersect(0, 0, bitmap.width, bitmap.height)) return
         val dst = Rect(src.left, src.top + canvasTopOffset, src.right, src.bottom + canvasTopOffset)
@@ -995,35 +1020,48 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
                 Log.w(TAG, "unlockCanvasAndPost(region) failed", t)
             }
         }
-        if (posted) refreshCommitRegion(surface, dst)
+        if (posted) refreshCommitRegion(surface, dst, needsAccurateColor)
     }
 
-    private fun refreshCommitRegion(surface: SurfaceView, region: Rect) {
+    private fun refreshCommitRegion(
+        surface: SurfaceView,
+        region: Rect,
+        needsAccurateColor: Boolean,
+    ) {
         if (!explicitCommitRefresh || region.isEmpty) return
+        val mode = BooxRefreshPolicy.commitMode(colorDevice, needsAccurateColor)
         try {
-            EpdController.refreshScreenRegion(
-                surface,
-                region.left,
-                region.top,
-                region.width(),
-                region.height(),
-                UpdateMode.HAND_WRITING_REPAINT_MODE
-            )
+            refreshRegion(surface, region.left, region.top, region.width(), region.height(), mode)
         } catch (t: Throwable) {
-            Log.w(TAG, "explicit commit refresh handwriting mode failed; trying REGAL", t)
+            Log.w(TAG, "explicit commit refresh $mode failed; trying REGAL", t)
             try {
-                EpdController.refreshScreenRegion(
+                refreshRegion(
                     surface,
                     region.left,
                     region.top,
                     region.width(),
                     region.height(),
-                    UpdateMode.REGAL
+                    UpdateMode.REGAL,
                 )
             } catch (fallback: Throwable) {
                 Log.w(TAG, "explicit commit refresh REGAL fallback failed", fallback)
             }
         }
+    }
+
+    /** Boox's own renderer enables Regal before requesting REGAL/REGAL_PLUS updates. */
+    private fun refreshRegion(
+        surface: SurfaceView,
+        left: Int,
+        top: Int,
+        width: Int,
+        height: Int,
+        mode: UpdateMode,
+    ) {
+        if (mode == UpdateMode.REGAL || mode == UpdateMode.REGAL_PLUS) {
+            EpdController.enableRegal()
+        }
+        EpdController.refreshScreenRegion(surface, left, top, width, height, mode)
     }
 
     // ===== Lifecycle =====
