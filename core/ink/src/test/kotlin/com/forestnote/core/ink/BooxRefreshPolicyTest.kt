@@ -8,8 +8,9 @@ import kotlin.test.assertTrue
 
 class BooxRefreshPolicyTest {
     @Test
-    fun `only alpha-composited brushes require accurate color settling`() {
+    fun `gray-bearing marker tools require accurate color settling`() {
         assertTrue(BooxRefreshPolicy.needsAccurateColor(BrushKind.TRANSLUCENT_MARKER))
+        assertTrue(BooxRefreshPolicy.needsAccurateColor(BrushKind.HIGHLIGHTER))
         assertFalse(BooxRefreshPolicy.needsAccurateColor(BrushKind.MARKER))
         assertFalse(BooxRefreshPolicy.needsAccurateColor(BrushKind.FOUNTAIN))
     }
@@ -17,7 +18,7 @@ class BooxRefreshPolicyTest {
     @Test
     fun `accurate commits are limited to color devices and translucent ink`() {
         assertEquals(
-            UpdateMode.REGAL_PLUS,
+            UpdateMode.GC,
             BooxRefreshPolicy.commitMode(colorDevice = true, needsAccurateColor = true),
         )
         assertEquals(
@@ -31,8 +32,8 @@ class BooxRefreshPolicyTest {
     }
 
     @Test
-    fun `color reconciles use native Notes accurate mode while forced cleans stay GC`() {
-        assertEquals(UpdateMode.REGAL_PLUS, BooxRefreshPolicy.reconcileMode(true, false))
+    fun `color reconciles and forced cleans use physically neutral GC`() {
+        assertEquals(UpdateMode.GC, BooxRefreshPolicy.reconcileMode(true, false))
         assertEquals(UpdateMode.ANIMATION_MONO, BooxRefreshPolicy.reconcileMode(false, false))
         assertEquals(UpdateMode.GC, BooxRefreshPolicy.reconcileMode(true, true))
         assertEquals(UpdateMode.GC, BooxRefreshPolicy.reconcileMode(false, true))

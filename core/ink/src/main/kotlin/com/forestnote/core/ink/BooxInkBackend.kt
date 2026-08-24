@@ -568,7 +568,8 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
                 // Onyx's raw layer ignores alpha. Mono panels can safely preview the white-page
                 // composite, but Kaleido's fast handwriting waveform renders neutral gray as green
                 // pigment. Use the opaque source color while the pen is down there; the canonical
-                // gray replaces it at pen-up via an accurate REGAL_PLUS region refresh.
+                // gray replaces it at pen-up via a GC region refresh, the one mode proven on this
+                // panel to reproduce ordinary Android solid gray without a green/blue cast.
                 ?.setStrokeColor(liveStrokeColor())
                 ?.setStrokeWidth(liveStrokeWidthPx())
             applyNativeBrushPressure(style)
@@ -853,9 +854,9 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
             // (every later reconcileRepaint early-returns without consuming the flag), so the ghost-clear
             // never fires. Proven on-device: entering the editor from the Library queued a REGAL pass,
             // then set cleanNextReconcile while it was pending → the pass still ran REGAL and the folder
-            // icons ghosted. Panel-class default: REGAL_PLUS matches Boox Notes' accurate editor
-            // render mode on colour Kaleido (plain REGAL made neutral translucent ink turn green),
-            // while ANIMATION_MONO is cleanest on mono; forced GC remains the full transition clean.
+            // icons ghosted. Panel-class default: GC is the only mode proven on the Tab Ultra C Pro
+            // to reproduce an ordinary Android solid gray neutrally; both REGAL and REGAL_PLUS cast
+            // that same framebuffer gray green. ANIMATION_MONO remains the cleanest mono default.
             val forceGc = cleanNextReconcile
             cleanNextReconcile = false
             val mode = BooxRefreshPolicy.reconcileMode(colorDevice, forceGc)
@@ -1032,6 +1033,7 @@ class BooxInkBackend(private val appContext: Context?) : InkBackend {
         val mode = BooxRefreshPolicy.commitMode(colorDevice, needsAccurateColor)
         try {
             refreshRegion(surface, region.left, region.top, region.width(), region.height(), mode)
+            Log.d(TAG, "explicit commit refresh mode=$mode region=$region")
         } catch (t: Throwable) {
             Log.w(TAG, "explicit commit refresh $mode failed; trying REGAL", t)
             try {

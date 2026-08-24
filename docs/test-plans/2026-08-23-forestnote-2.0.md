@@ -124,10 +124,11 @@ For each combination run ten cold editor entries and ten resume cycles:
 4. Compare first-down callback, first-move callback, pen-up, canonical commit, and unfreeze timestamps
    in diagnostics. Investigate a repeatable device/pen delta rather than tuning a global magic delay.
 5. On Tab Ultra C Pro repeat the full-page UI/reconcile checks in color and monochrome modes.
-6. On Tab Ultra C Pro draw several overlapping Translucent Marker strokes, pause between strokes,
-   then force a full editor redraw. The live stroke may be temporarily black, but each committed
-   stroke and the reconciled page must settle to the same neutral gray shown in an Android screenshot;
-   no stroke may turn green or change hue after redraw.
+6. On Tab Ultra C Pro draw several overlapping Translucent Marker and Highlighter strokes, pause
+   between strokes, then force a full editor redraw. The live translucent-marker stroke may be
+   temporarily black, but each committed stroke and the reconciled page must settle to the same
+   neutral gray shown in an Android screenshot; no stroke may turn green/blue or change hue after
+   redraw. A small regional GC blink at pen-up is acceptable for these two gray-bearing tools only.
 
 ## Sync rollout
 
