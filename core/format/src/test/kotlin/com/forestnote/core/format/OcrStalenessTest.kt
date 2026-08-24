@@ -290,6 +290,26 @@ class OcrStalenessTest {
         repo.close()
     }
 
+    @Test
+    fun `automatic ML Kit queue does not replace a stale endpoint transcription`() {
+        val repo = createRepository()
+        val pageId = repo.currentPageId()
+        repo.upsertPageTextFromClient(
+            pageId,
+            "remote transcription",
+            "anthropic-compatible:vision-model",
+            1000L,
+        )
+        repo.saveStroke(aStroke())
+
+        assertTrue(repo.loadPageTextFromClient(pageId)!!.isStale)
+        assertFalse(
+            pageId in repo.listPagesWithMissingOrStaleClientText(repo.currentNotebookId()),
+            "manual endpoint results may only be replaced by another explicit run",
+        )
+        repo.close()
+    }
+
     // -- wire purity: stale_at stays local-only --------------------------------------
 
     @Test

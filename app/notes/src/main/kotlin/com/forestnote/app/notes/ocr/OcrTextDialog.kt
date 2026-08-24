@@ -43,7 +43,9 @@ class OcrTextDialog {
      * @param onRefresh invoked when the user taps the refresh button. The caller should
      *   re-read page_text_from_server for the active page and push the result back via
      *   [update]. Decoupling lets MainActivity own the page-scoped guard.
-     * @param onRunDevice invoked when the user selects Device recognized and taps the action.
+     * @param onRunDevice invoked when the user selects ForestNote transcription and taps Run local.
+     * @param onRunEndpoint invoked for an explicit remote transcription. The button is absent unless
+     *   [endpointConfigured] is true; merely opening this dialog never uploads a page.
      * @param onRedrawNeeded routes to a panel-wide e-ink GC clear (drawView.gcRefresh in
      *   MainActivity). Fires ONLY on dismiss — DO NOT call it while the dialog is showing.
      *
@@ -59,8 +61,10 @@ class OcrTextDialog {
         context: Context,
         recognizedFromServer: RecognizedText?,
         recognizedFromDevice: RecognizedText?,
+        endpointConfigured: Boolean = false,
         onRefresh: () -> Unit = {},
         onRunDevice: () -> Unit = {},
+        onRunEndpoint: () -> Unit = {},
         onRedrawNeeded: () -> Unit = {}
     ) {
         if (dialog != null) return
@@ -73,6 +77,7 @@ class OcrTextDialog {
         val badge = view.findViewById<TextView>(R.id.ocr_stale_badge)
         val refresh = view.findViewById<ImageButton>(R.id.ocr_refresh)
         val runDevice = view.findViewById<Button>(R.id.ocr_device_run)
+        val runEndpoint = view.findViewById<Button>(R.id.ocr_endpoint_run)
         spinner = sp
         metaView = meta
         contentView = content
@@ -80,7 +85,7 @@ class OcrTextDialog {
 
         sp.adapter = ArrayAdapter(
             context, android.R.layout.simple_spinner_item,
-            listOf("Server recognized", "Device recognized")
+            listOf("Server recognized", "ForestNote transcription")
         ).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
@@ -91,6 +96,7 @@ class OcrTextDialog {
         // re-introduces the editor pixels as ghost.
         refresh.visibility = View.VISIBLE
         runDevice.visibility = View.GONE
+        runEndpoint.visibility = View.GONE
         renderServer(meta, content, badge, currentServerRt)
         // Skip the spinner's redundant initial auto-fire (same content we just rendered).
         var skipInitial = true
@@ -104,11 +110,13 @@ class OcrTextDialog {
                     SOURCE_SERVER -> {
                         refresh.visibility = View.VISIBLE
                         runDevice.visibility = View.GONE
+                        runEndpoint.visibility = View.GONE
                         renderServer(meta, content, badge, currentServerRt)
                     }
                     SOURCE_DEVICE -> {
                         refresh.visibility = View.GONE
                         runDevice.visibility = View.VISIBLE
+                        runEndpoint.visibility = if (endpointConfigured) View.VISIBLE else View.GONE
                         renderDevice(meta, content, badge, currentDeviceRt)
                     }
                 }
@@ -123,6 +131,9 @@ class OcrTextDialog {
         }
         runDevice.setOnClickListener {
             onRunDevice()
+        }
+        runEndpoint.setOnClickListener {
+            onRunEndpoint()
         }
 
         val built = AlertDialog.Builder(context)
@@ -181,6 +192,14 @@ class OcrTextDialog {
         staleBadge?.visibility = View.GONE
     }
 
+    fun showEndpointRunning() {
+        if (dialog?.isShowing != true || spinner?.selectedItemPosition != SOURCE_DEVICE) return
+        metaView?.text = "Transcribing through configured endpoint…"
+        contentView?.text = ""
+        contentView?.alpha = 1f
+        staleBadge?.visibility = View.GONE
+    }
+
     /** Dismiss if showing. Safe to call multiple times. */
     fun dismiss() {
         dialog?.dismiss()
@@ -230,7 +249,7 @@ class OcrTextDialog {
 
     private fun renderDevice(meta: TextView, content: TextView, badge: TextView, r: RecognizedText?) {
         if (r == null) {
-            meta.text = "No device-recognized text yet. Tap Run to recognize this page."
+            meta.text = "No ForestNote transcription yet. Run locally or use the configured endpoint."
             content.text = ""
             content.alpha = 1f
             badge.visibility = View.GONE
@@ -243,7 +262,7 @@ class OcrTextDialog {
         content.text = r.text
         if (r.isStale) {
             content.alpha = STALE_ALPHA
-            badge.text = "OCR stale — page edited since device recognition"
+            badge.text = "Transcription stale — page edited since recognition"
             badge.visibility = View.VISIBLE
         } else {
             content.alpha = 1f

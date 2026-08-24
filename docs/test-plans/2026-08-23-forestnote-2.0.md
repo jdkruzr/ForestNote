@@ -30,6 +30,22 @@ Use a fresh install or throwaway library for destructive restore checks.
 6. Interrupt or feed a malformed restore. The existing DB must remain available after the automatic
    app restart; a successful restore keeps `default.forestnote.pre-restore-*` beside the library.
 
+## Optional endpoint transcription
+
+1. With provider **Off**, lasso recognition and full-page **Run local** use ML Kit; no endpoint
+   controls appear in the OCR dialog and no network request is made.
+2. Configure and test one OpenAI-compatible and one Anthropic-compatible endpoint. Test sends a
+   text-only probe and never uploads a notebook page.
+3. Run endpoint transcription manually on a page containing templates, portable ink, and typed text.
+   Verify the request image matches the exact creator aspect and the result is stored as client OCR
+   with the provider/model label, appears in search, and syncs to UltraBridge indexing.
+4. Export/restore a backup and confirm provider/base URL/model return while the API key remains the
+   device's current encrypted-store value and is absent from the archive.
+5. Exercise HTTP auth failure, invalid JSON, blank output, timeout, and a keyless local endpoint;
+   every case must surface a useful error without altering the prior transcription.
+6. Edit a page after dismissing a still-running endpoint request; its now-stale response must be
+   rejected. Make an endpoint result stale and open the Library; automatic ML Kit must not replace it.
+
 ## Portable brushes
 
 On each device create the same 17-row brush sheet at width levels 2, 4, 6, and 9, including slow and
@@ -73,6 +89,13 @@ measured canvas without a remainder.
 - Rotate/reopen without changing stored creator geometry.
 
 ## Boox latency matrix
+
+Go 6 II + Maxeye USI update (2026-08-23): the first-stroke loss after a pen popup was fixed by
+draw-to-dismiss popup handling. A second apparent Brush onset loss was isolated to the firmware's
+`NEO_BRUSH` live preview: raw callbacks, stored stroke, and canonical commit were complete. Boox
+Notes maps its ordinary Brush to `FOUNTAIN` with pressure sensitivity 0.3, so ForestNote now mirrors
+that path. Brush 7 immediate low-pressure W passed live and canonical checks (195 points, zero
+prefix jump). The remaining rows below are still required.
 
 | Device | Input | Pens |
 |---|---|---|

@@ -13,7 +13,7 @@ import kotlin.test.assertTrue
 
 /**
  * Library search covers four content surfaces: notebook names, folder names, text-box
- * content, and per-page server OCR text. The repository assembles all four in one call
+ * content, and per-page server/client OCR text. The repository assembles all four in one call
  * (returning a [SearchResults] with stable group ordering), filters out soft-deleted rows,
  * escapes LIKE wildcards so the query can contain `%` / `_` literals, and maps page hits
  * to a 1-based displayed page index so the UI can show "Page N" without re-querying.
@@ -162,7 +162,7 @@ class NotebookRepositorySearchTest {
         repo.close()
     }
 
-    // -- OCR (page_text_from_server) hits ---------------------------------------
+    // -- OCR (server and client sources) hits -----------------------------------
 
     @Test
     fun `search matches page OCR text and ignores tombstoned OCR rows`() {
@@ -180,6 +180,46 @@ class NotebookRepositorySearchTest {
         assertEquals(pageId, hits.single().pageId)
         assertEquals(nbId, hits.single().notebookId)
         assertEquals("serendipity", hits.single().snippet.text.substring(hits.single().snippet.matchStart, hits.single().snippet.matchEnd))
+        repo.close()
+    }
+
+    @Test
+    fun `search matches client transcription without any server OCR`() {
+        val (repo, _) = newRepo()
+        val nbId = repo.createNotebook("Offline notebook")
+        repo.switchNotebook(nbId)
+        val pageId = repo.currentPageId()
+        repo.upsertPageTextFromClient(
+            pageId = pageId,
+            text = "Entirely local transcription finds moonberries.",
+            model = "mlkit:en-US",
+        )
+
+        val hits = repo.search("moonberries").hits.filterIsInstance<SearchHit.PageOcrHit>()
+        assertEquals(1, hits.size)
+        assertEquals(pageId, hits.single().pageId)
+        assertEquals(nbId, hits.single().notebookId)
+        repo.close()
+    }
+
+    @Test
+    fun `server and client OCR on one page produce one navigable hit`() {
+        val (repo, driver) = newRepo()
+        val nbId = repo.createNotebook("Double vision")
+        repo.switchNotebook(nbId)
+        val pageId = repo.currentPageId()
+        seedOcr(driver, pageId, "Server saw the same phosphorescent squid.")
+        repo.upsertPageTextFromClient(
+            pageId = pageId,
+            text = "Client also saw the phosphorescent squid.",
+            model = "openai-compatible:test-model",
+        )
+
+        val hits = repo.search("phosphorescent").hits.filterIsInstance<SearchHit.PageOcrHit>()
+        assertEquals(1, hits.size, "both sources for a page collapse to one search destination")
+        assertEquals(pageId, hits.single().pageId)
+        assertTrue(hits.single().snippet.text.contains("Server saw"))
+        assertTrue(hits.single().snippet.text.contains("Client also saw"))
         repo.close()
     }
 

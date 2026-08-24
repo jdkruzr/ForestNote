@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Editor OCR-text viewer dialog. A modal AlertDialog (title set in code) hosts this:
-     a Spinner picks the source ("Server recognized" / "Device recognized"), a meta row
+     a Spinner picks the source ("Server recognized" / "ForestNote transcription"), a meta row
      shows the model + recognition timestamp alongside a refresh button, an optional
      stale badge appears when the page has been edited since the last server OCR, and
-     a ScrollView shows the recognized text body (dimmed when stale). Device recognition
-     is a stub for now — the spinner entry is present so the UI is forward-compatible;
-     selecting it shows a "not available yet" message. -->
+     a ScrollView shows the recognized text body (dimmed when stale). ForestNote transcription
+     can run locally through ML Kit or manually through a configured endpoint. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/ocr_root"
     android:layout_width="match_parent"
@@ -56,7 +55,16 @@
             android:layout_width="wrap_content"
             android:layout_height="40dp"
             android:minWidth="72dp"
-            android:text="Run"
+            android:text="Run local"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/ocr_endpoint_run"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="6dp"
+            android:minWidth="92dp"
+            android:text="Run endpoint"
             android:visibility="gone" />
     </LinearLayout>
 

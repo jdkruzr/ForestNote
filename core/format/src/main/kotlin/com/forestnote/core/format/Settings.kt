@@ -18,6 +18,9 @@ enum class PageTemplate { BLANK, DOT, RULED, GRID }
  */
 enum class StartView { LAST_NOTEBOOK, LIBRARY }
 
+/** Optional, manually-invoked full-page transcription transport. OFF keeps every page local. */
+enum class TranscriptionProvider { OFF, OPENAI_COMPATIBLE, ANTHROPIC_COMPATIBLE }
+
 /**
  * The user's global settings, persisted as a single JSON blob in
  * `app_state.settings_json`. Every field is defaulted so an absent or partial
@@ -25,8 +28,8 @@ enum class StartView { LAST_NOTEBOOK, LIBRARY }
  * ignored — see [json]. This is why we store one JSON column instead of a
  * column-per-setting table: adding a field never needs a schema migration.
  *
- * URLs are captured here but unused in B1 — the Settings UI (B2) edits them and
- * later phases (Sync, F1/F2 Recognize/To-do, Calendar) read them.
+ * Non-secret configuration lives here. Credentials and API keys belong in the app's encrypted
+ * credential store and are deliberately excluded from this backup-visible JSON blob.
  */
 @Serializable
 data class Settings(
@@ -56,9 +59,12 @@ data class Settings(
      * off to fall back to the periodic timer + lifecycle (`onPause`) sync only.
      */
     val syncOnClose: Boolean = true,
-    val selectionRecognitionUrl: String = "",
-    val fullTextTranscriptionUrl: String = "",
-    val chatUrl: String = "",
+    /** Remote page transcription is opt-in and manual; selection recognition always uses ML Kit. */
+    val transcriptionProvider: TranscriptionProvider = TranscriptionProvider.OFF,
+    /** Provider base URL, not a secret. The provider-specific resource path is appended by the app. */
+    val transcriptionBaseUrl: String = "",
+    /** User-selected vision-capable model identifier. No vendor model is silently assumed. */
+    val transcriptionModel: String = "",
     val caldavServerUrl: String = "",
     /** Auto-empty the Recycle Bin after this many days (E4). 0 = never (default). */
     val recycleBinRetentionDays: Int = 0,

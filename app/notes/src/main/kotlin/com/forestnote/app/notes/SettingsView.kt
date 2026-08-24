@@ -17,12 +17,15 @@ import com.forestnote.app.notes.caldav.CalDavCredentials
 import com.forestnote.app.notes.caldav.CalDavOutboxDrainer
 import com.forestnote.app.notes.caldav.SecureCredentialsStore
 import com.forestnote.app.notes.caldav.SyncCredentials
+import com.forestnote.app.notes.transcription.TranscriptionClient
+import com.forestnote.app.notes.transcription.TranscriptionConfig
 import com.forestnote.core.format.CalDavOutboxEntry
 import com.forestnote.core.format.CalDavOutboxStatus
 import com.forestnote.app.notes.recognize.RecognitionModelManager
 import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.format.Settings
 import com.forestnote.core.format.StartView
+import com.forestnote.core.format.TranscriptionProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -142,9 +145,13 @@ class SettingsView {
         val syncUserInput = view.findViewById<EditText>(R.id.input_sync_username)
         val syncPassInput = view.findViewById<EditText>(R.id.input_sync_password)
         val syncIntervalInput = view.findViewById<EditText>(R.id.input_sync_interval)
-        val selectionInput = view.findViewById<EditText>(R.id.input_selection_url)
-        val fulltextInput = view.findViewById<EditText>(R.id.input_fulltext_url)
-        val chatInput = view.findViewById<EditText>(R.id.input_chat_url)
+        val transcriptionProviderGroup = view.findViewById<RadioGroup>(R.id.rg_transcription_provider)
+        val transcriptionDetails = view.findViewById<View>(R.id.transcription_endpoint_details)
+        val transcriptionBaseUrlInput = view.findViewById<EditText>(R.id.input_transcription_base_url)
+        val transcriptionModelInput = view.findViewById<EditText>(R.id.input_transcription_model)
+        val transcriptionApiKeyInput = view.findViewById<EditText>(R.id.input_transcription_api_key)
+        val transcriptionSaveBtn = view.findViewById<Button>(R.id.btn_transcription_save)
+        val transcriptionTestBtn = view.findViewById<Button>(R.id.btn_transcription_test)
         val caldavInput = view.findViewById<EditText>(R.id.input_caldav_url)
         val caldavUserInput = view.findViewById<EditText>(R.id.input_caldav_username)
         val caldavPassInput = view.findViewById<EditText>(R.id.input_caldav_password)
@@ -167,6 +174,34 @@ class SettingsView {
             rowPitch.visibility = if (SettingsFormLogic.pitchRowVisible(template)) View.VISIBLE else View.GONE
         }
 
+        fun selectedTranscriptionProvider(): TranscriptionProvider = when (transcriptionProviderGroup.checkedRadioButtonId) {
+            R.id.rb_transcription_openai -> TranscriptionProvider.OPENAI_COMPATIBLE
+            R.id.rb_transcription_anthropic -> TranscriptionProvider.ANTHROPIC_COMPATIBLE
+            else -> TranscriptionProvider.OFF
+        }
+
+        fun applyTranscriptionVisibility(provider: TranscriptionProvider) {
+            transcriptionDetails.visibility = if (provider == TranscriptionProvider.OFF) View.GONE else View.VISIBLE
+        }
+
+        fun liveTranscriptionConfig(): TranscriptionConfig = TranscriptionConfig(
+            provider = selectedTranscriptionProvider(),
+            baseUrl = transcriptionBaseUrlInput.text?.toString().orEmpty().trim(),
+            model = transcriptionModelInput.text?.toString().orEmpty().trim(),
+            apiKey = transcriptionApiKeyInput.text?.toString().orEmpty(),
+        )
+
+        fun saveTranscriptionConfig(config: TranscriptionConfig) {
+            store.updateSettings(transform = { existing ->
+                existing.copy(
+                    transcriptionProvider = config.provider,
+                    transcriptionBaseUrl = config.baseUrl,
+                    transcriptionModel = config.model,
+                )
+            })
+            secureCreds?.setTranscriptionApiKey(config.apiKey)
+        }
+
         store.loadSettings { s ->
             loading = true
             rgTemplate.check(templateIds.getValue(s.defaultTemplate))
@@ -184,9 +219,15 @@ class SettingsView {
                 !(syncCreds?.password ?: s.syncPassword).isBlank()
             syncEnabledCheck.isChecked = s.isSyncEnabled(hasSyncConfig)
             syncIntervalInput.setText(s.syncIntervalMinutes.toString())
-            selectionInput.setText(s.selectionRecognitionUrl)
-            fulltextInput.setText(s.fullTextTranscriptionUrl)
-            chatInput.setText(s.chatUrl)
+            transcriptionProviderGroup.check(when (s.transcriptionProvider) {
+                TranscriptionProvider.OFF -> R.id.rb_transcription_off
+                TranscriptionProvider.OPENAI_COMPATIBLE -> R.id.rb_transcription_openai
+                TranscriptionProvider.ANTHROPIC_COMPATIBLE -> R.id.rb_transcription_anthropic
+            })
+            applyTranscriptionVisibility(s.transcriptionProvider)
+            transcriptionBaseUrlInput.setText(s.transcriptionBaseUrl)
+            transcriptionModelInput.setText(s.transcriptionModel)
+            transcriptionApiKeyInput.setText(secureCreds?.transcriptionApiKey().orEmpty())
             // CalDAV creds live in ESP only — the Settings.caldavServerUrl field is the
             // pre-CalDAV-feature placeholder and is ignored.
             val caldav = secureCreds?.caldavCreds()
@@ -225,6 +266,13 @@ class SettingsView {
             if (loading) return@setOnCheckedChangeListener
             store.updateSettings({ it.copy(viwoodsNativePreview = checked) })
             onViwoodsNativePreviewChanged?.invoke(checked)
+        }
+
+        transcriptionProviderGroup.setOnCheckedChangeListener { _, _ ->
+            if (loading) return@setOnCheckedChangeListener
+            val provider = selectedTranscriptionProvider()
+            applyTranscriptionVisibility(provider)
+            store.updateSettings(transform = { it.copy(transcriptionProvider = provider) })
         }
 
         rgTemplate.setOnCheckedChangeListener { _, checkedId ->
@@ -270,9 +318,35 @@ class SettingsView {
         // Interval is a non-negative integer; blank/invalid commits as 0 (= off).
         wireUrl(syncIntervalInput) { s, v -> s.copy(syncIntervalMinutes = v.toIntOrNull()?.coerceAtLeast(0) ?: 0) }
             .also { it.guard = { loading } }
-        wireUrl(selectionInput) { s, v -> s.copy(selectionRecognitionUrl = v) }.also { it.guard = { loading } }
-        wireUrl(fulltextInput) { s, v -> s.copy(fullTextTranscriptionUrl = v) }.also { it.guard = { loading } }
-        wireUrl(chatInput) { s, v -> s.copy(chatUrl = v) }.also { it.guard = { loading } }
+        transcriptionSaveBtn.setOnClickListener {
+            val config = liveTranscriptionConfig()
+            saveTranscriptionConfig(config)
+            Toast.makeText(view.context, "Transcription settings saved", Toast.LENGTH_SHORT).show()
+        }
+        transcriptionTestBtn.setOnClickListener {
+            val config = liveTranscriptionConfig()
+            if (!config.isComplete) {
+                Toast.makeText(view.context, "Choose a provider and enter its base URL and model.", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            saveTranscriptionConfig(config)
+            val s = scope ?: return@setOnClickListener
+            Toast.makeText(view.context, "Testing without uploading a page…", Toast.LENGTH_SHORT).show()
+            s.launch {
+                val result = TranscriptionClient(
+                    OkHttpClient.Builder()
+                        .connectTimeout(10, TimeUnit.SECONDS)
+                        .readTimeout(30, TimeUnit.SECONDS)
+                        .build(),
+                ).test(config)
+                result.fold(
+                    onSuccess = { Toast.makeText(view.context, "Endpoint connection ok", Toast.LENGTH_LONG).show() },
+                    onFailure = { e ->
+                        Toast.makeText(view.context, "Endpoint test failed: ${e.message}", Toast.LENGTH_LONG).show()
+                    },
+                )
+            }
+        }
         // All three CalDAV fields write to ESP. Setting [collectionUrl]/[username]/[password]
         // independently is fine because [SecureCredentialsStore.caldavCreds] returns null until
         // all three are non-blank — so a half-typed config never trips the recognize pill.

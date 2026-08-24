@@ -8,7 +8,8 @@ import androidx.security.crypto.MasterKey
 /**
  * Production [KeyValueBackend] backed by Jetpack
  * [EncryptedSharedPreferences]. One prefs file per app
- * (`forestnote_secrets.xml`), AES-256 master key in the Android Keystore.
+ * (`forestnote_secrets.xml`), AES-256 master key in the Android Keystore. This includes the optional
+ * endpoint-transcription API key, so backups of Settings never contain it.
  *
  * The class is a thin shell: it never throws, every call is wrapped because the
  * encrypted-prefs library has historically been fragile (keyset corruption on

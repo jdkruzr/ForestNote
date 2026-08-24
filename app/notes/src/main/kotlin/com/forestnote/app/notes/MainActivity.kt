@@ -47,11 +47,15 @@ import com.forestnote.app.notes.caldav.TryOutcome
 import com.forestnote.app.notes.caldav.VTodoAttachment
 import com.forestnote.app.notes.caldav.VTodoProvenance
 import com.forestnote.app.notes.ocr.DeviceOcrScheduler
+import com.forestnote.app.notes.ocr.OcrTextDialog
 import com.forestnote.app.notes.recognize.FullPageOcr
 import com.forestnote.app.notes.recognize.MlKitRecognizer
 import com.forestnote.app.notes.recognize.RecognitionModelManager
 import com.forestnote.app.notes.recognize.RecognizedText
 import com.forestnote.app.notes.recognize.RecognizerError
+import com.forestnote.app.notes.transcription.TranscriptionClient
+import com.forestnote.app.notes.transcription.TranscriptionConfig
+import com.forestnote.app.notes.transcription.TranscriptionPageRenderer
 import okhttp3.OkHttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,6 +72,7 @@ import java.io.PrintWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 // pattern: Imperative Shell
 // Activity lifecycle orchestration: wires backend, NotebookStore, and DrawView; no
@@ -141,7 +146,7 @@ class MainActivity : Activity() {
     // Floating "Create task" pill shown after lasso-recognize when CalDAV is configured.
     // Full-screen "Create CalDAV task" sheet (SUMMARY + DUE chips + note + Send).
     private val caldavTaskSheet = CalDavTaskSheet()
-    // EncryptedSharedPreferences-backed store for sync + CalDAV creds. Built in onCreate so
+    // EncryptedSharedPreferences-backed store for sync, CalDAV, and transcription secrets. Built in onCreate so
     // FileLogger is available for the (rare) ESP init failure log line.
     private lateinit var secureCreds: SecureCredentialsStore
     // Offline queue: persists pending CalDAV PUTs and drives the retry loop.
@@ -151,7 +156,7 @@ class MainActivity : Activity() {
     // Library search dialog (modal AlertDialog over the Library overlay).
     private val searchDialog = com.forestnote.app.notes.search.SearchDialog()
     // Editor OCR-text viewer (modal AlertDialog over the editor).
-    private val ocrTextDialog = com.forestnote.app.notes.ocr.OcrTextDialog()
+    private val ocrTextDialog = OcrTextDialog()
     // Shared with DrawView (same instance); DrawView updates its extents on layout, so
     // virtualLongAxis is current by the time paste() reads it for the in-bounds offset.
     private val pageTransform = PageTransform()
@@ -161,6 +166,7 @@ class MainActivity : Activity() {
     val recognizer = MlKitRecognizer()
     val modelManager = RecognitionModelManager()
     private lateinit var deviceOcrScheduler: DeviceOcrScheduler
+    private lateinit var transcriptionClient: TranscriptionClient
 
     // Captured when the async FontCatalog loader finishes (see onCreate's loader Thread).
     // The per-text-box Options dialog reads the name list from here so its font picker
@@ -229,6 +235,13 @@ class MainActivity : Activity() {
         val caldavClient = OkHttpCalDavClient(
             OkHttpClient(),
             log = { fileLogger.log("CalDAV", it) },
+        )
+        transcriptionClient = TranscriptionClient(
+            OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(90, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build(),
         )
 
         // Open storage. The store opens the repository on its own background thread,
@@ -756,11 +769,8 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Placeholder dialog for the lasso pill's To-do (F2) action (and the legacy URL-set
-     * branch of Recognize that [showRecognizeFlow] routes here for). Loads the current
-     * settings off-thread, then shows a message that varies by whether the relevant
-     * endpoint URL is configured (see [SelectionActionLogic]). No network call yet —
-     * CalDAV is a separate later phase.
+     * Fallback dialog for To-do when CalDAV is not configured. Selection recognition no longer
+     * consults Settings; it always follows the local ML Kit path.
      */
     private fun showSelectionAction(build: (com.forestnote.core.format.Settings) -> SelectionActionLogic.Dialog) {
         store.loadSettings { settings ->
@@ -774,10 +784,9 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Lasso-pill Recognize entry point. Off-loads model check + recognition to a coroutine,
-     * branches via [RecognizeFlowLogic.decide]: configured remote URL → legacy placeholder
-     * dialog; missing on-device model → download prompt; model present → run recognition,
-     * then surface the result through [showRecognitionResult].
+     * Lasso-pill Recognize entry point. Selection recognition is always local ML Kit: a missing
+     * model prompts for download; an installed model runs immediately. Remote transcription is a
+     * separate, explicit full-page action in [OcrTextDialog].
      *
      * Defensive throughout: every async step's failure path becomes an AlertDialog so the
      * user never sees an empty UI or an unhandled crash. The original strokes are never
@@ -789,28 +798,18 @@ class MainActivity : Activity() {
         onText: (text: String, screenBounds: android.graphics.RectF) -> Unit,
     ) {
         if (strokes.isEmpty() || screenBounds == null) return
-        store.loadSettings { settings ->
-            val url = settings.selectionRecognitionUrl
-            syncScope.launch {
-                // Snapshot what's actually on disk — any English variant counts.
-                val installed = modelManager.installedLanguages().toSet()
-                when (val decision = RecognizeFlowLogic.decide(strokes.size, url, installed)) {
-                    is RecognizeFlowLogic.Decision.FallbackToPlaceholder -> {
-                        AlertDialog.Builder(this@MainActivity)
-                            .setTitle(decision.dialog.title)
-                            .setMessage(decision.dialog.message)
-                            .setPositiveButton("OK", null)
-                            .show()
-                    }
-                    is RecognizeFlowLogic.Decision.PromptDownload -> {
-                        promptModelDownload(
-                            decision.langTag,
-                            onReady = { runRecognize(strokes, screenBounds, decision.langTag, onText) },
-                        )
-                    }
-                    is RecognizeFlowLogic.Decision.ProceedToRecognize -> {
-                        runRecognize(strokes, screenBounds, decision.langTag, onText)
-                    }
+        syncScope.launch {
+            // Snapshot what's actually on disk — any English variant counts.
+            val installed = modelManager.installedLanguages().toSet()
+            when (val decision = RecognizeFlowLogic.decide(strokes.size, installed)) {
+                is RecognizeFlowLogic.Decision.PromptDownload -> {
+                    promptModelDownload(
+                        decision.langTag,
+                        onReady = { runRecognize(strokes, screenBounds, decision.langTag, onText) },
+                    )
+                }
+                is RecognizeFlowLogic.Decision.ProceedToRecognize -> {
+                    runRecognize(strokes, screenBounds, decision.langTag, onText)
                 }
             }
         }
@@ -1378,7 +1377,7 @@ class MainActivity : Activity() {
 
     /**
      * Refresh the editor's OCR toolbar button state and open-dialog source rows. The toolbar is
-     * available for any active page because Device recognized can be run even before server OCR
+     * available for any active page because ForestNote transcription can run before server OCR
      * exists.
      */
     private fun refreshOcrButtonState() {
@@ -1415,14 +1414,21 @@ class MainActivity : Activity() {
             if (activePageId != requestedPageId) return@loadPageTextFromServer
             store.loadPageTextFromClient(requestedPageId) { device ->
                 if (activePageId != requestedPageId) return@loadPageTextFromClient
-                ocrTextDialog.show(
-                    this,
-                    recognizedFromServer = server,
-                    recognizedFromDevice = device,
-                    onRefresh = { refreshOcrInDialog() },
-                    onRunDevice = { runDeviceOcrForActivePage() },
-                    onRedrawNeeded = { refreshEditorTransition() }
-                )
+                store.loadSettings { settings ->
+                    if (activePageId != requestedPageId) return@loadSettings
+                    val endpointConfigured = settings.transcriptionProvider != com.forestnote.core.format.TranscriptionProvider.OFF &&
+                        settings.transcriptionBaseUrl.isNotBlank() && settings.transcriptionModel.isNotBlank()
+                    ocrTextDialog.show(
+                        this,
+                        recognizedFromServer = server,
+                        recognizedFromDevice = device,
+                        endpointConfigured = endpointConfigured,
+                        onRefresh = { refreshOcrInDialog() },
+                        onRunDevice = { runDeviceOcrForActivePage() },
+                        onRunEndpoint = { runEndpointTranscriptionForActivePage() },
+                        onRedrawNeeded = { refreshEditorTransition() }
+                    )
+                }
             }
         }
     }
@@ -1486,6 +1492,79 @@ class MainActivity : Activity() {
             }
             saveFullPageDeviceOcr(pageId, langTag, recognized)
         }
+    }
+
+    /** Explicit, one-page remote transcription. Nothing calls this in the background. */
+    private fun runEndpointTranscriptionForActivePage() {
+        val pageId = activePageId.takeIf { it.isNotEmpty() } ?: return
+        val notebookId = activeNotebookId.takeIf { it.isNotEmpty() } ?: return
+        syncScope.launch {
+            val settings = runCatching { store.syncSettings() }.getOrElse { e ->
+                showEndpointTranscriptionError(e)
+                return@launch
+            }
+            val config = TranscriptionConfig(
+                provider = settings.transcriptionProvider,
+                baseUrl = settings.transcriptionBaseUrl,
+                model = settings.transcriptionModel,
+                apiKey = secureCreds.transcriptionApiKey(),
+            )
+            if (!config.isComplete) {
+                showEndpointTranscriptionError(IllegalStateException("Configure a transcription provider, base URL, and model in Settings first."))
+                return@launch
+            }
+            if (activePageId == pageId && ocrTextDialog.isShowing) ocrTextDialog.showEndpointRunning()
+            fileLogger.log("OCR", "endpoint transcription start page=$pageId provider=${config.provider} model=${config.model}")
+            val snapshots = runCatching { store.exportSnapshots(setOf(notebookId)) }.getOrElse { e ->
+                showEndpointTranscriptionError(e)
+                return@launch
+            }
+            val notebook = snapshots.singleOrNull()
+            val page = notebook?.pages?.firstOrNull { it.page.id == pageId }
+            if (notebook == null || page == null) {
+                showEndpointTranscriptionError(IllegalStateException("Could not load the current page."))
+                return@launch
+            }
+            val jpeg = runCatching {
+                withContext(Dispatchers.Default) { TranscriptionPageRenderer.renderJpeg(notebook, page) }
+            }.getOrElse { e ->
+                showEndpointTranscriptionError(e)
+                return@launch
+            }
+            val text = transcriptionClient.transcribe(config, jpeg).getOrElse { e ->
+                fileLogger.log("OCR", "endpoint transcription failed page=$pageId err=${e.message}")
+                showEndpointTranscriptionError(e)
+                return@launch
+            }
+            // A request may outlive its dialog if the user closes it. Do not mark a response
+            // fresh against a page that changed after the uploaded snapshot was rendered.
+            val currentPage = runCatching {
+                store.exportSnapshots(setOf(notebookId)).singleOrNull()
+                    ?.pages?.firstOrNull { it.page.id == pageId }
+            }.getOrElse { e ->
+                showEndpointTranscriptionError(e)
+                return@launch
+            }
+            if (currentPage != page) {
+                showEndpointTranscriptionError(
+                    IllegalStateException("The page changed while transcription was running. Run it again to use the current page."),
+                )
+                return@launch
+            }
+            store.savePageTextFromClientSync(pageId, text, config.modelLabel)
+            fileLogger.log("OCR", "endpoint transcription complete page=$pageId chars=${text.length}")
+            if (activePageId == pageId) refreshOcrInDialog()
+            syncController.syncNow()
+        }
+    }
+
+    private fun showEndpointTranscriptionError(error: Throwable) {
+        refreshOcrInDialog()
+        AlertDialog.Builder(this)
+            .setTitle("Endpoint transcription failed")
+            .setMessage(error.message ?: "The endpoint request failed.")
+            .setPositiveButton("OK", null)
+            .show()
     }
 
     /**

@@ -10,8 +10,7 @@ import kotlin.test.assertTrue
  * RecognizeFlowLogic is the pure decision layer between the lasso pill's Recognize tap
  * and the imperative flow in [MainActivity]. Two functions:
  *
- *  - [RecognizeFlowLogic.decide] picks the next branch given the URL setting and
- *    whether the on-device model is present.
+ *  - [RecognizeFlowLogic.decide] picks the next branch given whether the on-device model is present.
  *  - [RecognizeFlowLogic.describeResult] maps the recognizer's `Result` into a UI
  *    shape (text to show, an error to surface, or "retry after download" loop-back).
  *
@@ -23,58 +22,37 @@ class RecognizeFlowLogicTest {
     // --- decide() ------------------------------------------------------------------
 
     @Test
-    fun `non-empty URL falls back to the existing placeholder dialog`() {
-        val d = RecognizeFlowLogic.decide(
-            strokeCount = 4,
-            url = "https://ocr.example",
-            installedLangs = setOf("en-US")   // irrelevant in this branch
-        )
-        assertTrue(d is RecognizeFlowLogic.Decision.FallbackToPlaceholder)
-        // Carry over the existing SelectionActionLogic copy so the user-facing string
-        // stays a single source of truth (verified against SelectionActionLogicTest).
-        assertEquals("Recognize", d.dialog.title)
-        assertTrue(d.dialog.message.contains("https://ocr.example"))
-    }
-
-    @Test
-    fun `whitespace-only URL with an installed English variant proceeds to recognize`() {
-        val d = RecognizeFlowLogic.decide(strokeCount = 1, url = "   ", installedLangs = setOf("en-US"))
-        assertTrue(d is RecognizeFlowLogic.Decision.ProceedToRecognize)
-        assertEquals("en-US", d.langTag)
-    }
-
-    @Test
-    fun `empty URL with bare 'en' installed proceeds with that tag`() {
-        val d = RecognizeFlowLogic.decide(strokeCount = 3, url = "", installedLangs = setOf("en"))
+    fun `bare en installed proceeds with that tag`() {
+        val d = RecognizeFlowLogic.decide(strokeCount = 3, installedLangs = setOf("en"))
         assertTrue(d is RecognizeFlowLogic.Decision.ProceedToRecognize)
         assertEquals("en", d.langTag)
     }
 
     @Test
-    fun `empty URL with a regional English variant installed proceeds with that variant`() {
+    fun `regional English variant installed proceeds with that variant`() {
         // The user-reported bug: they downloaded an English variant (likely en-US under MLKit's
         // canonical tag) but the old hardcoded `langTag = "en"` check returned modelPresent=false.
-        val d = RecognizeFlowLogic.decide(strokeCount = 1, url = "", installedLangs = setOf("en-US"))
+        val d = RecognizeFlowLogic.decide(strokeCount = 1, installedLangs = setOf("en-US"))
         assertTrue(d is RecognizeFlowLogic.Decision.ProceedToRecognize)
         assertEquals("en-US", d.langTag)
 
-        val d2 = RecognizeFlowLogic.decide(strokeCount = 1, url = "", installedLangs = setOf("en-GB"))
+        val d2 = RecognizeFlowLogic.decide(strokeCount = 1, installedLangs = setOf("en-GB"))
         assertTrue(d2 is RecognizeFlowLogic.Decision.ProceedToRecognize)
         assertEquals("en-GB", d2.langTag)
     }
 
     @Test
     fun `exact prefix tag is preferred over regional variants when both are installed`() {
-        val d = RecognizeFlowLogic.decide(strokeCount = 1, url = "", installedLangs = setOf("en", "en-US"))
+        val d = RecognizeFlowLogic.decide(strokeCount = 1, installedLangs = setOf("en", "en-US"))
         assertTrue(d is RecognizeFlowLogic.Decision.ProceedToRecognize)
         assertEquals("en", d.langTag)
     }
 
     @Test
-    fun `empty URL with no English installed prompts download using the canonical default`() {
+    fun `no English installed prompts download using the canonical default`() {
         // The canonical MLKit Digital Ink default for English is en-US (the only invariably-
         // supported English tag on the device-side identifier list).
-        val d = RecognizeFlowLogic.decide(strokeCount = 2, url = "", installedLangs = emptySet())
+        val d = RecognizeFlowLogic.decide(strokeCount = 2, installedLangs = emptySet())
         assertTrue(d is RecognizeFlowLogic.Decision.PromptDownload)
         assertEquals("en-US", d.langTag)
         assertEquals(2, d.strokeCount)
@@ -82,10 +60,10 @@ class RecognizeFlowLogicTest {
 
     @Test
     fun `non-English prefix is propagated through both branches with its canonical default`() {
-        val miss = RecognizeFlowLogic.decide(strokeCount = 1, url = "", installedLangs = emptySet(), langPrefix = "fr")
+        val miss = RecognizeFlowLogic.decide(strokeCount = 1, installedLangs = emptySet(), langPrefix = "fr")
         assertTrue(miss is RecognizeFlowLogic.Decision.PromptDownload && miss.langTag == "fr-FR")
 
-        val hit = RecognizeFlowLogic.decide(strokeCount = 1, url = "", installedLangs = setOf("fr-CA"), langPrefix = "fr")
+        val hit = RecognizeFlowLogic.decide(strokeCount = 1, installedLangs = setOf("fr-CA"), langPrefix = "fr")
         assertTrue(hit is RecognizeFlowLogic.Decision.ProceedToRecognize && hit.langTag == "fr-CA")
     }
 
@@ -93,7 +71,7 @@ class RecognizeFlowLogicTest {
     fun `unknown prefix passes through unchanged on the prompt-download branch`() {
         // Defensive: if a caller passes a prefix we don't have a canonical default for,
         // we hand it back as-is rather than guessing — MLKit will reject it explicitly.
-        val d = RecognizeFlowLogic.decide(strokeCount = 1, url = "", installedLangs = emptySet(), langPrefix = "xx")
+        val d = RecognizeFlowLogic.decide(strokeCount = 1, installedLangs = emptySet(), langPrefix = "xx")
         assertTrue(d is RecognizeFlowLogic.Decision.PromptDownload)
         assertEquals("xx", d.langTag)
     }

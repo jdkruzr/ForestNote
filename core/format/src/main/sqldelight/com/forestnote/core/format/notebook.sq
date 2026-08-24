@@ -572,7 +572,10 @@ FROM page p
 LEFT JOIN page_text_from_client ptc ON ptc.id = p.id AND ptc.deleted_at IS NULL
 WHERE p.notebook_id = ?
   AND p.deleted_at IS NULL
-  AND (ptc.id IS NULL OR ptc.stale_at IS NOT NULL)
+  AND (
+    ptc.id IS NULL OR
+    (ptc.stale_at IS NOT NULL AND (ptc.model IS NULL OR ptc.model LIKE 'mlkit-digital-ink:%'))
+  )
 ORDER BY p.sort_order ASC;
 
 -- Clear the LOCAL-ONLY stale marker after a server OCR upsert lands. The RhizomeSync adapter
@@ -619,17 +622,19 @@ WHERE t.text LIKE ? ESCAPE '\'
 ORDER BY n.name COLLATE NOCASE ASC, p.sort_order ASC, t.z ASC, t.created_at ASC
 LIMIT ?;
 
--- page OCR hits: one row per page whose server-OCR'd text matches.
--- pk on page_text_from_server is the page's ULID (1:1 with a page).
+-- page OCR hits: one row per page whose server OR ForestNote-client transcription matches.
+-- Concatenate both sources for the snippet so local-only/device OCR is genuinely searchable while
+-- preserving a single navigable hit when both sources contain the same query.
 searchPageOcrText:
-SELECT pfs.text AS hit_text,
+SELECT COALESCE(pfs.text, '') || CASE WHEN pfs.text IS NOT NULL AND ptc.text IS NOT NULL THEN char(10) ELSE '' END ||
+       COALESCE(ptc.text, '') AS hit_text,
        p.id AS page_id, p.notebook_id AS notebook_id, p.sort_order AS page_sort_order,
        n.name AS notebook_name
-FROM page_text_from_server pfs
-JOIN page p ON p.id = pfs.id
+FROM page p
 JOIN notebook n ON p.notebook_id = n.id
-WHERE pfs.text LIKE ? ESCAPE '\'
-  AND pfs.deleted_at IS NULL
+LEFT JOIN page_text_from_server pfs ON p.id = pfs.id AND pfs.deleted_at IS NULL
+LEFT JOIN page_text_from_client ptc ON p.id = ptc.id AND ptc.deleted_at IS NULL
+WHERE (pfs.text LIKE ? ESCAPE '\' OR ptc.text LIKE ? ESCAPE '\')
   AND p.deleted_at IS NULL
   AND n.deleted_at IS NULL
 ORDER BY n.name COLLATE NOCASE ASC, p.sort_order ASC

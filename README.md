@@ -22,6 +22,8 @@ Android device it falls back to a standard canvas.
   move, or paste somewhere else.
 - **Type text boxes** alongside your handwriting, with font, size, weight, and layering.
 - **Recognize handwriting** into editable text on-device (Google ML Kit), no round-trip to a server.
+- **Transcribe a complete page** through an optional OpenAI-compatible or Anthropic-compatible
+  vision endpoint. This is manual-only; local recognition remains available.
 - **Send a scribble to your calendar** — lasso a to-do, and ForestNote turns it into a task on
   any CalDAV server, queued offline until you're back online.
 - **Sync across devices** against a self-hosted UltraBridge server, with conflict-free

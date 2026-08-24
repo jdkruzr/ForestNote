@@ -58,6 +58,8 @@ class DeviceOcrScheduler(
                         continue
                     }
                     val text = recognized.text
+                    val existing = store.loadPageTextFromClientSync(pageId)
+                    if (!mayWriteAutomaticResult(existing?.model)) continue
                     store.savePageTextFromClientSync(pageId, text, modelLabel(langTag))
                     wroteAny = true
                 }
@@ -72,6 +74,8 @@ class DeviceOcrScheduler(
     companion object {
         const val DEFAULT_LANG = "en-US"
         fun modelLabel(langTag: String): String = "mlkit-digital-ink:$langTag"
+        internal fun mayWriteAutomaticResult(existingModel: String?): Boolean =
+            existingModel == null || existingModel.startsWith("mlkit-digital-ink:")
         private const val TAG = "ForestNote/DeviceOcr"
     }
 }

@@ -220,32 +220,89 @@
                 android:textColor="@color/black"
                 android:text="Sync when returning to Library (only if there are unsynced changes)" />
 
-            <!-- ===== AI endpoints ===== -->
-            <TextView style="@style/SettingsSection" android:text="AI endpoints" />
+            <!-- ===== Full-page transcription ===== -->
+            <TextView style="@style/SettingsSection" android:text="Full-page transcription" />
 
-            <TextView style="@style/SettingsLabel" android:text="Selection recognition URL (leave blank for on-device)" />
-            <EditText
-                android:id="@+id/input_selection_url"
-                style="@style/SettingsInput"
-                android:hint="https://…"
-                android:inputType="textUri"
-                android:imeOptions="actionDone" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/gray_dark"
+                android:textSize="13sp"
+                android:text="Optional and manual. ForestNote uploads a page only when you tap Run endpoint; selection recognition remains on-device." />
 
-            <TextView style="@style/SettingsLabel" android:text="Full-text transcription URL" />
-            <EditText
-                android:id="@+id/input_fulltext_url"
-                style="@style/SettingsInput"
-                android:hint="https://…"
-                android:inputType="textUri"
-                android:imeOptions="actionDone" />
+            <RadioGroup
+                android:id="@+id/rg_transcription_provider"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingTop="6dp">
 
-            <TextView style="@style/SettingsLabel" android:text="Chat about my notes URL" />
-            <EditText
-                android:id="@+id/input_chat_url"
-                style="@style/SettingsInput"
-                android:hint="https://…"
-                android:inputType="textUri"
-                android:imeOptions="actionDone" />
+                <RadioButton
+                    android:id="@+id/rb_transcription_off"
+                    style="@style/SettingsRadio"
+                    android:text="Off (local-only)" />
+
+                <RadioButton
+                    android:id="@+id/rb_transcription_openai"
+                    style="@style/SettingsRadio"
+                    android:text="OpenAI-compatible" />
+
+                <RadioButton
+                    android:id="@+id/rb_transcription_anthropic"
+                    style="@style/SettingsRadio"
+                    android:text="Anthropic-compatible" />
+            </RadioGroup>
+
+            <LinearLayout
+                android:id="@+id/transcription_endpoint_details"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView style="@style/SettingsLabel" android:text="Base URL" />
+                <EditText
+                    android:id="@+id/input_transcription_base_url"
+                    style="@style/SettingsInput"
+                    android:hint="https://api.example/v1"
+                    android:inputType="textUri"
+                    android:imeOptions="actionNext" />
+
+                <TextView style="@style/SettingsLabel" android:text="Vision-capable model" />
+                <EditText
+                    android:id="@+id/input_transcription_model"
+                    style="@style/SettingsInput"
+                    android:hint="model identifier"
+                    android:inputType="text"
+                    android:imeOptions="actionNext" />
+
+                <TextView style="@style/SettingsLabel" android:text="API key (optional for local endpoints)" />
+                <EditText
+                    android:id="@+id/input_transcription_api_key"
+                    style="@style/SettingsInput"
+                    android:hint="stored encrypted; not included in backups"
+                    android:inputType="textPassword"
+                    android:imeOptions="actionDone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:paddingTop="8dp">
+
+                    <Button
+                        android:id="@+id/btn_transcription_save"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Save" />
+
+                    <Button
+                        android:id="@+id/btn_transcription_test"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:text="Test endpoint" />
+                </LinearLayout>
+            </LinearLayout>
 
             <!-- ===== Recognition models ===== -->
             <!-- On-device handwriting recognition (MLKit Digital Ink). The container is

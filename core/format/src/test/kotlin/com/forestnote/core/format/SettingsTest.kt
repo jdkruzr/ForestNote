@@ -3,6 +3,7 @@ package com.forestnote.core.format
 import kotlinx.serialization.json.Json
 import org.junit.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 /**
  * Settings is the JSON blob persisted in app_state.settings_json. The contract
@@ -22,9 +23,9 @@ class SettingsTest {
             defaultTemplate = PageTemplate.GRID,
             defaultPitchMm = 7,
             syncServerUrl = "https://sync.example",
-            selectionRecognitionUrl = "https://ai.example/recognize",
-            fullTextTranscriptionUrl = "https://ai.example/transcribe",
-            chatUrl = "https://ai.example/chat",
+            transcriptionProvider = TranscriptionProvider.OPENAI_COMPATIBLE,
+            transcriptionBaseUrl = "https://ai.example/v1",
+            transcriptionModel = "vision-model",
             caldavServerUrl = "https://cal.example/dav"
         )
 
@@ -38,9 +39,9 @@ class SettingsTest {
         val s = Settings()
         assertEquals(PageTemplate.BLANK, s.defaultTemplate)
         assertEquals("", s.syncServerUrl)
-        assertEquals("", s.selectionRecognitionUrl)
-        assertEquals("", s.fullTextTranscriptionUrl)
-        assertEquals("", s.chatUrl)
+        assertEquals(TranscriptionProvider.OFF, s.transcriptionProvider)
+        assertEquals("", s.transcriptionBaseUrl)
+        assertEquals("", s.transcriptionModel)
         assertEquals("", s.caldavServerUrl)
     }
 
@@ -53,7 +54,7 @@ class SettingsTest {
 
         assertEquals("https://old.example", decoded.syncServerUrl)
         assertEquals(PageTemplate.BLANK, decoded.defaultTemplate)
-        assertEquals("", decoded.chatUrl)
+        assertEquals(TranscriptionProvider.OFF, decoded.transcriptionProvider)
     }
 
     @Test
@@ -64,6 +65,19 @@ class SettingsTest {
         val decoded = json.decodeFromString(Settings.serializer(), futureBlob)
 
         assertEquals("https://x", decoded.syncServerUrl)
+    }
+
+    @Test
+    fun `obsolete AI endpoint keys are ignored and dropped on the next settings write`() {
+        val legacy = """{"selectionRecognitionUrl":"https://old/selection","fullTextTranscriptionUrl":"https://old/page","chatUrl":"https://old/chat"}"""
+
+        val decoded = json.decodeFromString(Settings.serializer(), legacy)
+        val rewritten = json.encodeToString(Settings.serializer(), decoded)
+
+        assertEquals(TranscriptionProvider.OFF, decoded.transcriptionProvider)
+        assertFalse(rewritten.contains("selectionRecognitionUrl"))
+        assertFalse(rewritten.contains("fullTextTranscriptionUrl"))
+        assertFalse(rewritten.contains("chatUrl"))
     }
 
     @Test

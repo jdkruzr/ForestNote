@@ -105,6 +105,14 @@ Recognition needs Google Play Services and a language model. The first time you 
 ForestNote prompts you to download it (about 20 MB). Manage installed languages under
 **Settings → Recognition models**.
 
+For a whole page, tap **OCR**, choose **ForestNote transcription**, and use **Run local** for ML
+Kit. You can optionally configure an OpenAI-compatible or Anthropic-compatible service under
+**Settings → Full-page transcription** and then use **Run endpoint**. Endpoint transcription is
+manual: opening a notebook or the OCR viewer never uploads anything. The configured API key is
+stored in Android's encrypted credential store and is excluded from ForestNote backups. The result
+is searchable locally; if network sync is enabled, it follows the same client-transcription sync
+path as local ML Kit text.
+
 You can also type a text box directly: pick the **Text** tool and drag a box. A full-screen
 editor opens for the text, font, size, weight, border, and whether the box sits above or below
 your ink. Tap an existing box to select it, then drag to move or use the corner handles to
@@ -160,6 +168,7 @@ Reach Settings from the gear in the Library header.
 | Startup | Start in the Library or your last notebook; pre-fill new notebook names with a timestamp; sync when you close an overlay |
 | Local data | Complete backup and restore; credentials are excluded |
 | Sync | Explicit network-sync switch, UltraBridge URL, and credentials |
+| Full-page transcription | Optional OpenAI-compatible or Anthropic-compatible endpoint, model, encrypted API key, and connection test |
 | Calendar (CalDAV tasks) | CalDAV collection URL and credentials, plus a connection test |
 | Recognition models | Download or delete handwriting languages |
 | Recycle bin | How many days before the bin auto-empties |

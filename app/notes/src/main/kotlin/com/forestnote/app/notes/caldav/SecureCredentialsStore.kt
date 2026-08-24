@@ -48,7 +48,7 @@ data class SettingsCredsView(
 )
 
 /**
- * Owns the credential keys in the secure backend. Pure logic over a
+ * Owns sync, CalDAV, and optional transcription credential keys in the secure backend. Pure logic over a
  * [KeyValueBackend]; safe to construct in tests with [InMemoryKeyValueBackend].
  *
  * Semantics:
@@ -106,6 +106,16 @@ class SecureCredentialsStore(private val backend: KeyValueBackend) {
         }
     }
 
+    // --- endpoint transcription ----------------------------------------------------
+
+    /** API key for the optional transcription endpoint. Blank is valid for a local endpoint. */
+    fun transcriptionApiKey(): String = backend.getString(KEY_TRANSCRIPTION_API_KEY).orEmpty()
+
+    fun setTranscriptionApiKey(value: String) {
+        if (value.isBlank()) backend.remove(KEY_TRANSCRIPTION_API_KEY)
+        else backend.putString(KEY_TRANSCRIPTION_API_KEY, value)
+    }
+
     // --- migration ----------------------------------------------------------------
 
     /** Outcome of the one-shot plaintext→secure-store migration. */
@@ -144,5 +154,6 @@ class SecureCredentialsStore(private val backend: KeyValueBackend) {
         const val KEY_CALDAV_URL = "caldav.collection_url"
         const val KEY_CALDAV_USERNAME = "caldav.username"
         const val KEY_CALDAV_PASSWORD = "caldav.password"
+        const val KEY_TRANSCRIPTION_API_KEY = "transcription.api_key"
     }
 }

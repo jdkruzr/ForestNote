@@ -173,7 +173,7 @@ class ToolBar(
         btnPaste.setOnClickListener { if (pasteEnabled) activePasteCallback?.invoke() }
         // Template is an action cell: opens the per-page template picker (B4).
         btnTemplate.setOnClickListener { activeTemplateCallback?.invoke() }
-        // OCR is an action cell, gated on the server having OCR'd the current page.
+        // OCR is an action cell for viewing or initiating local/endpoint page transcription.
         btnOcr.setOnClickListener { if (ocrEnabled) activeOcrCallback?.invoke() }
 
         // On e-ink, remove ripple background to prevent ghosting

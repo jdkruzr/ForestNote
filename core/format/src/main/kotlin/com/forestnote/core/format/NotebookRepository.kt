@@ -1206,7 +1206,11 @@ class NotebookRepository private constructor(
         }
     }
 
-    /** Live pages in [notebookId] whose client OCR row is missing or locally stale. */
+    /**
+     * Live pages eligible for automatic ML Kit OCR: missing client text, or a stale row that
+     * ML Kit itself authored. Manually requested endpoint rows remain stale until another explicit
+     * local/endpoint run; background ML Kit must not silently replace the chosen source.
+     */
     fun listPagesWithMissingOrStaleClientText(notebookId: String): List<String> =
         db.notebookQueries.listPagesWithMissingOrStaleClientText(notebookId).executeAsList()
 
@@ -1317,9 +1321,9 @@ class NotebookRepository private constructor(
     // -- Library search ----------------------------------------------------
     //
     // Library-wide search across four content surfaces: notebook names, folder names, text-box
-    // content, and per-page server OCR text. All four .sq queries are LIKE-with-escape over the
+    // content, and per-page server/client OCR text. All four .sq queries are LIKE-with-escape over the
     // user's query (so '%'/'_' literals work); soft-deleted rows are filtered (live views for
-    // notebook/folder, explicit `deleted_at IS NULL` for page/text_box/page_text_from_server).
+    // notebook/folder, explicit `deleted_at IS NULL` for page/text_box/page_text sources).
     // Page-level hits carry the 1-based displayed page index, computed once per notebook with
     // hits so the UI can show "Page N" without re-querying.
 
@@ -1339,7 +1343,7 @@ class NotebookRepository private constructor(
         val folderRows = db.notebookQueries.searchFoldersByName(pattern, lim).executeAsList()
         val notebookRows = db.notebookQueries.searchNotebooksByName(pattern, lim).executeAsList()
         val textBoxRows = db.notebookQueries.searchTextBoxes(pattern, lim).executeAsList()
-        val ocrRows = db.notebookQueries.searchPageOcrText(pattern, lim).executeAsList()
+        val ocrRows = db.notebookQueries.searchPageOcrText(pattern, pattern, lim).executeAsList()
 
         // Any branch maxed out -> the caller (UI) shows a "results truncated" footer.
         val truncated = folderRows.size.toLong() >= lim ||

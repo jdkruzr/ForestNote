@@ -6,7 +6,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * [SecureCredentialsStore] holds two credential sets behind a [KeyValueBackend]
+ * [SecureCredentialsStore] holds sync, CalDAV, and transcription secrets behind a [KeyValueBackend]
  * seam so the pure round-trip + migration logic is testable on JVM. The Android
  * [EncryptedSharedPreferences]-backed implementation is in
  * [EncryptedPrefsCredentialsBackend] and is exercised on-device, not here.
@@ -78,6 +78,17 @@ class SecureCredentialsStoreTest {
         store.setCaldavCreds(CalDavCredentials("https://x/", "u", "p"))
         store.setCaldavCreds(null)
         assertNull(store.caldavCreds())
+    }
+
+    // --- transcription API key ----------------------------------------------------
+
+    @Test
+    fun `transcription API key is optional and round-trips securely`() {
+        assertEquals("", store.transcriptionApiKey())
+        store.setTranscriptionApiKey("sk-test")
+        assertEquals("sk-test", store.transcriptionApiKey())
+        store.setTranscriptionApiKey("")
+        assertEquals("", store.transcriptionApiKey())
     }
 
     // --- warm-up -------------------------------------------------------------------

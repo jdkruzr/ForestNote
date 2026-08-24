@@ -8,25 +8,18 @@ import com.forestnote.app.notes.recognize.RecognizerError
  * orchestration in [MainActivity.showRecognizeFlow] thin and the routing rules
  * unit-testable. Two functions:
  *
- *  - [decide] picks the branch: fall back to the existing placeholder dialog
- *    (when the remote-override URL is set), prompt to download a missing model,
- *    or proceed straight to recognition.
+ *  - [decide] either prompts to download a missing model or proceeds straight to recognition.
  *  - [describeResult] maps the recognizer's `Result` into a UI-level shape:
  *    show the text, retry after a re-download, or surface an error.
  *
- * The URL-set branch reuses [SelectionActionLogic.recognize] so the user-facing
- * copy stays in one place.
  */
 object RecognizeFlowLogic {
 
     sealed class Decision {
-        /** URL override is configured — keep the legacy placeholder UX. */
-        data class FallbackToPlaceholder(val dialog: SelectionActionLogic.Dialog) : Decision()
-
-        /** No URL, no model — ask the user to download before recognition. */
+        /** No model — ask the user to download before recognition. */
         data class PromptDownload(val langTag: String, val strokeCount: Int) : Decision()
 
-        /** No URL, model present — run on-device recognition. */
+        /** Model present — run on-device recognition. */
         data class ProceedToRecognize(val langTag: String) : Decision()
     }
 
@@ -55,23 +48,15 @@ object RecognizeFlowLogic {
      * wins; otherwise the first regional variant (`{prefix}-...`) is used. If nothing
      * is installed, we prompt for the prefix's canonical default (`en-US` for `en`).
      *
-     * @param strokeCount selection size, for caller's progress UI and the placeholder copy
-     * @param url current `Settings.selectionRecognitionUrl` value
+     * @param strokeCount selection size, for the caller's progress UI
      * @param installedLangs caller's snapshot from `RecognitionModelManager.installedLanguages()`
      * @param langPrefix IETF primary-subtag preference (default "en"); regional variants accepted
      */
     fun decide(
         strokeCount: Int,
-        url: String,
         installedLangs: Set<String>,
         langPrefix: String = "en"
     ): Decision {
-        val trimmed = url.trim()
-        if (trimmed.isNotEmpty()) {
-            return Decision.FallbackToPlaceholder(
-                SelectionActionLogic.recognize(strokeCount, trimmed)
-            )
-        }
         val match = installedLangs.firstOrNull { it == langPrefix }
             ?: installedLangs.firstOrNull { it.startsWith("$langPrefix-") }
         return if (match != null) {

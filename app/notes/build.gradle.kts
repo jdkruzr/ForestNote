@@ -61,7 +61,7 @@ dependencies {
     // Stroke-native; downloads a per-language model on first use via GMS.
     implementation(libs.findLibrary("mlkit-digital-ink").get())
 
-    // CalDAV task creation: OkHttp for the VTODO PUT (scoped to caldav; sync stays on HttpURLConnection).
+    // CalDAV VTODO PUTs + optional manual full-page transcription; sync stays on HttpURLConnection.
     implementation(libs.findLibrary("okhttp").get())
 
     // EncryptedSharedPreferences — sync + caldav credentials (replaces plaintext Settings.syncUsername/syncPassword).

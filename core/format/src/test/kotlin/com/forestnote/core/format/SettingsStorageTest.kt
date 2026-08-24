@@ -47,9 +47,15 @@ class SettingsStorageTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val repo = NotebookRepository.forTesting(driver)
 
-        val returned = repo.updateSettings { it.copy(chatUrl = "https://chat.example") }
+        val returned = repo.updateSettings {
+            it.copy(
+                transcriptionProvider = TranscriptionProvider.OPENAI_COMPATIBLE,
+                transcriptionBaseUrl = "https://ai.example/v1",
+            )
+        }
 
-        assertEquals("https://chat.example", returned.chatUrl)
+        assertEquals(TranscriptionProvider.OPENAI_COMPATIBLE, returned.transcriptionProvider)
+        assertEquals("https://ai.example/v1", returned.transcriptionBaseUrl)
     }
 
     /**
