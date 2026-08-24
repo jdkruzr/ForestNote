@@ -1,8 +1,8 @@
 # ForestNote 2.0 — portable brush model
 
 > Status: implemented for the 2.0 release candidate on 2026-08-23. The canonical renderer,
-> schema v5, export paths, and vendor preview maps are in place; the Boox device/pen matrix remains
-> the final live-validation pass.
+> schema v5, export paths, and vendor preview maps are in place; the Viwoods and Boox USI/EMR live
+> device passes are complete.
 
 ## The useful discovery
 

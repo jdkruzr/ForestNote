@@ -159,6 +159,10 @@ For a complete local copy, open **Settings → Local data → Create backup**. A
 **Restore backup** validates the archive, keeps the current database beside the replacement as a
 pre-restore recovery copy, then restarts ForestNote on the restored library.
 
+If the backup's settings have sync enabled, ForestNote resumes syncing after the restart, so changes
+newer than the backup can merge back in from the server. To inspect or keep an exact offline snapshot,
+disconnect the device while restoring and turn sync off before reconnecting it.
+
 ## Settings reference
 
 Reach Settings from the gear in the Library header.

@@ -35,7 +35,19 @@ PDF and an ordered two-SVG ZIP. The PDF parsed cleanly in Ghostscript as two pur
 pages; the SVG files were valid, self-contained XML with `10000×13333` view boxes and no scripts or
 external references. Independent 1200×1600 renders matched page-for-page with only antialiasing-level
 pixel differences, and neither format baked in a device viewport or letterbox. Direct single-page
-SVG, multi-notebook archives, and backup/restore cases remain to be exercised.
+SVG and multi-notebook archives remain to be exercised.
+
+Go 6 II backup/restore update (2026-08-24): a 101-notebook/131-page archive passed ZIP and SQLite
+integrity checks, excluded credentials, and restored without losing any archived notebook, page, or
+stroke. A notebook and stroke created after the backup disappeared, and the automatically preserved
+`default.forestnote.pre-restore-*` contained the complete pre-restore state. The first run exposed a
+dying-Activity race: `onPause()` started a final sync after the store executor had closed. Commit
+`e0a4c26` gates persistence during the restore restart and converts any late DB bridge submission to
+normal coroutine cancellation. A release-signed in-place candidate then repeated the restore with
+the same process surviving, no `FATAL EXCEPTION`/executor rejection, and both before/after databases
+passing `PRAGMA quick_check`. Because the archived settings had sync enabled, the reopened library
+then merged newer server state; every archived row remained present and the disposable local row did
+not return. Malformed/interrupted restore remains to be exercised.
 
 ## Optional endpoint transcription
 
