@@ -1,0 +1,30 @@
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:white;color:black;font:16px sans-serif}body{display:flex;flex-direction:column}header,.row,#selection{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px;border-bottom:1px solid #aaa}header{flex-wrap:nowrap;min-height:48px;flex-shrink:0}header>button,#page{flex-shrink:0;white-space:nowrap}button,input,select{font:inherit;color:black;background:white;border:1px solid #555;border-radius:3px;padding:7px;min-height:36px}button{touch-action:manipulation}button:active{background:#ddd}label{display:inline-flex;align-items:center;gap:4px}input[type=number]{width:65px}input[type=range]{width:180px}#title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#controls{max-height:42vh;overflow:auto}#reader{flex:1;min-height:0;margin:8px 16px;position:relative}foliate-paginator{width:100%;height:100%;display:block}footer{font-size:12px;min-height:22px;padding:3px 8px;border-top:1px solid #aaa;pointer-events:none}#selection{flex-shrink:0;border-bottom:2px solid black}#editing{display:inline-flex;flex-shrink:0;align-items:center;gap:4px}.iconButton{width:40px;height:40px;padding:0;font-size:24px;line-height:1}#noteMenu[aria-expanded=true]{outline:1px solid black}#noteOptions{margin:0;width:288px;max-width:calc(100vw - 12px);padding:6px;border:1px solid black;border-radius:0}#noteOptions[open]{display:flex;flex-direction:column;gap:6px}#noteOptions>button{width:100%;text-align:left;border:0;border-radius:0;min-height:40px}#noteOptions label{padding:8px}#noteOptions input{min-width:0;flex:1}#noteOptions #delete{border-top:1px solid #aaa}#noteOptions #ocr{font-size:12px;max-height:60px;overflow:auto;white-space:pre-wrap}#noteOptions::backdrop{background:transparent}#selection .row{padding:0;border:0}#quote{flex-basis:100%;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;font-size:13px}.handle{position:fixed;z-index:4;touch-action:none;min-width:40px;padding:2px;border:0;background:transparent;font-size:28px}dialog{margin:8px auto auto;max-width:95%;max-height:85%;overflow:auto;border:2px solid black}#closeList{position:sticky;top:0;z-index:1}dialog::backdrop{background:#ffffffaa}#listBody article{border-top:1px solid #aaa;padding:12px 0}#listBody img{max-width:100%;max-height:200px;object-fit:contain}#listBody p{white-space:pre-wrap}[hidden]{display:none!important}
+/* Keep the reading viewport still when the contextual header buttons appear. */
+header{height:53px;min-height:53px}
+@media(max-width:480px){.menuLabel{display:none}#menu{width:40px}}
+/* Selection replaces header content; draft rectangles never participate in book layout. */
+#selection{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;flex-wrap:nowrap}
+body.selectingText .menuLabel{display:none}
+body.selectingText #menu{width:40px}
+#draftHighlight{position:fixed;inset:0;z-index:3;pointer-events:none}
+#draftHighlight span{position:absolute;background:rgba(0,0,0,.2);pointer-events:none}
+#boundaryOptions{margin:0;width:288px;max-width:calc(100vw - 12px);padding:8px;border:1px solid black}
+#boundaryOptions .row{border:0;padding:0}
+#boundaryOptions::backdrop{background:transparent}
+button:disabled{opacity:.5}
+footer{height:22px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Every menu lives in the top layer, never in the flex layout of the book. */
+#controls{position:fixed;margin:0;width:320px;max-width:calc(100vw - 12px);padding:0;border:1px solid black;border-radius:0;overflow:auto;overscroll-behavior:contain}
+#controls::backdrop,dialog::backdrop{background:transparent}
+.menuHeading{position:sticky;top:0;background:white;display:flex;align-items:center;justify-content:space-between;padding:4px 10px;border-bottom:1px solid black;z-index:1}
+.menuHeading button{border:0}
+.menuGroup{border-bottom:1px solid #aaa}
+.menuGroup:last-child{border-bottom:0}
+.menuGroup summary{padding:12px;cursor:pointer;min-height:44px;font-weight:600}
+.menuGroup[open] summary{border-bottom:1px solid #ddd}
+.menuItems{display:flex;flex-direction:column;padding:0 8px 8px;gap:2px}
+.menuItems>button{text-align:left;border:0;border-radius:0;min-height:40px;padding:10px}
+.settingsGrid label{display:flex;justify-content:space-between;gap:12px;min-height:42px;padding:3px 8px}
+.settingsGrid input,.settingsGrid select{flex-shrink:0;max-width:150px}
+.settingsGrid #apply{border-top:1px solid #aaa;margin-top:4px}
+#menuHint{margin:8px 12px;font-size:13px}

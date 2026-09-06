@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/johnfactotum/foliate-js",
+  "commit": "78914aef4466eb960965702401634c2cb348e9b1",
+  "files": {
+    "LICENSE": "b621ffc351fe263bc9b09dd0bc1c9332fda9c462a3904c1e4f0b4d3236b9c28c",
+    "README.md": "56f46064f70484ac8c0014c04352a8f093091822ae1f682c5d3af76647f1f0dd",
+    "view.js": "e0093af921feb03bb58fb51aeedc321fa108a4158d215f6913ecf7925415c945",
+    "paginator.js": "51cec81572d5d182e231fe68ce9c3b5489a0976b36172060516336ba893565ea",
+    "epub.js": "dfe347495039e9b5991478986ec6b7713cf9efbcd8f475a77ef7b967c5176298",
+    "epubcfi.js": "e1a688ad5c84bf31f33cef467f92c7a6d060a0f17ec37c1d3c048e9c7b1cf645",
+    "mobi.js": "016526df13a9f11ee6671a8c74346e1cf41fe6bdfe50165fdcbf744f015694f3",
+    "progress.js": "544f5e90babc0cb31c5caf971a5f06dd6249ec06600cb62f672fa7179811fde1",
+    "overlayer.js": "d3d3396e3083277ccbd4f17c407621159b22a407107e43ce75ca3014578094fb",
+    "text-walker.js": "4ad740ab6142b5be428700ef4d270253cef6649cf6e047ae7d2698a7aec65e92",
+    "uri-template.js": "28bd96a9960cbfb07e14d4b9e9f334f28d1c3c96cbd8d58880631dcb1387e9f6",
+    "vendor/zip.js": "2a0d43157e4a447c6e43351225758795b75a33e8dfec10c6767248df2182949a",
+    "vendor/fflate.js": "e63bcc21f83a43e5f71d5cbefd351ff4d4dbd57bef8b29ad65c8bd65752f6e6b"
+  }
+}

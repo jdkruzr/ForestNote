@@ -1,0 +1,34 @@
+/* App-owned Android-style selection drops. No system drawable, font glyph or vendor theme. */
+.handle {
+  --handle-ink: #000;
+  position: fixed;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.handle::before {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 11px;
+  width: 22px;
+  height: 22px;
+  background: var(--handle-ink);
+  pointer-events: none;
+}
+.handle[data-side=left]::before { border-radius: 50% 0 50% 50%; }
+.handle[data-side=right]::before { border-radius: 0 50% 50% 50%; }
+.handle:active { background: transparent; }
+.handle:focus-visible { outline: 1px solid var(--handle-ink); outline-offset: -5px; }

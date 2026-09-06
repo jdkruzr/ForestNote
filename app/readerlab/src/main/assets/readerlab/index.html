@@ -1,0 +1,47 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' blob: data:; font-src 'self' blob: data:; connect-src 'self' blob:; frame-src blob:; worker-src 'none'; object-src 'none'; base-uri 'none'">
+<title>ForestNote Reader Lab</title><link rel="stylesheet" href="lab.css"><link rel="stylesheet" href="selection-handles.css"></head>
+<body>
+<header><button id="menu" aria-label="Reader menu">☰<span class="menuLabel"> Reader Lab</span></button><span id="editing" hidden><button id="done" class="iconButton" aria-label="Finish writing" title="Finish writing">✓</button><button id="noteMenu" class="iconButton" aria-label="Annotation options" title="Annotation options" aria-haspopup="dialog" aria-expanded="false" aria-controls="noteOptions">⋯</button></span><span id="selection" hidden><button id="highlight" class="iconButton" aria-label="Accept highlight" title="Accept highlight">✓</button><button id="write" class="iconButton" aria-label="Write note" title="Write note">✎</button><button id="saveHighlight" class="iconButton" aria-label="Save highlight" title="Save highlight" hidden>✓</button><button id="cancel" class="iconButton" aria-label="Cancel highlight" title="Cancel highlight">×</button><button id="boundaryMenu" class="iconButton" aria-label="Highlight boundaries" title="Highlight boundaries" aria-haspopup="dialog" aria-expanded="false" aria-controls="boundaryOptions">⋯</button></span><span id="title">Open an EPUB or MOBI</span><button id="prev">◀</button><span id="page">—</span><button id="next">▶</button></header>
+<dialog id="controls" aria-label="Reader menu">
+  <div class="menuHeading"><strong>Reader</strong><button id="closeControls" class="iconButton" aria-label="Close reader menu">×</button></div>
+  <p id="menuHint" hidden>Finish writing to switch books or change the layout.</p>
+  <details class="menuGroup" open><summary>Library</summary><div class="menuItems">
+    <button id="open">Open book or bundle…</button><input id="file" type="file" accept=".epub,.mobi,.azw3,.readerlab" hidden>
+    <button id="toc">Contents</button><button id="notes">Annotations</button><button id="export">Export book & notes…</button>
+  </div></details>
+  <details class="menuGroup"><summary>Reading</summary><div class="menuItems settingsGrid">
+    <label>Font size <input id="fontSize" type="number" min="12" max="64" value="22"></label>
+    <label>Line spacing <input id="lineHeight" type="number" min="1" max="3" step="0.1" value="1.5"></label>
+    <label>Letter spacing <input id="letterSpacing" type="number" min="0" max="5" step="0.25" value="0"></label>
+    <label>Word spacing <input id="wordSpacing" type="number" min="0" max="12" step="1" value="0"></label>
+    <label>Paragraph spacing <input id="paragraphSpacing" type="number" min="0" max="3" step="0.25" value="1"></label><button id="apply">Apply reading settings</button>
+  </div></details>
+  <details class="menuGroup"><summary>Pen & display</summary><div class="menuItems settingsGrid">
+    <label>Pen <select id="pen">
+      <optgroup label="Pens"><option value="FOUNTAIN">Fountain</option><option value="BALLPOINT">Ballpoint</option><option value="FINELINER">Fineliner</option><option value="BRUSH">Brush</option><option value="DASHED">Dashed line</option></optgroup>
+      <optgroup label="Pencils"><option value="PENCIL_HB">Pencil HB</option><option value="PENCIL_2B">Pencil 2B</option><option value="PENCIL_4B">Pencil 4B</option><option value="PENCIL_6B">Pencil 6B</option><option value="PENCIL_8B">Pencil 8B</option></optgroup>
+      <optgroup label="Markers"><option value="MARKER">Marker</option><option value="TRANSLUCENT_MARKER">Translucent marker</option><option value="HIGHLIGHTER">Highlighter</option></optgroup>
+      <optgroup label="Calligraphy"><option value="CALLIGRAPHY">Calligraphy</option><option value="CALLIGRAPHY_REVERSE">Reverse calligraphy</option><option value="CALLIGRAPHY_BROAD">Broad calligraphy</option><option value="CALLIGRAPHY_CHISEL">Chisel calligraphy</option></optgroup>
+    </select></label>
+    <label>Thickness <input id="width" type="number" value="35" min="7" max="250"></label><button id="erase">Use stroke eraser</button>
+    <label>Live preview <select id="preview"><option value="AUTO">Auto</option><option value="MATCHED">Matched</option><option value="NATIVE">Native (approximate)</option></select></label>
+    <small>Boox experiment: Auto matches calligraphy. Matched uses ForestNote's brush renderer; Native uses the faster firmware preview. Saved ink uses the selected pen in every mode.</small>
+    <label>Refresh mode <select id="refreshMode"><option value="NORMAL">Normal</option><option value="FAST">Fast</option><option value="FULL_REFRESH">Full refresh</option></select></label><button id="refresh">Clear ghosting</button>
+  </div></details>
+  <details class="menuGroup"><summary>Lab</summary><div class="menuItems"><button id="fixture">Open EPUB test book</button><button id="mobi">Open MOBI test book</button><button id="model">Download English handwriting model</button></div></details>
+</dialog>
+<dialog id="boundaryOptions" aria-label="Highlight boundaries">
+  <div class="row boundaryControls" aria-label="Highlight boundaries">
+    <span>Start</span><button id="startEarlier" aria-label="Move highlight start one word earlier">←</button><button id="startLater" aria-label="Move highlight start one word later">→</button>
+    <span>End</span><button id="endEarlier" aria-label="Move highlight end one word earlier">←</button><button id="endLater" aria-label="Move highlight end one word later">→</button>
+  </div>
+</dialog>
+<div id="draftHighlight" aria-hidden="true"></div>
+<button class="handle" id="startHandle" data-side="left" hidden aria-label="Drag highlight start"></button><button class="handle" id="endHandle" data-side="right" hidden aria-label="Drag highlight end"></button>
+<main id="reader"></main>
+<dialog id="noteOptions" aria-label="Annotation options"><button id="adjustHighlight">Adjust highlight</button><label>Space <input id="height" type="range" min="200" max="60000" step="100"></label><button id="delete">Delete annotation</button><span id="ocr"></span></dialog>
+<dialog id="list"><button id="closeList">Close</button><div id="listBody"></div></dialog>
+<footer id="status">Local prototype · source anchors · native ink on Android</footer>
+<script src="app.js" type="module"></script></body></html>

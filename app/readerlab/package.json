@@ -1,0 +1,12 @@
+{
+  "name": "forestnote-readerlab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare:assets": "node scripts/prepare.mjs",
+    "serve": "node scripts/serve.mjs",
+    "test": "npm run prepare:assets && playwright test"
+  },
+  "dependencies": { "fflate": "0.8.3" },
+  "devDependencies": { "@playwright/test": "1.58.2" }
+}
