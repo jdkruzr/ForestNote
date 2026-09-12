@@ -5,6 +5,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertFails
 
 /**
  * §I.9 schema-evolution cursor reset (Phase 8 D). When this device's stored synced-schema hash no
@@ -14,6 +15,25 @@ import kotlin.test.assertNull
  * the whole relay log and re-materializes every row, then never resets again.
  */
 class CursorResetTest {
+
+    @Test
+    fun `failed marker update rolls back cursor and retries without changing queued edits`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo = NotebookRepository.forTesting(driver) { 1000L }
+        repo.enableSync()
+        repo.setSyncCursor(42)
+        val pending = kotlinx.coroutines.runBlocking { repo.syncStore.pendingOps() }
+        driver.execute(null, "CREATE TRIGGER fail_marker BEFORE UPDATE OF stored_schema_hash ON sync_state BEGIN SELECT RAISE(ABORT,'injected'); END", 0)
+        assertFails { repo.resetCursorIfSchemaChanged() }
+        assertEquals(42, repo.syncCursor())
+        assertNull(storedSchemaHash(driver))
+        assertEquals(pending, kotlinx.coroutines.runBlocking { repo.syncStore.pendingOps() })
+        driver.execute(null, "DROP TRIGGER fail_marker", 0)
+        repo.resetCursorIfSchemaChanged()
+        assertEquals(0, repo.syncCursor())
+        assertEquals(pending, kotlinx.coroutines.runBlocking { repo.syncStore.pendingOps() })
+        repo.close()
+    }
 
     private fun storedSchemaHash(driver: JdbcSqliteDriver): String? {
         var v: String? = null

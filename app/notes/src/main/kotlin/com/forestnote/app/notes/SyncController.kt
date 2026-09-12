@@ -73,6 +73,19 @@ class SyncController(
     /** One session with retry/backoff. No-op (Idle) when sync isn't configured. */
     suspend fun runSession(): SyncResult = mutex.withLock {
         val cfg = config() ?: run { log("runSession: sync not configured"); return@withLock notEnabled() }
+        // Every trigger (manual, timer, resume, retry) passes this serialized
+        // boundary. Never reset a cursor alongside an in-flight response.
+        if (store.syncJoined()) {
+            try {
+                store.syncRebackfillIfNeeded()
+                store.syncResetCursorIfSchemaChanged()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                log("Schema preparation failed: ${failure.message}")
+                return@withLock finish(SyncResult.Failed("Library sync preparation failed; retry required"))
+            }
+        }
         log("runSession: endpoint=${cfg.endpoint}")
         val engine = SyncEngine(store.syncLocalStore(), transportFactory(cfg), schemaHash = ForestNoteRegistry.registry.schemaHash(), log = log)
         _status.value = SyncStatus.Syncing
@@ -169,14 +182,6 @@ class SyncController(
             if (!store.syncJoined()) {
                 enableAndJoin()
             } else {
-                // An already-joined device that just upgraded to a build with a newer synced schema
-                // re-backfills its pre-existing rows of the new kind (e.g. text boxes) once before
-                // the session, so they upload too — not just rows touched after the upgrade.
-                store.syncRebackfillIfNeeded()
-                // §I.9: if the synced-schema hash changed (schema upgrade, or first launch after the
-                // RhizomeSync cutover where the marker migrated in NULL), reset the cursor so this
-                // session re-pulls the whole log once and re-materializes every row. Idempotent.
-                store.syncResetCursorIfSchemaChanged()
                 runSession()
             }
             startPeriodic(s.syncIntervalMinutes)

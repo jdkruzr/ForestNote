@@ -43,7 +43,8 @@ class ViwoodsBackend : InkBackend {
 
     private var initialized = false
     private var host: View? = null
-    private var inputSink: StrokeSink? = null
+    @Volatile private var inputSink: StrokeSink? = null
+    @Volatile private var inputEpoch = 0L
     private var currentBitmap: Bitmap? = null
     private val currentViewLocation = intArrayOf(0, 0)
     private var controller: ViwoodsInkController? = null
@@ -62,6 +63,9 @@ class ViwoodsBackend : InkBackend {
     // Only the ENote callback thread mutates the preview canvas during a stroke. Main-thread full
     // reconciles take the same lock before copying a new page into it.
     private val previewLock = Any()
+    private var directGestureSerial = 0L // Guarded by previewLock; includes firmware ahead of main.
+    private var sinkGestureSerial = 0L // Main-thread model event currently being delivered.
+    private var pendingCommitRect: Rect? = null
     private var previewBitmap: Bitmap? = null
     private var previewCanvas: Canvas? = null
     // Lazy so backend detection remains safe in ordinary JVM tests where android.graphics.Paint
@@ -81,6 +85,7 @@ class ViwoodsBackend : InkBackend {
     } }
     private var directStrokeAccepted = false
     private var directGestureIsEraser = false
+    private var directGestureStreamsEraser = false
     private var directPrevX = 0f
     private var directPrevY = 0f
     private val directSpikeFilter = IsolatedPointSpikeFilter(
@@ -151,6 +156,7 @@ class ViwoodsBackend : InkBackend {
     }
 
     override fun attachInput(host: View, sink: StrokeSink, toolbarExcludeRects: List<Rect>) {
+        inputEpoch++
         this.host = host
         inputSink = sink
         updatePreviewGeometry()
@@ -158,6 +164,7 @@ class ViwoodsBackend : InkBackend {
     }
 
     override fun detachInput() {
+        inputEpoch++
         inputSink?.cancel()
         inputSink = null
         if (controllerUsesDirectInput) restartController("detachInput")
@@ -254,7 +261,9 @@ class ViwoodsBackend : InkBackend {
         lastEndStrokeOk = if (controllerUsesDirectInput) true else controller?.endStroke() == true
         nativeStrokeActive = false
         strokesEnded++
-        writeStatus("endStroke")
+        // Do not rewrite a /sdcard diagnostic file on the UI thread at every pen lift.
+        // Lifecycle/configuration changes still persist the full status snapshot.
+        Log.d(TAG, "endStroke strokes=$strokesEnded directEvents=$directEvents renders=$rendered failures=$renderFailed")
     }
 
     override fun commitInkStroke(bitmap: Bitmap, viewLocation: IntArray, dirtyRect: Rect) {
@@ -263,7 +272,18 @@ class ViwoodsBackend : InkBackend {
         // DrawView has replaced the cheap live preview with ForestNote's canonical brush pixels.
         // Refresh the worker bitmap and publish just that dirty region so what remains on glass is
         // the same thing screenshots/reloads/exports see, even for brushes the firmware approximates.
-        reconcilePreviewFromCurrent(render = true, dirtyRect = dirtyRect)
+        val publish = synchronized(previewLock) {
+            pendingCommitRect = unionRects(pendingCommitRect, Rect(dirtyRect))
+            // A newer firmware gesture may already be drawing (or have finished but still be
+            // queued on main). Never erase its live pixels with an older canonical snapshot.
+            if (directStrokeAccepted || sinkGestureSerial != directGestureSerial) null
+            else pendingCommitRect?.also { pendingCommitRect = null; ensurePreviewBitmap(it) }
+        }
+        if (publish != null) {
+            val activeController = ensureController()
+            activeController?.refreshWritingBitmap()
+            if (activeController != null) recordRender(activeController.renderNow(publish))
+        }
         host?.invalidate(dirtyRect)
     }
 
@@ -295,6 +315,7 @@ class ViwoodsBackend : InkBackend {
     }
 
     override fun release() {
+        inputEpoch++
         controller?.setDisplayMode(ViwoodsEinkMode.GL16)
         controller?.stop()
         controller = null
@@ -320,6 +341,7 @@ class ViwoodsBackend : InkBackend {
     }
 
     private fun restartController(reason: String) {
+        inputEpoch++
         inputSink?.cancel()
         controller?.stop()
         controller = null
@@ -383,6 +405,8 @@ class ViwoodsBackend : InkBackend {
     private fun renderDirectEvent(event: ViwoodsInkEvent): Rect? {
         directEvents++
         val action = event.actionType
+        val streamErase = if (action == ViwoodsInkAction.DOWN)
+            inputSink is LiveHardwareEraserSink && isHardwareEraser(event) else directGestureStreamsEraser
         var shouldPost = false
         val acceptedMoveEvents = ArrayList<ViwoodsInkEvent>(2)
         var notifyPenDown = false
@@ -396,13 +420,15 @@ class ViwoodsBackend : InkBackend {
                 ViwoodsInkAction.DOWN -> {
                     directStrokeAccepted = pointInsidePage(event.x, event.y)
                     if (directStrokeAccepted) {
+                        directGestureSerial++
                         directGestureIsEraser = isHardwareEraser(event)
+                        directGestureStreamsEraser = streamErase
                         directPrevX = event.x
                         directPrevY = event.y
                         directSpikeFilter.begin(event.x, event.y)
                         pendingDirectMove = null
                         notifyPenDown = true
-                        if (directGestureIsEraser) {
+                        if (directGestureIsEraser && !streamErase) {
                             directEraserSamples.clear()
                             directEraserSamples.add(event.toRawSample())
                         } else {
@@ -418,7 +444,7 @@ class ViwoodsBackend : InkBackend {
                     when (decision.pendingAction) {
                         IsolatedPointSpikeFilter.PendingAction.ACCEPT -> if (heldMove != null) {
                             dirty = unionRects(dirty, drawDirectMove(canvas, heldMove, params))
-                            if (!directGestureIsEraser) acceptedMoveEvents.add(heldMove)
+                            if (!directGestureIsEraser || streamErase) acceptedMoveEvents.add(heldMove)
                         }
                         IsolatedPointSpikeFilter.PendingAction.DROP -> {
                             recordDirectSpikeDrop(heldMove, event)
@@ -428,7 +454,7 @@ class ViwoodsBackend : InkBackend {
                     pendingDirectMove = null
                     if (decision.acceptCurrent) {
                         dirty = unionRects(dirty, drawDirectMove(canvas, event, params))
-                        if (!directGestureIsEraser) acceptedMoveEvents.add(event)
+                        if (!directGestureIsEraser || streamErase) acceptedMoveEvents.add(event)
                     } else {
                         pendingDirectMove = event
                     }
@@ -441,12 +467,12 @@ class ViwoodsBackend : InkBackend {
                     val heldMove = pendingDirectMove
                     if (pendingAction == IsolatedPointSpikeFilter.PendingAction.ACCEPT && heldMove != null) {
                         dirty = unionRects(dirty, drawDirectMove(canvas, heldMove, params))
-                        if (!directGestureIsEraser) acceptedMoveEvents.add(heldMove)
+                        if (!directGestureIsEraser || streamErase) acceptedMoveEvents.add(heldMove)
                     } else if (pendingAction == IsolatedPointSpikeFilter.PendingAction.DROP) {
                         recordDirectSpikeDrop(heldMove, event)
                     }
                     pendingDirectMove = null
-                    if (directGestureIsEraser) {
+                    if (directGestureIsEraser && !streamErase) {
                         directEraserSamples.add(event.toRawSample())
                         completedEraserSamples = directEraserSamples.toList()
                         directEraserSamples.clear()
@@ -458,7 +484,8 @@ class ViwoodsBackend : InkBackend {
                     directSpikeFilter.reset()
                 }
                 ViwoodsInkAction.CANCEL -> if (directStrokeAccepted) {
-                    restoreAfterCancel = directGestureIsEraser
+                    restoreAfterCancel = directGestureIsEraser && !streamErase
+                    shouldPost = streamErase
                     directEraserSamples.clear()
                     pendingDirectMove = null
                     directSpikeFilter.reset()
@@ -469,14 +496,16 @@ class ViwoodsBackend : InkBackend {
             }
         }
         if (notifyPenDown) postFirmwarePenDown()
-        acceptedMoveEvents.forEach { postModelEvent(it, ViwoodsInkAction.MOVE, params) }
-        if (shouldPost) postModelEvent(event, action, params)
+        acceptedMoveEvents.forEach { postModelEvent(it, ViwoodsInkAction.MOVE, params, streamErase) }
+        if (shouldPost) postModelEvent(event, action, params, streamErase)
         completedEraserSamples?.let(::postHardwareErase)
         if (restoreAfterCancel) host?.post { reconcilePreviewFromCurrent(render = true) }
         return dirty
     }
 
-    private fun drawDirectMove(canvas: Canvas, event: ViwoodsInkEvent, params: PenParams): Rect {
+    private fun drawDirectMove(canvas: Canvas, event: ViwoodsInkEvent, params: PenParams): Rect? {
+        // The opted-in sink publishes whole-stroke worker results. Never cut pixel holes first.
+        if (directGestureIsEraser && directGestureStreamsEraser) return null
         val x = event.x.coerceIn(pageLeft, pageRight)
         val y = event.y.coerceIn(pageTop, pageBottom)
         val width = if (directGestureIsEraser) {
@@ -523,7 +552,8 @@ class ViwoodsBackend : InkBackend {
         return dirty
     }
 
-    private fun unionRects(first: Rect?, second: Rect): Rect = first?.apply { union(second) } ?: second
+    private fun unionRects(first: Rect?, second: Rect?): Rect? =
+        if (second == null) first else first?.apply { union(second) } ?: second
 
     private fun recordDirectSpikeDrop(spike: ViwoodsInkEvent?, confirmation: ViwoodsInkEvent) {
         directSpikeDrops++
@@ -573,18 +603,33 @@ class ViwoodsBackend : InkBackend {
         }
     }
 
-    private fun postModelEvent(event: ViwoodsInkEvent, action: ViwoodsInkAction, params: PenParams) {
+    private fun postModelEvent(event: ViwoodsInkEvent, action: ViwoodsInkAction, params: PenParams, hardwareErase: Boolean = false) {
         val view = host ?: return
         val sink = inputSink ?: return
+        val epoch = inputEpoch
+        val gesture = directGestureSerial // Called only by the firmware callback thread.
         val x = event.x.coerceIn(pageLeft, pageRight)
         val y = event.y.coerceIn(pageTop, pageBottom)
         val pressure = event.pressure.coerceIn(0f, 1f)
         view.post {
+            if (hardwareErase && (inputEpoch != epoch || inputSink !== sink || inputSuspended)) return@post
             val pageTransform = transform ?: return@post
+            sinkGestureSerial = gesture
             val sample = InkSample.from(
                 x, y, pressure, System.currentTimeMillis(), pageTransform,
                 tiltRadians = event.tilt.takeIf { it.isFinite() && it > 0f },
             )
+            if (hardwareErase) {
+                val live = sink as? LiveHardwareEraserSink ?: return@post
+                when (action) {
+                    ViwoodsInkAction.DOWN -> live.acceptHardwareEraser(sample, InkPhase.DOWN)
+                    ViwoodsInkAction.MOVE -> live.acceptHardwareEraser(sample, InkPhase.MOVE)
+                    ViwoodsInkAction.UP -> live.acceptHardwareEraser(sample, InkPhase.UP)
+                    ViwoodsInkAction.CANCEL -> live.cancel()
+                    else -> Unit
+                }
+                return@post
+            }
             when (action) {
                 ViwoodsInkAction.DOWN -> {
                     sink.begin(Tool.Pen, params)
@@ -615,21 +660,25 @@ class ViwoodsBackend : InkBackend {
         virtualToScreenScale = pageTransform.toScreenSize(1f).coerceAtLeast(0.0001f)
     }
 
-    private fun ensurePreviewBitmap(): Boolean {
+    private fun ensurePreviewBitmap(dirtyRect: Rect? = null): Boolean {
         val source = currentBitmap ?: return false
         if (source.isRecycled) return false
         synchronized(previewLock) {
             val existing = previewBitmap
-            if (existing == null || existing.isRecycled ||
+            val resized = existing == null || existing.isRecycled ||
                 existing.width != source.width || existing.height != source.height
-            ) {
+            if (resized) {
                 existing?.recycle()
                 previewBitmap = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
                 previewCanvas = Canvas(previewBitmap!!)
             }
             val canvas = previewCanvas ?: return false
+            val save = canvas.save()
+            if (!resized && dirtyRect != null) canvas.clipRect(dirtyRect)
             canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
             canvas.drawBitmap(source, 0f, 0f, null)
+            canvas.restoreToCount(save)
+            if (dirtyRect == null || resized) pendingCommitRect = null
         }
         return true
     }

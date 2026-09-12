@@ -54,3 +54,11 @@ interface StrokeSink {
     /** Abandon the in-progress stroke without finalizing or persisting it. */
     fun cancel()
 }
+
+/** Opt-in live whole-stroke erasing. Non-opted-in sinks retain their batch/variant policy.
+ * Calls arrive on the host thread; implementations may coalesce hit-testing/repaint on a worker.
+ * [StrokeSink.cancel] ends the gesture; already-applied erases follow the sink's normal policy.
+ */
+interface LiveHardwareEraserSink : StrokeSink {
+    fun acceptHardwareEraser(sample: InkSample, phase: InkPhase)
+}

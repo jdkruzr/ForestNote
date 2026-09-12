@@ -28,6 +28,26 @@ import kotlin.test.assertTrue
  */
 class SyncControllerTest {
 
+    @Test
+    fun `manual session schedules replay once and failed replay resumes durable progress`() = runBlocking {
+        val store = newStore()
+        try {
+            store.updateSettings({ it.copy(syncServerUrl="https://ub.example.org",syncUsername="u",syncPassword="p") }, {})
+            store.syncMintSiteId(); store.syncMarkJoined()
+            store.syncBackfillOutbox()
+            val pending=store.syncLocalStore().pendingOps()
+            store.syncLocalStore().setCursor(42)
+            val transport=ScriptedTransport(listOf(ok(0,7,hasMore=true),SyncOutcome.HttpError(409,"rollback"),ok(pending.last().opSeq,9)))
+            val controller=SyncController(store,CoroutineScope(Dispatchers.Unconfined),transportFactory={transport})
+            assertEquals(SyncResult.SchemaMismatch,controller.runSession())
+            assertEquals(pending,store.syncLocalStore().pendingOps())
+            assertEquals(7,store.syncLocalStore().cursor())
+            assertEquals(SyncResult.Success,controller.runSession())
+            assertEquals(listOf(0L,7L,7L),transport.requests.map {it.cursor})
+            assertEquals(pending.map {it.opSeq},transport.requests.first().ops.map {it.opSeq})
+        } finally {store.shutdown()}
+    }
+
     private fun newStore(): NotebookStore {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         return NotebookStore(

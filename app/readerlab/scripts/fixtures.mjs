@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { compressPalmDoc, generateLayoutFixture } from './layout-fixtures.mjs';
 
 // Authored test text, freely reusable. Same source exercises EPUB and uncompressed MOBI6.
 export async function generateFixtures(root, zipSync) {
@@ -35,4 +36,10 @@ export async function generateFixtures(root, zipSync) {
   let offset = pdb.length;
   records.forEach((record, i) => { pdb.writeUInt32BE(offset, 78 + i * 8); offset += record.length; });
   await writeFile(new URL('unpleasant.mobi', root), Buffer.concat([pdb, ...records]));
+  const compressedHeader = Buffer.from(header); compressedHeader.writeUInt16BE(2, 0);
+  const compressedRecords = [compressedHeader, ...chunks.map(compressPalmDoc)], compressedPdb = Buffer.from(pdb);
+  offset = compressedPdb.length;
+  compressedRecords.forEach((record, i) => { compressedPdb.writeUInt32BE(offset, 78 + i * 8); offset += record.length; });
+  await writeFile(new URL('unpleasant-compressed.mobi', root), Buffer.concat([compressedPdb, ...compressedRecords]));
+  await generateLayoutFixture(root, zipSync);
 }

@@ -106,13 +106,23 @@ class NotebookStore(
 ) {
     // Written and read only on the executor thread, so no synchronization is needed.
     private var repo: NotebookRepository? = null
+    private var openFailure: Throwable? = null
 
     init {
         // Open as the first enqueued task; every later task queues behind it.
         executor.execute {
             repo = runCatching { repoProvider() }
-                .onFailure { android.util.Log.e(TAG, "failed to open repository", it) }
+                .onFailure { openFailure = it; android.util.Log.e(TAG, "failed to open repository", it) }
                 .getOrNull()
+        }
+    }
+
+    /** Queued behind the open; a failed library is not an empty, writable one. */
+    fun openingResult(onResult: (Result<Unit>) -> Unit) {
+        executor.execute {
+            val result = if (repo != null) Result.success(Unit)
+                else Result.failure(openFailure ?: IllegalStateException("Library unavailable"))
+            poster { onResult(result) }
         }
     }
 

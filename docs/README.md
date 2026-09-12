@@ -29,6 +29,12 @@ invariants and implementation boundaries rather than user workflows.
 
 ## Current design and research
 
+- [ForestRead Stage 1 contract](design-plans/2026-09-07-forestread-stage-1.md) — proposed shared
+  library, binary transfer, editing-session and future anchor/reference contracts; not shipped
+- [Stage 1 acceptance definitions](test-plans/forestread-stage-1/README.md) — pending behavior,
+  fixture-integrity validation, and the cross-repo Stage 2 handoff
+- [Stage 2 headless foundation through D7](test-plans/forestread-stage-2/README.md) — assets, bounded rows,
+  scheduling, shared response commits, streamed EPUB/MOBI import and candidate reader storage/reduction/offline ordering; repeatable checks and remaining activation gates
 - [Portable brushes in 2.0](design-notes/portable-brushes-2.0.md)
 - [Future directions](design-notes/future-directions.md)
 - [Viwoods native ink, August 2026](research/viwoods-native-ink-2026-08.md)
@@ -40,7 +46,7 @@ the code and current test plan before treating them as a specification.
 
 ## Historical archive
 
-`design-plans/`, `implementation-plans/`, older `test-plans/`, and `implementation-summaries/`
+Except for explicitly current proposals linked above, `design-plans/`, `implementation-plans/`, older `test-plans/`, and `implementation-summaries/`
 record how earlier milestones were designed and delivered. They intentionally remain in place so
 commits and cross-references do not rot. Their dates and acceptance criteria are historical; the
 [user guide](user-guide.md), [README](../README.md), and current code win when they disagree.

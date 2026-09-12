@@ -38,6 +38,23 @@ import kotlin.test.assertTrue
  */
 class NotebookStoreTest {
 
+    @Test fun failedOpenIsReportedAfterInitializationWithoutRetryingOrCreatingEmptyLibrary() {
+        val failure = IllegalStateException("Injected migration failure")
+        val count = java.util.concurrent.atomic.AtomicInteger()
+        val done = CountDownLatch(1)
+        var received: Throwable? = null
+        val store = NotebookStore(
+            repoProvider = { count.incrementAndGet(); throw failure },
+            executor = Executors.newSingleThreadExecutor(), poster = { it.run() },
+        )
+        try {
+            store.openingResult { received = it.exceptionOrNull(); done.countDown() }
+            assertTrue(done.await(5, TimeUnit.SECONDS))
+            assertEquals(failure, received)
+            assertEquals(1, count.get())
+        } finally { store.shutdown() }
+    }
+
     /**
      * A real repository whose underlying driver is already closed, so every operation
      * (loadStrokes/saveStroke/applyErase/clearPage) throws — used to drive the store's

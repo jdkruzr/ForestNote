@@ -27,7 +27,7 @@ val prepareReaderAssets by tasks.registering(Exec::class) {
     dependsOn(prepareReaderDependencies)
     workingDir(projectDir)
     commandLine("node", "scripts/prepare.mjs")
-    inputs.files("scripts/prepare.mjs", "scripts/fixtures.mjs", "foliate-lock.json")
+    inputs.files("scripts/prepare.mjs", "scripts/fixtures.mjs", "scripts/layout-fixtures.mjs", "foliate-lock.json")
     outputs.dir(layout.buildDirectory.dir("generated/readerAssets"))
 }
 tasks.named("preBuild").configure { dependsOn(prepareReaderAssets) }

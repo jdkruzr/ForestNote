@@ -23,6 +23,24 @@ import kotlin.test.assertTrue
  */
 class OutboxCaptureTest {
 
+    @Test
+    fun `failed backfill generation write rolls back captures and retry keeps their sequence`() {
+        val driver=JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val repo=NotebookRepository.forTesting(driver) {1000L}
+        repo.mintSiteId()
+        driver.execute(null,"CREATE TRIGGER fail_backfill BEFORE UPDATE OF backfill_version ON sync_state BEGIN SELECT RAISE(ABORT,'injected'); END",0)
+        kotlin.test.assertFails {repo.backfillOutbox()}
+        assertTrue(outbox(driver).isEmpty())
+        assertNull(rowMeta(driver,"notebook",repo.currentNotebookId()))
+        driver.execute(null,"DROP TRIGGER fail_backfill",0)
+        repo.backfillOutbox()
+        assertEquals(listOf(1L,2L),outbox(driver).map {it.opSeq})
+        val pending=outbox(driver)
+        repo.backfillOutbox()
+        assertEquals(pending,outbox(driver))
+        repo.close()
+    }
+
     private data class OutboxRow(val opSeq: Long, val table: String, val pk: String, val opTs: Long, val cols: String)
 
     private fun outbox(driver: JdbcSqliteDriver): List<OutboxRow> {
@@ -113,6 +131,16 @@ class OutboxCaptureTest {
         ) { bindString(0, pg) }
         driver.execute(null, "UPDATE sync_state SET backfill_version = 0", 0)
 
+        repo.applySyncOps(listOf(io.rhizome.core.Op("folder","0000000000000000000000PEER",
+            "00000000000000000000000BOB",1,2000,kotlinx.serialization.json.buildJsonObject {
+                put("name",kotlinx.serialization.json.JsonPrimitive("Foreign folder"))
+                put("sort_order",kotlinx.serialization.json.JsonPrimitive(0))
+                put("created_at",kotlinx.serialization.json.JsonPrimitive(1))
+            })))
+        val foreignVersion=rowMeta(driver,"folder","0000000000000000000000PEER")
+
+        val originalOps = outbox(driver)
+
         repo.rebackfillIfSchemaAdvanced()
 
         assertTrue(
@@ -120,6 +148,9 @@ class OutboxCaptureTest {
             "the pre-existing text box is backfilled once the schema generation advances",
         )
         val count = outbox(driver).size
+        assertEquals(originalOps, outbox(driver).filter { it.pk != "00000000000000000000000OLD" },
+            "Schema backfill must not replace or restamp existing history")
+        assertEquals(foreignVersion,rowMeta(driver,"folder","0000000000000000000000PEER"))
         repo.rebackfillIfSchemaAdvanced() // version is current now → the guard makes this a no-op
         assertEquals(count, outbox(driver).size, "rebackfill is gated by backfill_version, so it runs once")
         repo.close()

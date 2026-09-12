@@ -132,6 +132,7 @@ class MainActivity : Activity() {
     /** Whether the editor's ink/text has been painted this session. False until we either launch
      *  into the editor or first reveal it from the Library — see the launch sequencing in onCreate. */
     private var editorLoaded = false
+    private var libraryOpenFailed = false
 
     /** True when the current editor session was navigated INTO from the Library (a card/search/create
      *  tap → [goToNotebook]/[goToNotebookPage]), so the Library is its logical parent: system Back
@@ -260,6 +261,20 @@ class MainActivity : Activity() {
         // back to private storage, and lets onResume re-open at /sdcard once the user grants it.
         hadAllFilesAccessAtOpen = hasAllFilesAccess()
         store = NotebookStore.create(this, secureCreds)
+        store.openingResult { result ->
+            if (result.isFailure && !isFinishing && !isDestroyed) {
+                libraryOpenFailed = true
+                backend.setInputSuspended(true)
+                drawView.visibility = View.INVISIBLE
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.library_open_failed_title)
+                    .setMessage(R.string.library_open_failed_message)
+                    .setCancelable(false)
+                    .setPositiveButton(R.string.library_open_retry) { _, _ -> recreate() }
+                    .setNegativeButton(R.string.library_open_close) { _, _ -> finish() }
+                    .show()
+            }
+        }
         syncController = SyncController(
             store, syncScope,
             log = { fileLogger.log("Sync", it) },
@@ -458,6 +473,7 @@ class MainActivity : Activity() {
         // it when it actually becomes visible. The visibility cover above handles the empty-editor-
         // shell flash; this block handles the editor-content (strokes) flash.
         store.loadSettings { settings ->
+            if (libraryOpenFailed) return@loadSettings
             backend.setVendorNativePreviewEnabled(settings.viwoodsNativePreview)
             backend.setInputSuspended(anyEditorObscuringOverlayShowing())
             // A10: seed per-variant pen widths from settings, then prime the canvas with the
@@ -2555,7 +2571,7 @@ class MainActivity : Activity() {
      * closes.
      */
     private fun anyEditorObscuringOverlayShowing(): Boolean =
-        libraryView.isShowing || settingsView.isShowing || recycleBinView.isShowing ||
+        libraryOpenFailed || libraryView.isShowing || settingsView.isShowing || recycleBinView.isShowing ||
             pagesView.isShowing || textBoxEditOverlay.isShowing || caldavTaskSheet.isShowing
 
     override fun onResume() {

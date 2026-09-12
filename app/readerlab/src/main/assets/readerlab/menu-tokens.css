@@ -1,0 +1,41 @@
+/* Reader menu design tokens. Geometry values are CSS px, also read by popups.js.
+   Keep logical UI sizing separate from saved ink coordinates and device pixels.
+   Native FN will map this contract to density/font-aware Android values at integration. */
+:root {
+  --popup-screen-margin: 6px;
+  --popup-anchor-gap: 4px;
+  --menu-width-compact: 288px;
+  --menu-width-standard: 320px;
+  --menu-width-wide: 360px;
+  --menu-surface: white;
+  --menu-ink: black;
+  --menu-section-fill: #eee;
+  --menu-pressed-fill: #ddd;
+  --menu-rule-color: #aaa;
+  --menu-control-color: #555;
+  --menu-border: 1px solid var(--menu-ink);
+  --menu-border-strong: 2px solid var(--menu-ink);
+  --menu-control-border: 1px solid var(--menu-control-color);
+  --menu-control-radius: 3px;
+  --menu-gap-tight: 2px;
+  --menu-gap: 4px;
+  --menu-inset: 6px;
+  --menu-heading-inset: 8px;
+  --menu-section-padding: 3px 5px;
+  --menu-icon-target: 40px;
+  --reader-toolbar-control-height: 32px;
+  --reader-toolbar-icon-size: 20px;
+  --reader-toolbar-font-size: 14px;
+  --reader-toolbar-inset-block: 1px;
+  /* Wide rectangular controls; popup controls retain their independent 40px targets. */
+  --reader-toolbar-height: calc(var(--reader-toolbar-control-height) + 2 * var(--reader-toolbar-inset-block) + 1px);
+  --menu-icon-size: 25px;
+  --menu-choice-min-height: 32px;
+  --menu-control-min-height: 36px;
+  --menu-action-min-height: 44px;
+  --menu-font-choice: 14px;
+  --menu-font-section: 13px;
+  --menu-font-meta: 11px;
+  --menu-choice-line-height: 1.15;
+  --menu-text-line-height: 1.35;
+}

@@ -1,6 +1,10 @@
 # Claude IDE
 .claude/
 
+# Local agent preferences
+AGENTS.md
+CLAUDE.md
+
 # Build outputs
 **/build/
 .gradle/

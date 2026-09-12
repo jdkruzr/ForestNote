@@ -1,0 +1,328 @@
+{
+  "contract_version": 1,
+  "suite": "forestread-stage-1",
+  "implementation_status": "pending",
+  "spec": "../../design-plans/2026-09-07-forestread-stage-1.md",
+  "symbols": {
+    "sites": {"A":"0000000000000000000000000A","B":"0000000000000000000000000B","UB":"0000000000000000000000000C"},
+    "books": {"book-a":{"utf8":"Book A"},"book-b":{"utf8":"Book B"}},
+    "text": "Alpha beta gamma. Alpha beta delta.",
+    "base_selector": {"version":1,"section":0,"start":6,"end":10,"quote":"beta","prefix":"Alpha ","suffix":" gamma."}
+  },
+  "action_definitions": {
+    "import_book":["site","book"], "import_archive":["site","archive"],
+    "begin_session":["site","session","annotation"], "create_annotation":["session","annotation","book","width","height"],
+    "append_stroke":["session","stroke","points"], "erase_claim":["session","stroke","active"],
+    "set_property":["session","property","value"], "finish":["session"], "cancel":["session"],
+    "replicate":["order"], "crash_restart":["site"], "delete_book":["site","book"], "restore_book":["site","book"],
+    "delete_annotation":["site","annotation"], "compact":["watermark"],
+    "set_position":["site","book","locator"], "open_book":["site","book"],
+    "dismiss_resume":["site"], "set_preferences":["site","book","values"],
+    "recognize":["producer","annotation","input","text"],
+    "put_anchor":["id","selector"], "put_reference":["id","source","target"],
+    "resolve":["anchor"], "move_object":["id","page","dx","dy"], "copy_object":["id","copy_id"],
+    "erase_object":["id"], "rename_reorder":["page","notebook_title","page_index"],
+    "set_asset_available":["site","book","available"], "reattach":["anchor","selector"],
+    "archive_roundtrip":["objects"], "legacy_link":["uri"],
+    "metadata_pull_complete":["site"], "upgrade":["site","profile"],
+    "sync":["site","server_profile"], "restore_server":["backup"], "verify_backup":["backup"]
+  },
+  "cases": [
+    {
+      "id":"BOOK-01", "requirement":"Exact-byte duplicate imports converge without losing independent annotations",
+      "initial":{},
+      "steps":[
+        {"action":"import_book","site":"A","book":"book-a"},
+        {"action":"import_book","site":"B","book":"book-a"},
+        {"action":"begin_session","site":"A","session":"sa","annotation":"na"},
+        {"action":"create_annotation","session":"sa","annotation":"na","book":"book-a","width":10000,"height":1000},
+        {"action":"begin_session","site":"B","session":"sb","annotation":"nb"},
+        {"action":"create_annotation","session":"sb","annotation":"nb","book":"book-a","width":10000,"height":1000},
+        {"action":"replicate","order":"all_permutations"}
+      ],
+      "expected":{"book_count":1,"annotation_ids":["na","nb"],"same_state_on":["A","B"]}
+    },
+    {
+      "id":"BOOK-02", "requirement":"Different bytes never replace an edition or retarget its annotations",
+      "initial":{"base_annotation":true},
+      "steps":[{"action":"import_book","site":"B","book":"book-b"},{"action":"replicate","order":"reverse"}],
+      "expected":{"book_count":2,"n_book":"book-a","automatic_reanchors":0}
+    },
+    {
+      "id":"INK-01", "requirement":"Concurrent additions survive independently of arrival order",
+      "initial":{"base_annotation":true},
+      "steps":[
+        {"action":"begin_session","site":"A","session":"sa","annotation":"n"},
+        {"action":"begin_session","site":"B","session":"sb","annotation":"n"},
+        {"action":"append_stroke","session":"sa","stroke":"a","points":[[100,100,1000,1],[200,200,1000,2]]},
+        {"action":"append_stroke","session":"sb","stroke":"b","points":[[300,100,1000,1],[400,200,1000,2]]},
+        {"action":"replicate","order":"all_permutations"}
+      ],
+      "expected":{"visible_strokes":["a","b"],"same_state_on":["A","B"]}
+    },
+    {
+      "id":"INK-02", "requirement":"Cancel masks its session even when that session's rows arrive later",
+      "initial":{"base_annotation":true},
+      "steps":[
+        {"action":"begin_session","site":"A","session":"sa","annotation":"n"},
+        {"action":"begin_session","site":"B","session":"sb","annotation":"n"},
+        {"action":"append_stroke","session":"sa","stroke":"a","points":[[100,100,1000,1],[200,200,1000,2]]},
+        {"action":"append_stroke","session":"sb","stroke":"b","points":[[300,100,1000,1],[400,200,1000,2]]},
+        {"action":"cancel","session":"sa"},
+        {"action":"replicate","order":"cancel_before_contributions"}
+      ],
+      "expected":{"visible_strokes":["b"],"session_sa":"cancelled","same_state_on":["A","B"]}
+    },
+    {
+      "id":"INK-03", "requirement":"Cancelling one erase does not undo a foreign erase of the same stroke",
+      "initial":{"base_annotation":true,"base_strokes":["s"]},
+      "steps":[
+        {"action":"begin_session","site":"A","session":"sa","annotation":"n"},
+        {"action":"begin_session","site":"B","session":"sb","annotation":"n"},
+        {"action":"erase_claim","session":"sa","stroke":"s","active":true},
+        {"action":"erase_claim","session":"sb","stroke":"s","active":true},
+        {"action":"cancel","session":"sa"},{"action":"replicate","order":"all_permutations"}
+      ],
+      "expected":{"visible_strokes":[],"effective_erase_claims":[["sb","s"]]}
+    },
+    {
+      "id":"INK-04", "requirement":"Cancelling a sole erase restores its stroke",
+      "initial":{"base_annotation":true,"base_strokes":["s"]},
+      "steps":[{"action":"begin_session","site":"A","session":"sa","annotation":"n"},{"action":"erase_claim","session":"sa","stroke":"s","active":true},{"action":"cancel","session":"sa"},{"action":"replicate","order":"reverse"}],
+      "expected":{"visible_strokes":["s"],"effective_erase_claims":[]}
+    },
+    {
+      "id":"INK-05", "requirement":"Cancelling the newest property contribution reveals the foreign alternative",
+      "initial":{"base_annotation":true},
+      "steps":[
+        {"action":"begin_session","site":"B","session":"sb","annotation":"n"},
+        {"action":"set_property","session":"sb","property":"height","value":2000,"version":[1100,2,"B"]},
+        {"action":"begin_session","site":"A","session":"sa","annotation":"n"},
+        {"action":"set_property","session":"sa","property":"height","value":3000,"version":[1200,2,"A"]},
+        {"action":"cancel","session":"sa"},{"action":"replicate","order":"all_permutations"}
+      ],
+      "expected":{"requested_height":2000,"effective_height":2000}
+    },
+    {
+      "id":"INK-06", "requirement":"Concurrent anchor adjustment and shrink cannot split the selector or clip ink",
+      "initial":{"base_annotation":true,"base_strokes":["s"],"ink_bottom_with_padding":2200},
+      "steps":[
+        {"action":"begin_session","site":"A","session":"sa","annotation":"n"},
+        {"action":"begin_session","site":"B","session":"sb","annotation":"n"},
+        {"action":"set_property","session":"sa","property":"anchor","value":{"version":1,"section":0,"start":11,"end":16,"quote":"gamma","prefix":"Alpha beta ","suffix":". Alpha beta delta."}},
+        {"action":"set_property","session":"sb","property":"height","value":500},
+        {"action":"replicate","order":"reverse"}
+      ],
+      "expected":{"requested_height":500,"effective_height":2200,"anchor":{"version":1,"section":0,"start":11,"end":16,"quote":"gamma","prefix":"Alpha beta ","suffix":". Alpha beta delta."},"visible_strokes":["s"]}
+    },
+    {
+      "id":"INK-07", "requirement":"Cancelling creator does not remove another session's work container",
+      "initial":{"books":["book-a"]},
+      "steps":[
+        {"action":"begin_session","site":"A","session":"sa","annotation":"n"},
+        {"action":"create_annotation","session":"sa","annotation":"n","book":"book-a","width":10000,"height":1000},
+        {"action":"replicate","order":"forward"},
+        {"action":"begin_session","site":"B","session":"sb","annotation":"n"},
+        {"action":"append_stroke","session":"sb","stroke":"b","points":[[100,100,1000,1],[200,200,1000,2]]},
+        {"action":"cancel","session":"sa"},{"action":"replicate","order":"reverse"}
+      ],
+      "expected":{"annotation_ids":["n"],"visible_strokes":["b"],"anchor_equals":"base_selector"}
+    },
+    {
+      "id":"INK-08", "requirement":"Sleep/process restart preserves the session's cancel boundary",
+      "initial":{"base_annotation":true,"base_strokes":["s"]},
+      "steps":[
+        {"action":"begin_session","site":"A","session":"sa","annotation":"n"},
+        {"action":"append_stroke","session":"sa","stroke":"a","points":[[100,100,1000,1],[200,200,1000,2]]},
+        {"action":"crash_restart","site":"A"},{"action":"cancel","session":"sa"},{"action":"cancel","session":"sa"}
+      ],
+      "expected":{"resumed_session":"sa","visible_strokes":["s"],"session_sa":"cancelled","original_ids_preserved":true}
+    },
+    {
+      "id":"INK-09", "requirement":"Missing sessions are pending dependencies, never presumed active",
+      "initial":{"base_annotation":true,"withheld_sessions":["sa"]},
+      "steps":[{"action":"begin_session","site":"A","session":"sa","annotation":"n"},{"action":"append_stroke","session":"sa","stroke":"a","points":[[100,100,1000,1],[200,200,1000,2]]},{"action":"replicate","order":"contributions_only","expect":{"remote_visible_strokes":[],"remote_pending_strokes":["a"]}},{"action":"replicate","order":"forward"}],
+      "expected":{"visible_strokes":["a"],"pending_strokes":[]}
+    },
+    {
+      "id":"DELETE-01", "requirement":"Offline ink cannot resurrect a deleted book and survives restoration",
+      "initial":{"base_annotation":true},
+      "steps":[
+        {"action":"delete_book","site":"A","book":"book-a"},
+        {"action":"begin_session","site":"B","session":"sb","annotation":"n"},
+        {"action":"append_stroke","session":"sb","stroke":"b","points":[[100,100,1000,1],[200,200,1000,2]]},
+        {"action":"replicate","order":"reverse","expect":{"book_deleted":true,"retained_strokes":["b"]}},
+        {"action":"import_book","site":"B","book":"book-a","expect":{"book_deleted":true}},
+        {"action":"restore_book","site":"A","book":"book-a"},{"action":"replicate","order":"forward"}
+      ],
+      "expected":{"book_deleted":false,"visible_strokes":["b"]}
+    },
+    {
+      "id":"DELETE-02", "requirement":"Compaction retains cancellation and deletion semantics for late dependents",
+      "initial":{"base_annotation":true,"base_strokes":["s"]},
+      "steps":[{"action":"begin_session","site":"A","session":"sa","annotation":"n"},{"action":"cancel","session":"sa"},{"action":"delete_annotation","site":"B","annotation":"n"},{"action":"replicate","order":"forward"},{"action":"compact","watermark":9999},{"action":"crash_restart","site":"B"}],
+      "expected":{"retained_session_states":{"sa":"cancelled"},"annotation_deleted":true,"retained_strokes":["s"],"asset_gc_count":0}
+    },
+    {
+      "id":"STATE-01", "requirement":"Remote positions offer resume without moving an open book or syncing typography",
+      "initial":{"books":["book-a"],"local_position":{"A":{"section":0,"offset":0}}},
+      "steps":[
+        {"action":"open_book","site":"A","book":"book-a"},
+        {"action":"set_position","site":"B","book":"book-a","locator":{"section":0,"offset":11}},
+        {"action":"set_preferences","site":"B","book":"book-a","values":{"fontSize":32,"wordSpacing":0.2}},
+        {"action":"replicate","order":"forward","expect":{"A_offset":0}},
+        {"action":"open_book","site":"A","book":"book-a","expect":{"resume_candidate":{"section":0,"offset":11}}},
+        {"action":"dismiss_resume","site":"A"},{"action":"open_book","site":"A","book":"book-a"}
+      ],
+      "expected":{"A_offset":0,"A_preferences_unchanged":true,"resume_candidate":null}
+    },
+    {
+      "id":"OCR-01", "requirement":"Recognition follows input fingerprints and preserves producer provenance",
+      "initial":{"base_annotation":true,"base_strokes":["s"],"fingerprint_aliases":{"before":"projection-before-a","after":"projection-after-a"}},
+      "steps":[
+        {"action":"begin_session","site":"A","session":"sa","annotation":"n"},
+        {"action":"append_stroke","session":"sa","stroke":"a","points":[[100,100,1000,1],[200,200,1000,2]]},
+        {"action":"recognize","producer":"client:A","annotation":"n","input":"after","text":"Current client text"},
+        {"action":"recognize","producer":"server:UB","annotation":"n","input":"before","text":"Late stale server text"},
+        {"action":"replicate","order":"reverse"}
+      ],
+      "expected":{"current_text":"Current client text","current_producer":"client:A","retained_producers":["client:A","server:UB"],"server_reocr_triggers":0}
+    },
+    {
+      "id":"REF-01", "requirement":"One directed-edge model supports every reader/notebook pairing and self-edges",
+      "initial":{"base_annotation":true,"notebook_pages":["p"]},
+      "steps":[
+        {"action":"put_anchor","id":"ap","selector":{"version":1,"kind":"notebook_page","page_id":"p"}},
+        {"action":"put_anchor","id":"ar","selector":{"version":1,"kind":"reader_annotation","book_id":"book-a","annotation_id":"n"}},
+        {"action":"put_reference","id":"nr","source":"ap","target":"ar"},
+        {"action":"put_reference","id":"rn","source":"ar","target":"ap"},
+        {"action":"put_reference","id":"nn","source":"ap","target":"ap"},
+        {"action":"put_reference","id":"rr","source":"ar","target":"ar"},
+        {"action":"replicate","order":"reverse"}
+      ],
+      "expected":{"reference_count":4,"incoming_ap":["nn","rn"],"incoming_ar":["nr","rr"],"mirrored_edge_records":0}
+    },
+    {
+      "id":"REF-02", "requirement":"Content follows identity while fixed regions stay put and copies stay distinct",
+      "initial":{"notebook_pages":["p","q"],"notebook_objects":{"s":{"kind":"stroke","page":"p","x":100,"y":100}}},
+      "steps":[
+        {"action":"put_anchor","id":"content","selector":{"version":1,"kind":"notebook_content","objects":[{"kind":"stroke","id":"s"}]}},
+        {"action":"put_anchor","id":"region","selector":{"version":1,"kind":"notebook_region","page_id":"p","rect":{"x":50,"y":50,"width":100,"height":100}}},
+        {"action":"move_object","id":"s","page":"q","dx":400,"dy":500},
+        {"action":"copy_object","id":"s","copy_id":"copy"},
+        {"action":"resolve","anchor":"content"},{"action":"resolve","anchor":"region"}
+      ],
+      "expected":{"content":{"status":"resolved","page":"q","object_ids":["s"],"x":500,"y":600},"region":{"status":"resolved","page":"p","rect":{"x":50,"y":50,"width":100,"height":100}},"referenced_copies":[]}
+    },
+    {
+      "id":"REF-03", "requirement":"Partial erasure is explicit and never jumps to nearby replacement ink",
+      "initial":{"notebook_pages":["p"],"notebook_objects":{"s":{"kind":"stroke","page":"p","x":100,"y":100},"t":{"kind":"text_box","page":"p","x":100,"y":100}}},
+      "steps":[{"action":"put_anchor","id":"a","selector":{"version":1,"kind":"notebook_content","objects":[{"kind":"stroke","id":"s"},{"kind":"text_box","id":"t"}]}},{"action":"copy_object","id":"s","copy_id":"nearby"},{"action":"erase_object","id":"s"},{"action":"resolve","anchor":"a"}],
+      "expected":{"a":{"status":"partial","object_ids":["t"],"missing_ids":["s"]},"referenced_copies":[]}
+    },
+    {
+      "id":"REF-04", "requirement":"References arriving first survive, resolve later, and survive target trash/restore",
+      "initial":{},
+      "steps":[
+        {"action":"put_reference","id":"r","source":"a","target":"b"},
+        {"action":"resolve","anchor":"b","expect":{"status":"pending"}},
+        {"action":"import_book","site":"A","book":"book-a"},
+        {"action":"put_anchor","id":"b","selector":{"version":1,"kind":"reader_passage","book_id":"book-a","text":{"version":1,"section":0,"start":6,"end":10,"quote":"beta","prefix":"Alpha ","suffix":" gamma."}}},
+        {"action":"resolve","anchor":"b","expect":{"status":"resolved"}},
+        {"action":"delete_book","site":"A","book":"book-a"},
+        {"action":"resolve","anchor":"b","expect":{"status":"deleted"}},
+        {"action":"restore_book","site":"A","book":"book-a"},{"action":"resolve","anchor":"b"}
+      ],
+      "expected":{"b":{"status":"resolved","start":6,"end":10},"retained_reference_ids":["r"],"visible_highlights":0}
+    },
+    {
+      "id":"REF-05", "requirement":"Unknown selector payloads round-trip without lossy normalization",
+      "initial":{},
+      "steps":[{"action":"put_anchor","id":"future","selector":{"version":9,"kind":"pdf_future","opaque":{"page":7,"extra":[1,"x",null]}}},{"action":"resolve","anchor":"future"},{"action":"archive_roundtrip","objects":["future"]}],
+      "expected":{"future":{"status":"unsupported"},"selector":{"version":9,"kind":"pdf_future","opaque":{"page":7,"extra":[1,"x",null]}},"selector_bytes_preserved":true}
+    },
+    {
+      "id":"REF-06", "requirement":"Source passage and annotation-following anchors have different adjustment semantics",
+      "initial":{"base_annotation":true},
+      "steps":[
+        {"action":"put_anchor","id":"passage","selector":{"version":1,"kind":"reader_passage","book_id":"book-a","text":{"version":1,"section":0,"start":6,"end":10,"quote":"beta","prefix":"Alpha ","suffix":" gamma."}}},
+        {"action":"put_anchor","id":"note","selector":{"version":1,"kind":"reader_annotation","book_id":"book-a","annotation_id":"n"}},
+        {"action":"begin_session","site":"A","session":"sa","annotation":"n"},
+        {"action":"set_property","session":"sa","property":"anchor","value":{"version":1,"section":0,"start":11,"end":16,"quote":"gamma","prefix":"Alpha beta ","suffix":". Alpha beta delta."}},
+        {"action":"set_preferences","site":"A","book":"book-a","values":{"fontSize":40}},
+        {"action":"resolve","anchor":"passage"},{"action":"resolve","anchor":"note"}
+      ],
+      "expected":{"passage":{"status":"resolved","start":6,"end":10},"note":{"status":"resolved","start":11,"end":16},"asset_bytes_unchanged":true}
+    },
+    {
+      "id":"REF-07", "requirement":"Repeated text without a unique selector is ambiguous, never guessed",
+      "initial":{"books":["book-a"]},
+      "steps":[{"action":"put_anchor","id":"a","selector":{"version":1,"kind":"reader_passage","book_id":"book-a","text":{"version":1,"section":0,"start":0,"end":4,"quote":"beta","prefix":"","suffix":""}}},{"action":"resolve","anchor":"a"}],
+      "expected":{"a":{"status":"ambiguous","fragments":[]}}
+    },
+    {
+      "id":"REF-08", "requirement":"Missing content differs from missing target and explicit reattachment preserves edges",
+      "initial":{"books":["book-a"],"notebook_pages":["p"]},
+      "steps":[
+        {"action":"put_anchor","id":"a","selector":{"version":1,"kind":"reader_passage","book_id":"book-a","text":{"version":1,"section":0,"start":6,"end":10,"quote":"beta","prefix":"Alpha ","suffix":" gamma."}}},
+        {"action":"put_reference","id":"r","source":"a","target":"a"},
+        {"action":"set_asset_available","site":"A","book":"book-a","available":false},
+        {"action":"resolve","anchor":"a","expect":{"status":"pending"}},
+        {"action":"reattach","anchor":"a","selector":{"version":1,"kind":"notebook_page","page_id":"missing"}},
+        {"action":"metadata_pull_complete","site":"A"},{"action":"resolve","anchor":"a","expect":{"status":"missing"}},
+        {"action":"reattach","anchor":"a","selector":{"version":1,"kind":"notebook_page","page_id":"p"}},
+        {"action":"rename_reorder","page":"p","notebook_title":"Renamed","page_index":12},
+        {"action":"resolve","anchor":"a"}
+      ],
+      "expected":{"a":{"status":"resolved","page":"p"},"retained_reference_ids":["r"],"incoming_a":["r"]}
+    },
+    {
+      "id":"REF-09", "requirement":"Legacy notebook/page links retain their identity-based meaning",
+      "initial":{"notebooks":{"nb":["p"]}},
+      "steps":[{"action":"rename_reorder","page":"p","notebook_title":"Renamed","page_index":12},{"action":"legacy_link","uri":"forestnote://notebook/nb/page/p"}],
+      "expected":{"target":{"notebook_id":"nb","page_id":"p"},"page_index_used_as_identity":false}
+    },
+    {
+      "id":"REF-10", "requirement":"Reader selectors count UTF-16 code units and preserve combining characters",
+      "initial":{"books":["book-a"],"source_text":"\ud83d\ude42 A\u0301 beta"},
+      "steps":[{"action":"put_anchor","id":"unicode","selector":{"version":1,"kind":"reader_passage","book_id":"book-a","text":{"version":1,"section":0,"start":6,"end":10,"quote":"beta","prefix":"\ud83d\ude42 A\u0301 ","suffix":""}}},{"action":"resolve","anchor":"unicode"},{"action":"archive_roundtrip","objects":["unicode"]}],
+      "expected":{"unicode":{"status":"resolved","start":6,"end":10},"unicode_normalization_applied":false,"selector_bytes_preserved":true}
+    },
+    {
+      "id":"IMPORT-01", "requirement":"Lab archive conversion is repeatable and lossless for source/ink identity",
+      "initial":{"archive":"generated_from_readerlab_fixture","annotation_id":"a2f00b42-2a57-4cfa-8d54-076e60118588","width":10000,"height":17600,"all_portable_brushes":true},
+      "steps":[{"action":"import_archive","site":"A","archive":"lab"},{"action":"import_archive","site":"A","archive":"lab"},{"action":"replicate","order":"reverse"}],
+      "expected":{"book_count":1,"annotation_count":1,"duplicate_strokes":0,"source_hash_equal":true,"stroke_bytes_equal":true,"anchor_equal":true,"width":10000,"height":17600,"ids_preserved":true,"preview_is_authority":false}
+    },
+    {
+      "id":"IMPORT-02", "requirement":"Independent archive imports agree on baseline ownership and immutable paint order",
+      "initial":{"archive":"generated_from_readerlab_fixture","annotation_id":"a2f00b42-2a57-4cfa-8d54-076e60118588","width":10000,"height":17600,"all_portable_brushes":true},
+      "steps":[{"action":"import_archive","site":"A","archive":"lab"},{"action":"import_archive","site":"B","archive":"lab"},{"action":"replicate","order":"reverse"}],
+      "expected":{"book_count":1,"annotation_count":1,"duplicate_strokes":0,"import_session_owner":null,"import_session_state":"finished","stroke_order_equal":true,"stroke_bytes_equal":true,"same_state_on":["A","B"]}
+    },
+    {
+      "id":"COMP-01", "requirement":"Legacy client continues notes then recovers reader rows after upgrade",
+      "initial":{"server_profile":"reader","site_A_profile":"legacy","server_reader_rows":12,"A_cursor":0},
+      "steps":[{"action":"sync","site":"A","server_profile":"reader","expect":{"note_sync":"success","reader_rows":0}},{"action":"upgrade","site":"A","profile":"reader"},{"action":"sync","site":"A","server_profile":"reader"},{"action":"sync","site":"A","server_profile":"reader"}],
+      "expected":{"reader_rows":12,"schema_cursor_resets":1,"re_authored_remote_rows":0,"asset_discovery":true}
+    },
+    {
+      "id":"COMP-02", "requirement":"Old or rolled-back server does not lose or filter a reader outbox",
+      "initial":{"site_A_profile":"reader","pending_op_seqs":[1,2,3],"op_tables":["stroke","reader_book","stroke"],"A_cursor":42},
+      "steps":[{"action":"sync","site":"A","server_profile":"legacy"}],
+      "expected":{"status":"unsupported_capability","pending_op_seqs":[1,2,3],"cursor":42,"posted_filtered_batch":false,"local_library_usable":true}
+    },
+    {
+      "id":"UB-01", "requirement":"Metadata-only restore cannot claim content is backed up",
+      "initial":{"server_profile":"reader","prior_server_asset_ready":true,"replica_A_asset_ready":true},
+      "steps":[{"action":"restore_server","backup":"metadata_only"},{"action":"verify_backup","backup":"metadata_only"},{"action":"sync","site":"A","server_profile":"reader"}],
+      "expected":{"backup_complete":false,"server_asset_ready":false,"asset_reupload_queued":true,"metadata_loss":false}
+    },
+    {
+      "id":"UB-02", "requirement":"Consistent DB backup includes content, sessions, references and provenance",
+      "initial":{"server_profile":"reader","backup":"full_notedb","asset_bytes":262149,"session_sa":"cancelled","reference_ids":["r"],"cursor":42},
+      "steps":[{"action":"restore_server","backup":"full_notedb"},{"action":"verify_backup","backup":"full_notedb"}],
+      "expected":{"backup_complete":true,"verified_asset_bytes":262149,"session_sa":"cancelled","reference_ids":["r"],"cursor":42,"source_hash_equal":true}
+    }
+  ]
+}

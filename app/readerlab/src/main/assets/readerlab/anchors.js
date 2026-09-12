@@ -1,19 +1,23 @@
 // Source coordinates count UTF-16 code units in book text only. Never count our inserted UI.
 export class TextIndex {
+  static builds = 0;
   constructor(doc) {
+    TextIndex.builds++;
     this.doc = doc;
     this.nodes = [];
+    this.byNode = new WeakMap();
     this.text = '';
     const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       if (node.parentElement.closest('script,style,[data-lab-generated]')) continue;
-      this.nodes.push({ node, start: this.text.length, end: this.text.length + node.length });
+      const entry = { node, start: this.text.length, end: this.text.length + node.length };
+      this.nodes.push(entry); this.byNode.set(node, entry);
       this.text += node.data;
     }
   }
   position(node, offset) {
     if (node.nodeType === Node.TEXT_NODE) {
-      const entry = this.nodes.find(item => item.node === node);
+      const entry = this.byNode.get(node);
       if (!entry) throw new Error('Location is not book text');
       return entry.start + offset;
     }
@@ -26,10 +30,36 @@ export class TextIndex {
   }
   point(offset, end = false) {
     if (!Number.isInteger(offset) || offset < 0 || offset > this.text.length) throw new Error('Invalid source offset');
-    const entry = this.nodes.find(item => end ? item.end >= offset && item.start < offset : item.end > offset)
-      ?? this.nodes.at(-1);
+    let low = 0, high = this.nodes.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (end ? this.nodes[mid].end < offset : this.nodes[mid].end <= offset) low = mid + 1;
+      else high = mid;
+    }
+    const entry = this.nodes[low] ?? this.nodes.at(-1);
     if (!entry) throw new Error('Chapter has no selectable text');
     return [entry.node, Math.max(0, Math.min(entry.node.length, offset - entry.start))];
+  }
+  split(offset) {
+    const [node, local] = this.point(offset);
+    if (!local || local === node.length) return;
+    const entry = this.byNode.get(node), next = node.splitText(local);
+    const tail = { node: next, start: offset, end: entry.end };
+    entry.end = offset; this.byNode.set(next, tail);
+    this.nodes.splice(this.nodes.indexOf(entry) + 1, 0, tail);
+  }
+  insert(offset, element) {
+    this.split(offset);
+    const [node, local] = this.point(offset);
+    node.parentNode.insertBefore(element, local === node.length ? node.nextSibling : node);
+  }
+  highlight(start, end, id) {
+    // Update this index as source nodes split; moving/wrapping nodes leaves offsets valid.
+    this.split(end); this.split(start);
+    for (const item of this.nodes.filter(item => item.end > start && item.start < end).reverse()) {
+      const mark = this.doc.createElement('mark'); mark.dataset.labHighlight = id;
+      item.node.parentNode.insertBefore(mark, item.node); mark.append(item.node);
+    }
   }
   range(start, end = start) {
     const range = this.doc.createRange();
@@ -52,8 +82,13 @@ export class TextIndex {
       prefix: this.text.slice(Math.max(0, start - 48), start), suffix: this.text.slice(end, end + 48) };
   }
   resolve(anchor) {
+    if (!anchor || anchor.version !== 1 || typeof anchor.quote !== 'string' || !anchor.quote.length ||
+        (anchor.prefix != null && typeof anchor.prefix !== 'string') || (anchor.suffix != null && typeof anchor.suffix !== 'string')) {
+      throw new Error('Annotation has no usable source anchor');
+    }
     const { start, end, quote, prefix, suffix } = anchor;
-    if (quote && this.text.slice(start, end) === quote) return { start, end };
+    if (Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end > start &&
+        end <= this.text.length && this.text.slice(start, end) === quote) return { start, end };
     const candidates = [];
     for (let i = 0; quote && (i = this.text.indexOf(quote, i)) !== -1; i++) {
       if ((!prefix || this.text.slice(Math.max(0, i - prefix.length), i) === prefix) &&
@@ -69,15 +104,7 @@ export class TextIndex {
   }
 }
 
-export function highlight(doc, start, end, id) {
-  const index = new TextIndex(doc);
+export function highlight(doc, start, end, id, index = new TextIndex(doc)) {
   // Wrap each text-node segment separately: links, emphasis, and block ancestry stay intact.
-  for (const item of index.nodes.filter(item => item.end > start && item.start < end).reverse()) {
-    const range = doc.createRange();
-    range.setStart(item.node, Math.max(0, start - item.start));
-    range.setEnd(item.node, Math.min(item.node.length, end - item.start));
-    const mark = doc.createElement('mark');
-    mark.dataset.labHighlight = id;
-    range.surroundContents(mark);
-  }
+  index.highlight(start, end, id);
 }

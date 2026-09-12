@@ -10,6 +10,7 @@ import android.util.Base64
 import android.util.Log
 import android.view.SurfaceView
 import android.view.View
+import android.view.ViewTreeObserver
 import android.webkit.*
 import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
@@ -41,10 +42,56 @@ class ReaderLabActivity : AppCompatActivity() {
     private var pendingImport: Pair<String, String>? = null
     private var ready = false
     private var inkMenuOpen = false
+    private var cancellingInk = false
+    private var strokeStateGeneration = 0L
+    private var resumed = false
+    private val readerRefresh by lazy {
+        ReaderRefreshGate(
+            allowed = { !isDestroyed && !isFinishing && hasWindowFocus() && annotation == null && !inkMenuOpen },
+            afterVisualState = { next ->
+                web.postVisualStateCallback(0, object : WebView.VisualStateCallback() {
+                    override fun onComplete(requestId: Long) {
+                        Log.d("ReaderLab/Refresh", "reader visual state ready")
+                        next()
+                    }
+                })
+            },
+            afterFrame = { next -> afterWebFrame(next) },
+            refresh = {
+                Log.i("ReaderLab/Refresh", "finished reader frame committed; clean refresh")
+                backend.refreshUiFrame(web)
+            },
+        )
+    }
     private val io = Executors.newSingleThreadExecutor()
+    private val inkPublisher by lazy { QuietInkPublisher<String>(io, { result ->
+        if (!isDestroyed) {
+            result.onSuccess { web.evaluateJavascript(it, null) }
+                .onFailure { report("Ink saved, but preview failed: ${it.message}"); Log.e("ReaderLab", "preview", it) }
+            event(JSONObject().put("type", "strokeState").put("down", false))
+        }
+    }) }
+    // Separate from checkpoint/PNG work so a large save cannot queue ahead of menu input.
+    private val bridgeDecoder = Executors.newSingleThreadExecutor { task -> Thread(task, "ReaderLab/Bridge") }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val recognizer by lazy { MlKitRecognizer() }
     private val models by lazy { RecognitionModelManager() }
+    private val ocrWorker by lazy {
+        LabRecognitionWorker(
+            hasModel = { models.isDownloaded("en-US") },
+            downloadModel = { models.download("en-US").getOrThrow() },
+            recognizeInk = { FullPageOcr.recognizePage(it, "en-US", recognizer).getOrThrow().text },
+            modelState = { state, error ->
+                event(JSONObject().put("type", "modelState").put("status", state).put("language", "en-US").put("error", error))
+            },
+            result = { request, state, text ->
+                Log.i("ReaderLab/OCR", "result book=${request.book} id=${request.id} revision=${request.revision} status=$state")
+                event(JSONObject().put("type", "ocr").put("bookHash", request.book).put("id", request.id)
+                    .put("revision", request.revision).put("requestId", request.requestId).put("status", state).put("text", text))
+            },
+            release = { recognizer.close() },
+        )
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,7 +109,23 @@ class ReaderLabActivity : AppCompatActivity() {
         inkHost.addView(ink, FrameLayout.LayoutParams(-1, -1)); root.addView(inkHost)
         backend.attachHost(ink); backend.setInputSuspended(true)
         ink.changed = { saveInk() }
-        ink.strokeState = { down -> event(JSONObject().put("type", "strokeState").put("down", down)) }
+        ink.canPresent = { !isDestroyed && resumed && hasWindowFocus() && annotation != null && !inkMenuOpen && inkHost.visibility == View.VISIBLE }
+        ink.workStateChanged = { syncInkInput() }
+        ink.workerError = { report(it) }
+        ink.strokeState = { down ->
+            inkPublisher.setWriting(down)
+            if (down) {
+                strokeStateGeneration++
+                event(JSONObject().put("type", "strokeState").put("down", true))
+            } else {
+                val generation = strokeStateGeneration
+                // changed/saveInk was queued first. JS must see the new ink before Finish unlocks.
+                io.execute { runOnUiThread {
+                    if (!isDestroyed && generation == strokeStateGeneration && !ink.inStroke && !inkPublisher.hasPending)
+                        event(JSONObject().put("type", "strokeState").put("down", false))
+                } }
+            }
+        }
         web.settings.apply {
             javaScriptEnabled = true; domStorageEnabled = true
             allowFileAccess = false; allowContentAccess = false
@@ -92,8 +155,19 @@ class ReaderLabActivity : AppCompatActivity() {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             WebViewCompat.addWebMessageListener(web, "ReaderNative", setOf(ORIGIN)) { _, message, sourceOrigin, isMainFrame, _ ->
                 if (!isMainFrame || sourceOrigin.toString().trimEnd('/') != ORIGIN) return@addWebMessageListener
-                try { handle(JSONObject(message.data ?: "{}")) }
-                catch (error: Exception) { report("Action failed: ${error.message}"); Log.e("ReaderLab", "bridge", error) }
+                val payload = message.data ?: "{}"
+                bridgeDecoder.execute {
+                    try {
+                        val decoded = JSONObject(payload)
+                        val strokeData = if (decoded.optString("type") in listOf("startInk", "recognize"))
+                            decoded.optJSONObject("annotation")?.getJSONArray("strokes")?.let(InkJson::read) else null
+                        // Ordered decoder -> ordered main queue. Only View/firmware application is on main.
+                        runOnUiThread {
+                            if (!isDestroyed) try { handle(decoded, strokeData) }
+                            catch (error: Exception) { report("Action failed: ${error.message}"); Log.e("ReaderLab", "bridge", error) }
+                        }
+                    } catch (error: Exception) { report("Action failed: ${error.message}"); Log.e("ReaderLab", "bridge decode", error) }
+                }
             }
         } else {
             Log.e("ReaderLab", "WebView lacks secure WebMessageListener; native bridge disabled")
@@ -101,11 +175,20 @@ class ReaderLabActivity : AppCompatActivity() {
         web.loadUrl("$ORIGIN/assets/readerlab/index.html")
         Log.i("ReaderLab", "backend=${backend.javaClass.simpleName} WebView=${WebViewCompat.getCurrentWebViewPackage(this)?.versionName}")
     }
-    private fun handle(message: JSONObject) {
+    private fun handle(message: JSONObject, decodedStrokes: List<Stroke>? = null) {
+        // Keep the canvas frozen until the serialized checkpoint rollback acknowledges.
+        if (cancellingInk && message.optString("type") != "ready") return
         when (message.getString("type")) {
+            "importConsumed" -> {
+                val name = message.optString("name")
+                if (name.matches(Regex("[0-9a-f-]{36}\\.import"))) io.execute {
+                    File(File(filesDir, "imports"), name).delete()
+                }
+            }
             "ready" -> {
                 ready = true; report("${backend.javaClass.simpleName} · WebView ${WebViewCompat.getCurrentWebViewPackage(this)?.versionName}")
                 pendingImport?.let { loadImport(it.first, it.second) }; pendingImport = null
+                ocrWorker.ensureModel()
             }
             "open" -> {
                 stopInk()
@@ -119,12 +202,13 @@ class ReaderLabActivity : AppCompatActivity() {
             }
             "startInk" -> {
                 if (ink.inStroke) return
+                readerRefresh.cancel()
                 backend.setInputSuspended(true); backend.detachInput()
                 annotation = message.getJSONObject("annotation")
                 activeBook = message.getString("bookHash")
                 val a = annotation!!
                 revision = a.optInt("revision")
-                ink.strokes = InkJson.read(a.getJSONArray("strokes")).toMutableList()
+                ink.strokes = requireNotNull(decodedStrokes).toMutableList()
                 ink.canvasWidth = a.getInt("width")
                 setTool(message)
                 position(message)
@@ -133,30 +217,38 @@ class ReaderLabActivity : AppCompatActivity() {
             "positionInk" -> if (annotation != null && !ink.inStroke) position(message)
             "inkMenu" -> {
                 inkMenuOpen = message.optBoolean("open")
+                if (inkMenuOpen) readerRefresh.cancel()
                 backend.setInputSuspended(true)
                 // The native ink View sits above WebView, including its HTML dialogs.
                 // Hide it while a chooser is open; committed ink remains in the book preview.
                 if (inkMenuOpen) inkHost.visibility = View.INVISIBLE
                 // Closing causes JS to resend the visible slice, restoring the same canvas.
             }
-            "stopInk" -> stopInk()
+            "stopInk" -> stopInk(refresh = !message.optBoolean("deferRefresh"))
+            "cancelInk" -> cancelInk(message)
+            "readerFrameReady" -> {
+                Log.d("ReaderLab/Refresh", "finished reader layout ready; waiting for WebView frame")
+                readerRefresh.request()
+            }
             "tool" -> {
                 if (ink.inStroke) return
                 backend.setInputSuspended(true); setTool(message); ink.reconcile()
-                backend.setInputSuspended(inkMenuOpen || !hasWindowFocus() || inkHost.visibility != View.VISIBLE)
+                // Returning from the header's Eraser button has no menu-close position
+                // message to rebind native pen input. Reattach the current host explicitly.
+                if (!inkMenuOpen && inkHost.visibility == View.VISIBLE) backend.attachInput(surface ?: ink, ink, emptyList())
+                syncInkInput()
             }
             "refresh" -> {
+                readerRefresh.cancel()
                 val mode = DisplayMode.valueOf(message.getString("mode"))
                 backend.setDisplayMode(mode)
                 if (mode == DisplayMode.FULL_REFRESH) backend.refreshUiFrame(root)
             }
-            "downloadModel" -> scope.launch {
-                report("Downloading English handwriting model…")
-                runCatching { models.download("en-US").getOrThrow() }
-                    .onSuccess { report("English handwriting model ready; finish or reopen a note to retry recognition") }
-                    .onFailure { report("Model download failed: ${it.message}") }
+            "downloadModel" -> ocrWorker.ensureModel()
+            "recognize" -> message.optJSONObject("annotation")?.let {
+                ocrWorker.recognize(LabRecognitionWorker.Request(message.getString("bookHash"), it.getString("id"),
+                    it.optInt("revision"), requireNotNull(decodedStrokes), message.optString("requestId").ifEmpty { null }))
             }
-            "recognize" -> message.optJSONObject("annotation")?.let { recognize(it) }
         }
     }
     private fun setTool(message: JSONObject) {
@@ -170,7 +262,9 @@ class ReaderLabActivity : AppCompatActivity() {
         // A matched preview is an ordinary View: do not leave a firmware SurfaceView hole or
         // TouchHelper binding underneath it. Closing the chooser reattaches native mode as needed.
         surface?.visibility = if (backend.matched) View.GONE else View.VISIBLE
-        report("${kind.name.lowercase().replace('_', ' ')} · ${backend.description}")
+        Log.d("ReaderLab/Preview", "tool=${ink.tool} matched=${backend.matched} menu=$inkMenuOpen")
+        report(if (ink.tool == Tool.StrokeEraser) "Stroke Eraser Active · Tap Pen To Draw"
+            else "${kind.name.lowercase().replace('_', ' ')} · ${backend.description}")
     }
     private fun position(message: JSONObject) {
         if (inkMenuOpen) return
@@ -190,43 +284,107 @@ class ReaderLabActivity : AppCompatActivity() {
             ink.configure(); backend.attachHost(ink)
             backend.attachInput(surface ?: ink, ink, emptyList())
             backend.updatePen(ink.params); backend.setActiveTool(ink.tool)
-            backend.setInputSuspended(!hasWindowFocus())
+            syncInkInput()
             ink.reconcile()
             Log.d("ReaderLab/Preview", "canvas shown=${ink.isShown} size=${ink.width}x${ink.height} at=$x,$y strokes=${ink.strokes.size} matched=${backend.matched}")
         }
     }
-    private fun stopInk() {
+    private fun stopInk(refresh: Boolean = true) {
         if (ink.inStroke) return
+        inkPublisher.invalidate()
+        readerRefresh.cancel()
         annotation?.let { a ->
-            val snapshot = JSONObject(a.toString()).put("strokes", InkJson.write(ink.strokes)).put("revision", revision)
+            val id = a.getString("id"); val rev = revision; val strokes = ink.strokes.toList(); val book = activeBook
             // Queue behind checkpoints and their UI events so recognition sees the latest ink revision.
-            io.execute { runOnUiThread { if (!isDestroyed) recognize(snapshot) } }
+            io.execute { runOnUiThread { if (!isDestroyed) ocrWorker.recognize(LabRecognitionWorker.Request(book, id, rev, strokes)) } }
         }
         inkMenuOpen = false
         backend.setInputSuspended(true); backend.detachInput(); inkHost.visibility = View.GONE; annotation = null
-        web.invalidate(); backend.refreshUiFrame(web)
+        web.invalidate()
+        if (refresh) backend.refreshUiFrame(web)
+    }
+    private fun afterWebFrame(next: () -> Unit) {
+        if (web.isHardwareAccelerated) {
+            // API 29+: wait for submission to the swap chain, not merely a JS animation frame.
+            web.viewTreeObserver.registerFrameCommitCallback { web.post { next() } }
+        } else {
+            val observer = web.viewTreeObserver
+            var posted = false
+            val listener = object : ViewTreeObserver.OnDrawListener {
+                override fun onDraw() {
+                    if (posted) return
+                    posted = true
+                    web.post {
+                        if (observer.isAlive) observer.removeOnDrawListener(this)
+                        next()
+                    }
+                }
+            }
+            observer.addOnDrawListener(listener)
+        }
+        web.invalidate()
     }
     private fun checkpointFile(book: String, id: String): File {
         require(book.matches(Regex("[0-9a-f]{64}")) && id.matches(Regex("[0-9a-fA-F-]{36}")))
         return File(File(filesDir, "ink").apply { mkdirs() }, "$book-$id.json")
     }
-    private fun saveInk() {
+    private fun cancelInk(message: JSONObject) {
+        val requestId = message.getString("requestId")
+        val original = message.getJSONObject("annotation")
+        val id = original.getString("id")
+        val result = JSONObject().put("type", "inkCancelled").put("requestId", requestId).put("id", id)
+        if (ink.inStroke || annotation?.optString("id") != id || activeBook != message.optString("bookHash")) {
+            event(result.put("error", "Writing session changed; cancel was not applied")); return
+        }
+        val book = activeBook
+        val minimumRevision = revision
+        cancellingInk = true; readerRefresh.cancel()
+        inkPublisher.invalidate()
+        backend.setInputSuspended(true); backend.detachInput(); inkHost.visibility = View.GONE
+        io.execute {
+            val outcome = runCatching { InkCheckpointRollback.write(checkpointFile(book, id), original, minimumRevision) }
+            runOnUiThread {
+                cancellingInk = false
+                outcome.onSuccess { restoredRevision ->
+                    revision = restoredRevision; annotation = null
+                    Log.i("ReaderLab", "edit cancelled id=$id revision=$restoredRevision")
+                    event(result.put("revision", restoredRevision))
+                }.onFailure { error ->
+                    // JS keeps its edit session and resends geometry so the user can retry.
+                    event(result.put("error", "Could not cancel edit: ${error.message}"))
+                }
+            }
+        }
+    }
+    private fun saveInk(recovered: Boolean = false) {
+        if (cancellingInk) return
         val a = annotation ?: return
         val id = a.getString("id")
         val book = activeBook
         val strokes = ink.strokes.toList(); val width = ink.canvasWidth; val height = a.getInt("height")
         val changedRevision = ++revision
+        val publication = inkPublisher.invalidate()
         io.execute {
             try {
                 val result = JSONObject().put("type", "ink").put("id", id).put("revision", changedRevision).put("strokes", InkJson.write(strokes))
+                    .put("recovered", recovered)
                 val atomic = AtomicFile(checkpointFile(book, id))
                 val stream = atomic.startWrite()
                 try { stream.write(result.toString().toByteArray()); atomic.finishWrite(stream) }
                 catch (error: Exception) { atomic.failWrite(stream); throw error }
-                val preview = LabInkView.preview(strokes, width, height)
-                val output = ByteArrayOutputStream(); preview.compress(Bitmap.CompressFormat.PNG, 100, output); preview.recycle()
-                result.put("preview", "data:image/png;base64," + Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)).put("previewHeight", height)
-                event(result)
+                // Every revision is durable immediately. Full-note rasterization, PNG encoding,
+                // bridge serialization and IndexedDB snapshots coalesce until the pen rests.
+                runOnUiThread { if (!isDestroyed) inkPublisher.offer(publication) {
+                    val started = android.os.SystemClock.elapsedRealtimeNanos()
+                    val preview = LabInkView.preview(strokes, width, height)
+                    val output = ByteArrayOutputStream()
+                    try { check(preview.compress(Bitmap.CompressFormat.PNG, 100, output)) }
+                    finally { preview.recycle() }
+                    result.put("preview", "data:image/png;base64," + Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)).put("previewHeight", height)
+                    val script = "window.readerNativeEvent?.($result)"
+                    Log.d("ReaderLab/Save", "preview revision=$changedRevision strokes=${strokes.size} workerUs=${(android.os.SystemClock.elapsedRealtimeNanos() - started) / 1000}")
+                    script
+                } }
             } catch (error: Exception) { report("Ink checkpoint failed: ${error.message}"); Log.e("ReaderLab", "save", error) }
         }
     }
@@ -235,27 +393,20 @@ class ReaderLabActivity : AppCompatActivity() {
         io.execute {
             val saved = runCatching { JSONObject(AtomicFile(checkpointFile(book, id)).openRead().bufferedReader().use { it.readText() }) }.getOrNull() ?: return@execute
             if (saved.optInt("revision") <= expectedRevision) return@execute
+            val decoded = runCatching { InkJson.read(saved.getJSONArray("strokes")) }
+                .onFailure { Log.e("ReaderLab", "checkpoint decode", it); report("Could not decode saved ink checkpoint") }
+                .getOrNull() ?: return@execute
             runOnUiThread {
-                if (annotation?.optString("id") != id || activeBook != book || revision != expectedRevision) return@runOnUiThread
-                ink.strokes = InkJson.read(saved.getJSONArray("strokes")).toMutableList(); revision = saved.getInt("revision")
-                ink.reconcile(); saveInk(); report("Recovered newer native ink checkpoint")
+                if (cancellingInk || annotation?.optString("id") != id || activeBook != book || revision != expectedRevision) return@runOnUiThread
+                ink.strokes = decoded.toMutableList(); revision = saved.getInt("revision")
+                ink.reconcile(); saveInk(recovered = true); report("Recovered newer native ink checkpoint")
             }
         }
     }
-    private fun recognize(a: JSONObject) {
-        val id = a.getString("id")
-        val rev = a.optInt("revision")
-        val strokes = InkJson.read(a.getJSONArray("strokes"))
-        scope.launch {
-            val result = JSONObject().put("type", "ocr").put("id", id).put("revision", rev)
-            try {
-                if (!models.isDownloaded("en-US")) { event(result.put("status", "pending: download English model")); return@launch }
-                val text = FullPageOcr.recognizePage(strokes, "en-US", recognizer).getOrThrow().text
-                event(result.put("status", "ready").put("text", text))
-            } catch (error: Exception) { event(result.put("status", "retry: ${error.message}")) }
-        }
+    private fun event(value: JSONObject) {
+        val script = "window.readerNativeEvent?.($value)" // Serialize large checkpoint events on their calling worker.
+        runOnUiThread { if (!isDestroyed) web.evaluateJavascript(script, null) }
     }
-    private fun event(value: JSONObject) { runOnUiThread { if (!isDestroyed) web.evaluateJavascript("window.readerNativeEvent?.($value)", null) } }
     private fun report(text: String) { Log.i("ReaderLab", text); event(JSONObject().put("type", "status").put("message", text)) }
     private fun loadImport(url: String, name: String) {
         if (!ready) { pendingImport = url to name; return }
@@ -267,17 +418,17 @@ class ReaderLabActivity : AppCompatActivity() {
         if (resultCode != RESULT_OK) { exportBytes = null; return }
         val uri = data?.data ?: return
         if (requestCode == OPEN) io.execute {
+            val target = File(File(filesDir, "imports"), "${java.util.UUID.randomUUID()}.import")
             try {
                 val name = contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
                     if (it.moveToFirst()) it.getString(0) else null
                 } ?: "book.epub"
-                val target = File(filesDir, "imports/current")
                 contentResolver.openInputStream(uri)!!.use { input -> target.outputStream().use { output ->
                     val buffer = ByteArray(65536); var total = 0L
                     while (true) { val n = input.read(buffer); if (n < 0) break; total += n; require(total <= 64L * 1024 * 1024) { "Prototype import exceeds 64 MiB" }; output.write(buffer, 0, n) }
                 } }
-                runOnUiThread { loadImport("$ORIGIN/imports/current", name) }
-            } catch (error: Exception) { report("Import failed: ${error.message}") }
+                runOnUiThread { loadImport("$ORIGIN/imports/${target.name}", name) }
+            } catch (error: Exception) { target.delete(); report("Import failed: ${error.message}") }
         }
         if (requestCode == EXPORT) {
             val bytes = exportBytes ?: return; exportBytes = null
@@ -286,15 +437,23 @@ class ReaderLabActivity : AppCompatActivity() {
     }
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (::backend.isInitialized) backend.setInputSuspended(!hasFocus || inkMenuOpen || inkHost.visibility != View.VISIBLE)
+        if (!hasFocus) readerRefresh.cancel()
+        syncInkInput()
+    }
+    private fun syncInkInput() {
+        if (isDestroyed || !::backend.isInitialized || !::ink.isInitialized) return
+        backend.setInputSuspended(!resumed || !hasWindowFocus() || inkMenuOpen || annotation == null ||
+            inkHost.visibility != View.VISIBLE || (!ink.hardwareEraseGesture && (ink.workPending || !ink.canvasReady)))
     }
     override fun onPause() {
+        resumed = false
+        readerRefresh.cancel()
         if (::ink.isInitialized && ink.inStroke) ink.cancel()
         backend.setInputSuspended(true); backend.detachInput(); backend.release()
         super.onPause()
     }
-    override fun onResume() { super.onResume(); if (::backend.isInitialized) backend.onResumeReacquire() }
-    override fun onDestroy() { scope.cancel(); io.shutdown(); ink.releasePreview(); backend.release(); web.destroy(); super.onDestroy() }
+    override fun onResume() { super.onResume(); resumed = true; if (::backend.isInitialized) { backend.onResumeReacquire(); syncInkInput() } }
+    override fun onDestroy() { inkPublisher.close(); ocrWorker.close(); scope.cancel(); bridgeDecoder.shutdown(); io.shutdown(); ink.releasePreview(); backend.release(); web.destroy(); super.onDestroy() }
     companion object {
         private const val ORIGIN = "https://appassets.androidplatform.net"
         private const val OPEN = 1

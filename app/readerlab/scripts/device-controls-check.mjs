@@ -19,7 +19,7 @@ try {
     reader.emit('edit', { annotation: a });
     return structuredClone(a);
   });
-  await page.locator('#noteMenu').waitFor({ state: 'visible' });
+  await page.locator('#draw').waitFor({ state: 'visible' });
   await page.waitForFunction(() => !reader.busy);
   if (!await page.locator('#next').isDisabled() || !await page.locator('#prev').isDisabled()) throw Error('Writing session did not disable page arrows');
   const lockedPage = await page.evaluate(() => ({ page: reader.renderer.page, section: reader.index }));
@@ -33,7 +33,7 @@ try {
   if (JSON.stringify(lockedPage) !== JSON.stringify(await page.evaluate(() => ({ page: reader.renderer.page, section: reader.index })))) throw Error('Swipe or programmatic navigation escaped writing session');
   await cdp.detach();
   const top = (await page.locator('#reader').boundingBox()).y;
-  for (const id of ['done', 'noteMenu']) {
+  for (const id of ['done', 'cancelEdit', 'draw', 'erase']) {
     const r = await page.locator(`#${id}`).boundingBox();
     if (r.y + r.height > top) throw Error(`${id} overlaps the reading canvas`);
   }
@@ -75,11 +75,11 @@ try {
   const layoutBeforeMenu = await layoutState();
   await page.locator('#menu').click();
   await screenshot('reader-menu.png');
-  for (const group of ['Reading', 'Pen & display', 'Lab']) {
+  for (const group of ['Reading', 'Pen & Display', 'Lab']) {
     await page.locator('#controls summary').filter({ hasText: group }).click();
     await page.waitForTimeout(100);
     if (JSON.stringify(await layoutState()) !== JSON.stringify(layoutBeforeMenu)) throw Error(`Reader menu ${group} changed layout or ended writing`);
-    if (group === 'Pen & display') await screenshot('reader-pen-display.png');
+    if (group === 'Pen & Display') await screenshot('reader-pen-display.png');
   }
   await page.locator('#closeControls').click();
   if (JSON.stringify(await layoutState()) !== JSON.stringify(layoutBeforeMenu)) throw Error('Closing reader menu changed layout');

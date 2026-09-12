@@ -116,7 +116,7 @@ class NotebookRepository private constructor(
     /**
      * RhizomeSync's [SqliteHandle], bound to the SAME SQLite connection that backs [db] (prod: the
      * shared [SupportSQLiteOpenHelper]; tests: the [JdbcSqliteDriver]'s shared connection). Builds
-     * [syncStore]; also used directly by [migrateLegacySyncToRhizome] for the one-shot cross-table
+     * [syncStore]; also used by [LegacySyncHistory] for the one-shot cross-table
      * copy into the adapter's `rhizome_*` tables (which SQLDelight doesn't know about).
      */
     private val syncHandle: SqliteHandle
@@ -132,7 +132,7 @@ class NotebookRepository private constructor(
      * surface below still drives sync until C3/C4 route through this adapter.
      */
     internal val syncStore: SqliteStorageAdapter =
-        SqliteStorageAdapter(syncHandle, ForestNoteRegistry.registry, clock)
+        db.transactionWithResult { LegacySyncHistory.installAndMigrate(syncHandle, ForestNoteRegistry.registry, clock) }
 
     companion object {
         private const val TAG = "NotebookRepository"
@@ -167,13 +167,13 @@ class NotebookRepository private constructor(
         /**
          * Open or create the library database, bootstrapping ≥1 notebook/≥1 page
          * and restoring the active context from `app_state`.
-         * If the file is corrupted, deletes it and starts fresh.
+         * Open/migration failures preserve the original database for retry/recovery.
          */
         fun open(context: Context, now: () -> Long = { System.currentTimeMillis() }): NotebookRepository {
             // Resolve where the datastore lives: `/sdcard/ForestNote` (migrating the private DB out
             // once if needed) when external storage is usable, else the app-private dir as a safe
             // fallback. See StorageLocation / StorageLocationLogic. `dbContext` redirects every
-            // framework DB-file lookup, so the driver + corruption-recovery delete below all target
+            // framework DB-file lookup, so the driver and recovery diagnostics all target
             // the resolved location transparently.
             val dbContext = StorageLocation.resolve(context, DEFAULT_FILENAME)
             // Build the SQLDelight Android driver and the RhizomeSync handle over ONE shared
@@ -183,21 +183,23 @@ class NotebookRepository private constructor(
                 val helper = FrameworkSQLiteOpenHelperFactory().create(
                     SupportSQLiteOpenHelper.Configuration.builder(dbContext)
                         .name(DEFAULT_FILENAME)
-                        .callback(AndroidSqliteDriver.Callback(NotebookDatabase.Schema))
+                        .callback(PreservingDatabaseCallback())
                         .build()
                 )
                 val driver = AndroidSqliteDriver(helper)
-                val db = NotebookDatabase(driver)
-                val syncHandle = SupportSqliteHandle(helper.writableDatabase)
-                return NotebookRepository(driver, db, now, syncHandle).also { it.bootstrap() }
+                return try {
+                    val db = NotebookDatabase(driver)
+                    val syncHandle = SupportSqliteHandle(helper.writableDatabase)
+                    NotebookRepository(driver, db, now, syncHandle).also { it.bootstrap() }
+                } catch (failure: Throwable) {
+                    try { driver.close() } catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+                    throw failure
+                }
             }
-            return try {
-                build()
-            } catch (e: Throwable) {
-                // Corrupted database — delete and recreate (at the resolved location).
-                dbContext.deleteDatabase(DEFAULT_FILENAME)
-                build()
-            }
+            // An exception is not permission to delete the user's library. In
+            // particular, schema downgrade, disk-full and migration bugs are not
+            // corruption. The store/UI reports the failure; retry opens this file.
+            return build()
         }
 
         /**
@@ -247,9 +249,8 @@ class NotebookRepository private constructor(
      */
     private fun bootstrap() {
         val now = clock()
-        // RhizomeSync cutover (Phase 8 C5): one-shot copy of the legacy sync tables into the
-        // adapter's rhizome_* tables. Runs before anything touches sync; idempotent via its gate.
-        migrateLegacySyncToRhizome()
+        // Sync history was transferred before constructing the active adapter,
+        // so its HLC already includes all legacy timestamps.
         // Ensure at least one notebook.
         var notebooks = db.notebookQueries.listNotebooks().executeAsList()
         if (notebooks.isEmpty()) {
@@ -285,117 +286,6 @@ class NotebookRepository private constructor(
         db.notebookQueries.bakeNullPageTemplates(seedTemplate, seedPitch)
     }
 
-    /**
-     * RhizomeSync cutover (Phase 8 C5): one-shot, IRREVERSIBLE copy of this device's legacy sync
-     * tables (`sync_state` / `outbox` / `sync_row_meta`) into the adapter-owned `rhizome_*` tables,
-     * so an upgraded device keeps its site_id, cursor and pending ops instead of re-minting + losing
-     * its place + re-backfilling. Gated by `sync_state.rhizome_migrated` — it runs exactly once; a
-     * second pass would clobber rhizome state that a sync session may already have advanced.
-     *
-     * Runs inside one transaction on the shared connection (so the legacy reads and rhizome writes
-     * are atomic — see [SupportSqliteHandle]/[JdbcSqliteHandle]). The rhizome_* tables already exist
-     * here ([syncStore]'s init created them before [bootstrap]). The copy is raw SQL through
-     * [syncHandle] because SQLDelight doesn't know the rhizome_* tables.
-     *
-     * Mapping: `outbox.{table_name,wall_ts,payload}` → `rhizome_outbox.{tbl,op_ts,cols}`;
-     * `sync_row_meta.{table_name,lww_wall_ts,lww_op_seq,lww_site_id}` →
-     * `rhizome_row_meta.{tbl,op_ts,op_seq,site_id}`; `rhizome_sync_state.last_hlc` seeds to the
-     * greatest legacy wall_ts (the HLC's high bits are wall-clock ms, so the timeline is preserved).
-     * The legacy tables are LEFT IN PLACE one release as rollback substrate (a later migration drops
-     * them). Fresh installs run a harmless no-op copy (legacy tables empty) and set the gate.
-     */
-    private fun migrateLegacySyncToRhizome() {
-        val migrated = db.notebookQueries.getSyncState().executeAsOneOrNull()?.rhizome_migrated ?: 0L
-        if (migrated != 0L) return
-        // The legacy oplog tables (`outbox`/`sync_row_meta`) are dropped by a later migration (18.sqm).
-        // A straggler that upgrades straight past the cutover runs THIS copy with the tables already
-        // gone; skip the parts that read them and let RhizomeSync.backfill() re-derive the un-copied
-        // outbox ops + LWW provenance from the live rows (idempotent under server LWW). `sync_state`
-        // itself is retained, so the site_id/cursor/next_op_seq carry-over below is always valid.
-        val legacyPresent = legacySyncTablesPresent()
-        try {
-            db.transaction {
-                // Guarantee the legacy singleton exists so the flag-set below always lands (a never-synced
-                // fresh device has no sync_state row until enableSync); the new columns take their defaults.
-                db.notebookQueries.ensureSyncState()
-                // sync_state singleton → rhizome_sync_state. UPSERT-shaped so it's correct whether or not
-                // the adapter already inserted an id=0 row; last_hlc = max(legacy wall_ts) across both logs
-                // (0 when the legacy logs are gone — backfill re-derives it).
-                syncHandle.execute(
-                    "INSERT OR IGNORE INTO rhizome_sync_state (id, site_id, cursor, next_op_seq, last_hlc) " +
-                        "VALUES (0, NULL, 0, 1, 0)",
-                    emptyList(),
-                )
-                val lastHlcExpr = if (legacyPresent) {
-                    "COALESCE((SELECT MAX(ts) FROM (" +
-                        "SELECT wall_ts AS ts FROM outbox " +
-                        "UNION ALL " +
-                        "SELECT lww_wall_ts AS ts FROM sync_row_meta)), 0)"
-                } else {
-                    "0"
-                }
-                syncHandle.execute(
-                    """
-                    UPDATE rhizome_sync_state SET
-                      site_id = (SELECT site_id FROM sync_state WHERE id = 0),
-                      cursor = COALESCE((SELECT cursor FROM sync_state WHERE id = 0), 0),
-                      next_op_seq = COALESCE((SELECT next_op_seq FROM sync_state WHERE id = 0), 1),
-                      last_hlc = $lastHlcExpr
-                    WHERE id = 0
-                    """.trimIndent(),
-                    emptyList(),
-                )
-                if (legacyPresent) {
-                    // outbox → rhizome_outbox (op_seq preserved; wall_ts → op_ts; payload → cols).
-                    syncHandle.execute(
-                        "INSERT INTO rhizome_outbox (op_seq, tbl, pk, op_ts, cols) " +
-                            "SELECT op_seq, table_name, pk, wall_ts, payload FROM outbox",
-                        emptyList(),
-                    )
-                    // sync_row_meta → rhizome_row_meta (LWW provenance, same triple).
-                    syncHandle.execute(
-                        "INSERT INTO rhizome_row_meta (tbl, pk, op_ts, op_seq, site_id) " +
-                            "SELECT table_name, pk, lww_wall_ts, lww_op_seq, lww_site_id FROM sync_row_meta",
-                        emptyList(),
-                    )
-                }
-                db.notebookQueries.setRhizomeMigrated()
-            }
-        } catch (t: Throwable) {
-            // Never let a legacy-copy failure escape: open() treats any DB error as corruption and
-            // deletes+recreates the store (data loss). The live rows are safe in the app tables and
-            // backfill re-captures them, so set the gate and move on rather than retry every launch.
-            Log.w(TAG, "migrateLegacySyncToRhizome failed; relying on backfill", t)
-            try {
-                db.notebookQueries.setRhizomeMigrated()
-            } catch (t2: Throwable) {
-                Log.w(TAG, "could not set rhizome_migrated gate", t2)
-            }
-        }
-    }
-
-    /**
-     * Whether BOTH legacy oplog tables (`outbox`, `sync_row_meta`) still exist. They are dropped by
-     * migration 18.sqm; once gone, [migrateLegacySyncToRhizome] must not SELECT from them. Defensive:
-     * any failure is treated as "absent" so the copy skips rather than throwing.
-     */
-    private fun legacySyncTablesPresent(): Boolean = try {
-        var count = 0L
-        driver.executeQuery(
-            null,
-            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('outbox','sync_row_meta')",
-            { cursor ->
-                cursor.next()
-                count = cursor.getLong(0) ?: 0L
-                app.cash.sqldelight.db.QueryResult.Value(Unit)
-            },
-            0,
-        )
-        count == 2L
-    } catch (t: Throwable) {
-        Log.w(TAG, "legacy sync-table existence check failed; assuming absent", t)
-        false
-    }
 
     /** The global default template/pitch as concrete columns, for seeding new pages. */
     private fun defaultTemplateSeed(): Pair<String, Long> {
@@ -1427,9 +1317,9 @@ class NotebookRepository private constructor(
 
     /**
      * Capture an upload op for every existing local row of every capturable table, via the adapter's
-     * registry-driven [SqliteStorageAdapter.backfill]. Used on first enable/join and on a
-     * schema-generation re-backfill to seed the server with pre-sync content. Idempotent under LWW
-     * (re-capturing a row the server already has is a harmless no-change winner). No-op when sync is
+     * registry-driven [SqliteStorageAdapter.backfillUntracked]. Used on first enable/join and on a
+     * schema-generation re-backfill to seed the server with genuinely untracked pre-sync content.
+     * Rows with provenance and queued operations are never re-stamped. No-op when sync is
      * off. The app-side [SYNC_BACKFILL_VERSION] is then stamped in `sync_state` so
      * [rebackfillIfSchemaAdvanced] knows this device is caught up.
      */
@@ -1444,8 +1334,10 @@ class NotebookRepository private constructor(
         // still queued — either way re-capturing them is wrong.
         val state = db.notebookQueries.getSyncState().executeAsOneOrNull()
         if (state != null && state.backfill_version >= SYNC_BACKFILL_VERSION) return
-        runBlocking { syncStore.backfill() }
-        db.notebookQueries.setBackfillVersion(SYNC_BACKFILL_VERSION.toLong())
+        db.transaction {
+            runBlocking { syncStore.backfillUntracked() }
+            db.notebookQueries.setBackfillVersion(SYNC_BACKFILL_VERSION.toLong())
+        }
     }
 
     /**
@@ -1457,8 +1349,10 @@ class NotebookRepository private constructor(
         if (runBlocking { syncStore.siteId() } == null) return
         val state = db.notebookQueries.getSyncState().executeAsOneOrNull()
         if (state != null && state.backfill_version >= SYNC_BACKFILL_VERSION) return
-        runBlocking { syncStore.backfillUntracked() }
-        db.notebookQueries.setBackfillVersion(SYNC_BACKFILL_VERSION.toLong())
+        db.transaction {
+            runBlocking { syncStore.backfillUntracked() }
+            db.notebookQueries.setBackfillVersion(SYNC_BACKFILL_VERSION.toLong())
+        }
     }
 
     /**
@@ -1487,12 +1381,9 @@ class NotebookRepository private constructor(
      * from cursor 0 and stamps the marker via [markSchemaReconciled], so it never needs the reset.
      */
     fun resetCursorIfSchemaChanged() {
-        if (runBlocking { syncStore.siteId() } == null) return
-        val current = ForestNoteRegistry.registry.schemaHash()
-        val stored = db.notebookQueries.getSyncState().executeAsOneOrNull()?.stored_schema_hash
-        if (stored == current) return
-        runBlocking { syncStore.setCursor(0) }
-        db.notebookQueries.setStoredSchemaHash(current)
+        // SQLDelight owns the enclosing transaction too: the JVM handle joins
+        // that transaction, while Android's shared handle is reentrant.
+        db.transaction { SchemaReconciliation.prepare(syncHandle, ForestNoteRegistry.registry.schemaHash()) }
     }
 
     /**
