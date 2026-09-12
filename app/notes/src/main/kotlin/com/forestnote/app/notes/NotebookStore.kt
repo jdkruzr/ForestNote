@@ -139,8 +139,14 @@ class NotebookStore(
                 val opened=repoProvider()
                 try {
                     if(qualifyReaderStorage) {
+                        val newIdentity = !opened.hasSharedLibraryIdentity()
                         val attached=opened.installStorageExtension(ReaderSchema.registry,listOf(ReaderIncomingPolicy())) { db,adapter,actor,libraryId ->
-                            ReaderStorage.attachOnWriter(db,writerDispatcher,actor,adapter) to libraryId
+                            val storage = ReaderStorage.attachOnWriter(db,writerDispatcher,actor,adapter)
+                            // Private ownership must be durable before the new DB identity commits.
+                            // Failure rolls the database transaction back; an orphan private receipt
+                            // after process loss never licenses a copied/existing library identity.
+                            if (newIdentity) secureCredentials?.replicas?.claimLocal(libraryId, actor)
+                            storage to libraryId
                         }
                         // Publish/start only after commit, never while installation can roll back.
                         synchronized(lifecycleLock) {
@@ -193,6 +199,14 @@ class NotebookStore(
         requireNotNull(secureCredentials).replicas.prepareEnrollment(
             com.forestnote.app.notes.caldav.ReplicaCredentialScope(server,account,runtime.libraryId,runtime.storage.actor))
     }
+
+    internal fun replicaEnrollment(transport: com.forestnote.app.notes.enrollment.EnrollmentTransport =
+        com.forestnote.app.notes.enrollment.HttpsEnrollmentTransport()) =
+        com.forestnote.app.notes.enrollment.ReplicaEnrollmentCoordinator(
+            identity = { readerIdentity() },
+            credentials = requireNotNull(secureCredentials).replicas,
+            transport = transport,
+        )
 
     /** Load all strokes (z-ordered) off-thread; result posted to the main thread. */
     fun load(onLoaded: (List<Stroke>) -> Unit) {

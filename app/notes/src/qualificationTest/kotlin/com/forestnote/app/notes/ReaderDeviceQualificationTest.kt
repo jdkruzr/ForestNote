@@ -12,6 +12,7 @@ import android.os.Process
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.core.app.ActivityScenario
 import com.forestnote.app.notes.caldav.*
+import com.forestnote.app.notes.enrollment.*
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
@@ -74,6 +75,8 @@ class ReaderDeviceQualificationTest {
                 "smoke" -> smoke()
                 "sleep-wake" -> sleepWake()
                 "handoff" -> closeHandoff()
+                "enrollment-seed" -> enrollmentSeed()
+                "enrollment-verify" -> enrollmentVerify()
                 "seed" -> seed()
                 "verify" -> verifyRestart()
                 "crash-install" -> crashInstall()
@@ -82,6 +85,82 @@ class ReaderDeviceQualificationTest {
                 else -> error("Unknown qualification phase: $phase")
             }
         }
+    }
+
+    private suspend fun enrollmentSeed() {
+        val id="${runId}_enroll"
+        check(!database(id).exists())
+        val secrets=credentials()
+        val s=store(id,secrets)
+        try {
+            val identity=s.readerIdentity()
+            val target=scope(identity)
+            val c=s.replicaEnrollment(EnrollmentTransport {scope,hash,approval ->
+                check(Looper.myLooper()!=Looper.getMainLooper())
+                check(!approval.adoptLegacy)
+                check(secrets.replicas.read(scope)?.tokenHash==hash)
+                // A live enrollment request holds no DB transaction/executor: ink can drain.
+                s.save(Stroke(points=listOf(StrokePoint(21,22,500,0))))
+                withTimeout(3000) {check(s.readerIdentity()==identity)}
+                EnrollmentResult.RETRYABLE // simulate committed server response loss
+            })
+            check(c.inspect(target.server,target.account)==EnrollmentResult.LOCAL_ONLY)
+            check(c.approve(target.server,EnrollmentApproval(target.account,"qualification-admin"))==EnrollmentResult.RETRYABLE)
+            saveEvidence(id,buildJsonObject {
+                put("library",identity.first);put("replica",identity.second)
+                put("tokenHash",secrets.replicas.read(target)!!.tokenHash)
+                put("history",history(id));put("invocation",invocation);put("process",processNonce)
+            })
+        } finally {s.shutdown()}
+    }
+
+    private suspend fun enrollmentVerify() {
+        val id="${runId}_enroll"
+        val expected=loadEvidence(id)
+        check(expected.getValue("invocation").jsonPrimitive.content==invocation)
+        check(expected.getValue("process").jsonPrimitive.content!=processNonce)
+        val secrets=credentials()
+        val s=store(id,secrets)
+        val copyId="${runId}_copy"
+        check(!database(copyId).exists())
+        try {
+            val identity=s.readerIdentity()
+            check(identity==expected.getValue("library").jsonPrimitive.content to expected.getValue("replica").jsonPrimitive.content)
+            val target=scope(identity)
+            var requests=0
+            val c=s.replicaEnrollment(EnrollmentTransport {_,hash,_->
+                check(hash==expected.getValue("tokenHash").jsonPrimitive.content)
+                requests++
+                EnrollmentResult.CONFIRMED
+            })
+            check(c.inspect(target.server,target.account)==EnrollmentResult.PREPARED)
+            check(c.approve(target.server,EnrollmentApproval(target.account,"qualification-admin"))==EnrollmentResult.CONFIRMED)
+            check(requests==1 && secrets.replicas.read(target)!!.enrolled)
+            check(history(id)==expected.getValue("history").jsonPrimitive.content)
+            s.writeDatabaseSnapshot(database(copyId))
+            // Empty private namespace models another installation. Preserve the original
+            // vault and copied DB; any attempt to mint replacement authority is a failure.
+            val emptyVault=SecureCredentialsStore(object:KeyValueBackend {
+                override fun getString(key:String):String?=error("Strict access only")
+                override fun putString(key:String,value:String):Unit=error("No credential creation")
+                override fun remove(key:String):Unit=error("No credential deletion")
+                override fun readStrict(key:String):String?=null
+                override fun putDurably(key:String,value:String):Boolean=error("Copied identity must not be claimed")
+            })
+            val copy=store(copyId,emptyVault)
+            try {
+                check(copy.readerIdentity()==identity)
+                val blocked=copy.replicaEnrollment(EnrollmentTransport {_,_,_->error("No network for a copied identity")})
+                check(blocked.inspect(target.server,target.account)==EnrollmentResult.RECOVERY_REQUIRED)
+                check(blocked.approve(target.server,EnrollmentApproval(target.account,"qualification-admin"))==EnrollmentResult.RECOVERY_REQUIRED)
+                check(history(copyId)==expected.getValue("history").jsonPrimitive.content)
+            } finally {copy.shutdown()}
+        } finally {s.shutdown()}
+        val reopened=store(id)
+        try {
+            val c=reopened.replicaEnrollment(EnrollmentTransport {_,_,_->error("No re-enrollment on reopen")})
+            check(c.inspect("https://qualification.invalid","single-author")==EnrollmentResult.CONFIRMED)
+        } finally {reopened.shutdown()}
     }
 
     private suspend fun closeHandoff() {

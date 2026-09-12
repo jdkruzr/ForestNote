@@ -23,6 +23,9 @@ class ReplicaCredentialsStoreTest {
         val backend=Backend()
         val first=ReplicaCredentialsStore(backend)
         assertNull(first.read(scope));assertTrue(backend.values.isEmpty())
+        assertFailsWith<IllegalStateException> { first.prepareEnrollment(scope) }
+        first.claimLocal(scope.library,scope.replica)
+        assertEquals(ReplicaRegistrationState.LOCAL_ONLY,first.registration(scope.library,scope.replica))
         val pending=first.prepareEnrollment(scope)
         assertFalse(pending.enrolled)
         assertTrue(pending.token.matches(Regex("fn-device-v1_[0-9a-f]{64}")))
@@ -41,6 +44,7 @@ class ReplicaCredentialsStoreTest {
         assertFailsWith<IllegalStateException> {store.prepareEnrollment(scope)}
         assertTrue(backend.values.isEmpty())
         backend.writable=true
+        store.claimLocal(scope.library,scope.replica)
         val pending=store.prepareEnrollment(scope)
         assertFailsWith<IllegalStateException> {store.markEnrolled(scope,"wrong")}
         backend.writable=false
@@ -54,9 +58,12 @@ class ReplicaCredentialsStoreTest {
     @Test fun scopeIsolationAndMalformedRecordsFailClosed() {
         val backend=Backend()
         val store=ReplicaCredentialsStore(backend)
+        store.claimLocal(scope.library,scope.replica)
         store.prepareEnrollment(scope)
-        for(other in listOf(scope.copy(server="https://elsewhere.example"),scope.copy(account="other"),
-            scope.copy(library="library-b"),scope.copy(replica="replica-b"))) assertNull(store.read(other))
+        for(other in listOf(scope.copy(server="https://elsewhere.example"),scope.copy(account="other")))
+            assertFailsWith<ReplicaScopeMismatch> { store.read(other) }
+        assertNull(store.read(scope.copy(library="library-b")))
+        assertFailsWith<IllegalStateException> { store.read(scope.copy(replica="replica-b")) }
         val key=backend.values.keys.single()
         val original=backend.values.getValue(key)
         backend.values[key]=original.replace("library-a","library-b")
@@ -64,5 +71,19 @@ class ReplicaCredentialsStoreTest {
         backend.values[key]="not-json"
         assertFailsWith<IllegalStateException> {store.read(scope)}
         assertEquals("not-json",backend.values[key])
+    }
+
+    @Test fun lostOwnershipCannotBeReplacedAndPendingTargetCannotBeChanged() {
+        val backend=Backend()
+        val store=ReplicaCredentialsStore(backend)
+        store.claimLocal(scope.library,scope.replica)
+        val token=store.prepareEnrollment(scope).token
+        assertFailsWith<IllegalStateException> {store.claimLocal(scope.library,scope.replica)}
+        assertFailsWith<ReplicaScopeMismatch> {store.prepareEnrollment(scope.copy(account="another-account"))}
+        assertEquals(token,store.read(scope)!!.token)
+        backend.values.clear() // simulate private credential loss, never a production reset action
+        assertNull(store.registration(scope.library,scope.replica))
+        assertFailsWith<IllegalStateException> {store.prepareEnrollment(scope)}
+        assertTrue(backend.values.isEmpty())
     }
 }

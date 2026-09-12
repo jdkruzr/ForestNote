@@ -65,7 +65,7 @@ export async function run(options) {
         }
         report.fingerprint=(await call(['getprop','ro.build.fingerprint'])).output.trim();
         const phases=options['--phase-set']==='upgrade' ? ['upgrade-verify'] :
-            ['smoke','sleep-wake','handoff','seed','verify','crash-install','verify-crash'];
+            ['smoke','sleep-wake','handoff','enrollment-seed','enrollment-verify','seed','verify','crash-install','verify-crash'];
         for(const phase of phases) {
             const stopped=await call(['am','force-stop',target]);
             if(stopped.code!==0 || stopped.timedOut) throw new Error('Could not stop the isolated test process');

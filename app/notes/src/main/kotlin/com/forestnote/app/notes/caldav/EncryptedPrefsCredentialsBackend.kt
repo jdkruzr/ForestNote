@@ -45,23 +45,14 @@ class EncryptedPrefsCredentialsBackend(
 
     // SharedPreferences updates memory even when commit fails. Never mistake that
     // cached value for a durable identity; require reopen/recovery after failure.
-    private var strictWriteFailed = false
+    override val strictLock: Any get() = strictAccess.lock
 
-    @Synchronized override fun readStrict(key: String): String? {
-        check(!strictWriteFailed) { "Credential durability uncertain; reopen required" }
-        return checkNotNull(prefs) { "Private credentials unavailable" }.getString(key,null)
+    override fun readStrict(key: String): String? = strictAccess.read {
+        checkNotNull(prefs) { "Private credentials unavailable" }.getString(key,null)
     }
 
-    @Synchronized override fun putDurably(key: String,value: String): Boolean {
-        check(!strictWriteFailed) { "Credential durability uncertain; reopen required" }
-        return try {
-            checkNotNull(prefs) { "Private credentials unavailable" }.edit().putString(key,value).commit().also {
-                if(!it) strictWriteFailed=true
-            }
-        } catch (failure: Exception) {
-            strictWriteFailed=true
-            throw IllegalStateException("Private credential save failed",failure)
-        }
+    override fun putDurably(key: String,value: String): Boolean = strictAccess.write {
+        checkNotNull(prefs) { "Private credentials unavailable" }.edit().putString(key,value).commit()
     }
 
     /**
@@ -109,6 +100,7 @@ class EncryptedPrefsCredentialsBackend(
     }
 
     companion object {
+        private val strictAccess = StrictCredentialAccess()
         private const val PREFS_NAME = "forestnote_secrets"
         private const val TAG = "ForestNoteESP"
     }

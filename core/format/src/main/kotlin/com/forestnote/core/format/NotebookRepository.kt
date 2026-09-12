@@ -179,6 +179,10 @@ class NotebookRepository private constructor(
         return result
     }
 
+    fun hasSharedLibraryIdentity(): Boolean = syncHandle.query(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='forestnote_library_identity'"
+    ) { true }.isNotEmpty()
+
     fun requireWriterOnlySync() { check(!extensionInstalled) { "Mixed-library transport is not activated; pending history preserved" } }
 
     companion object {

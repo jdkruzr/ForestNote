@@ -88,4 +88,5 @@ dependencies {
 
     // MockWebServer for CalDavClient HTTP tests.
     testImplementation(libs.findLibrary("okhttp-mockwebserver").get())
+    testImplementation(libs.findLibrary("okhttp-tls").get())
 }

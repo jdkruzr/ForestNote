@@ -1,4 +1,4 @@
-# D23–D26: disposable Android storage qualification
+# D23–D27: disposable Android storage qualification
 
 Returns to [D22's hardware handoff](../../design-plans/2026-09-12-forestread-android-foundation.md)
 and [the larger plan, item 3](../../design-plans/2026-09-12-forestread-progress-review.md#recommended-next-order).
@@ -68,14 +68,19 @@ SELinux or device security settings. Every force-stop targets only the isolated 
    request asynchronous close. Create its replacement through the production ownership factory
    on the main thread; prove its opener waits, then release the stall and verify ink/history and
    identity. Measure the close request and check its StrictMode disk-I/O count.
-4. `seed`: synthetic ink and reader state plus a durable private enrollment credential. Stores
+4. `enrollment-seed`: explicit approval prepares the real private credential before an injected
+   response-loss result; a stroke saves during the request without waiting for network completion.
+5. `enrollment-verify`: in a different process, confirm the same credential and preserve history;
+   a consistent DB copy with no private ownership must refuse credential creation/network.
+   These transport results are injected; tablet Internet permission remains absent.
+6. `seed`: synthetic ink and reader state plus a durable private enrollment credential. Stores
    expected library/replica identity, credential **hash** and history in private test evidence.
-5. Force-stop/restart, then `verify`: reads (does not recreate) that credential and checks unchanged
+7. Force-stop/restart, then `verify`: reads (does not recreate) that credential and checks unchanged
    identity/history/data in a genuinely different process. The raw credential is never printed.
-6. `crash-install`: save existing synthetic writer ink, enter the real shared-install transaction,
+8. `crash-install`: save existing synthetic writer ink, enter the real shared-install transaction,
    create reader/asset state, durably mark the exact crash boundary outside the database, then
    kill **this isolated process** before commit. An instrumentation crash here is expected.
-7. `verify-crash`: requires the crash-boundary marker and a different process; allows SQLite hot
+9. `verify-crash`: requires the crash-boundary marker and a different process; allows SQLite hot
    journal recovery, checks integrity and rolled-back schema/identity, verifies old writer ink and
    notebook identity, then retries installation and writes successfully.
 
@@ -186,3 +191,25 @@ Installed D26 APK SHA-256 values, verified against the local pair:
 
 The debug certificate is unchanged. The normal app's APK path and main library-file hash remain
 unchanged from D23. This does not claim a live WAL snapshot or signed public APK qualification.
+
+## D27: explicit enrollment and private ownership
+
+[Mechanics and remaining gates](../../design-plans/2026-09-12-forestread-android-enrollment.md).
+The final Go run passes all **nine** standard phases in `/tmp/forestread-device-UfxVKR/report.json`.
+Enrollment uses the actual Android owner/vault with injected network responses, not production UB.
+The new phases prove pending enrollment survives process restart, confirmation reuses the same
+credential, ink can save during the request and a DB copy without private ownership cannot mint
+credentials or send an enrollment request. The copied working library is not a recovery archive viewer.
+
+Local checks pass **381 app + 287 format JVM tests**, four host-runner tests and real local HTTPS
+socket tests. The final source-matched headless regression report is
+`/tmp/forestread-stage-2-wputU5/report.json` (186 Kotlin tests, 61 process scenarios, eight books).
+
+Installed D27 APK SHA-256 values, verified against the local pair:
+
+- Qualification app: `54f711681598b758861a6dab8160a10d87fd70dc138b51c690fbc9a43cd7fab3`
+- Instrumentation: `46e0535ea6ba19a9faa6bce0eeeab3c566221188944bfe9805886e1d5f08e576`
+
+The same debug certificate is retained. The normal app path and original main library-file hash
+remain unchanged. No private-vault reset was performed; old v1 experimental records are preserved
+but are not automatically promoted into v2 ownership receipts. Use fresh qualification run IDs.

@@ -23,45 +23,99 @@ class ReplicaCredential internal constructor(val token: String,val enrolled: Boo
     override fun toString()="ReplicaCredential(enrolled=$enrolled, token=<redacted>)"
 }
 
-/** A single private, durable record; never a column in the shared library/Settings.
- * Missing reads stay missing. Creation is an explicit enrollment preparation,
- * not something opening a library, retrying sync, or restoring a backup may do.
- * This is storage only: production enrollment/recovery authorization is still gated.
+enum class ReplicaRegistrationState { LOCAL_ONLY, PREPARED, ENROLLED }
+class ReplicaScopeMismatch : IllegalStateException("Replica is bound to a different enrollment target")
+
+/** One private atomic record per locally created library. Ownership is recorded
+ * before the new shared identity commits; finding an existing/copied DB never claims it.
+ * Target, token and enrollment state change in a single durable write. No reset,
+ * implicit adoption or replacement credential on missing/corrupt private storage.
  */
 class ReplicaCredentialsStore(private val backend: KeyValueBackend) {
-    fun read(scope: ReplicaCredentialScope): ReplicaCredential? = synchronized(backend) { readLocked(scope) }
+    private class Record(val library: String, val replica: String,
+        val scope: ReplicaCredentialScope?, val credential: ReplicaCredential?)
 
-    fun prepareEnrollment(scope: ReplicaCredentialScope): ReplicaCredential = synchronized(backend) {
-        val record=readLocked(scope) ?: ReplicaCredential("fn-device-v1_"+
-            SecureRandom().generateSeed(32).joinToString("") { "%02x".format(it) },false)
-        save(scope,record) // Always establish durability before a caller can send enrollment.
-        record
+    /** Called only inside installation of a NEW library identity, never during reopen. */
+    internal fun claimLocal(library: String, replica: String) = synchronized(backend.strictLock) {
+        require(library.isNotBlank() && replica.isNotBlank())
+        check(load(library) == null) { "Private library ownership already exists" }
+        save(Record(library, replica, null, null))
     }
 
-    fun markEnrolled(scope: ReplicaCredentialScope,expectedTokenHash: String): ReplicaCredential = synchronized(backend) {
-        val old=checkNotNull(readLocked(scope)) { "Private replica credential missing; recovery required" }
+    fun registration(library: String, replica: String): ReplicaRegistrationState? = synchronized(backend.strictLock) {
+        val record = load(library) ?: return@synchronized null
+        check(record.replica == replica) { "Private replica identity differs; recovery required" }
+        when {
+            record.credential == null -> ReplicaRegistrationState.LOCAL_ONLY
+            record.credential.enrolled -> ReplicaRegistrationState.ENROLLED
+            else -> ReplicaRegistrationState.PREPARED
+        }
+    }
+
+    fun read(scope: ReplicaCredentialScope): ReplicaCredential? = synchronized(backend.strictLock) {
+        val record = load(scope.library) ?: return@synchronized null
+        checkTarget(record, scope)
+        record.credential
+    }
+
+    fun prepareEnrollment(scope: ReplicaCredentialScope): ReplicaCredential = synchronized(backend.strictLock) {
+        val old = checkNotNull(load(scope.library)) { "Private library ownership missing; recovery required" }
+        checkTarget(old, scope)
+        val credential = old.credential ?: ReplicaCredential("fn-device-v1_" +
+            ByteArray(32).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }, false)
+        save(Record(old.library, old.replica, scope, credential))
+        credential // Durability precedes every network attempt, including retry.
+    }
+
+    fun markEnrolled(scope: ReplicaCredentialScope,expectedTokenHash: String): ReplicaCredential = synchronized(backend.strictLock) {
+        val record=checkNotNull(load(scope.library)) { "Private replica credential missing; recovery required" }
+        checkTarget(record, scope)
+        val old=checkNotNull(record.credential) { "Private replica credential missing; recovery required" }
         check(old.tokenHash==expectedTokenHash) { "Enrollment credential changed" }
-        ReplicaCredential(old.token,true).also { save(scope,it) }
+        ReplicaCredential(old.token,true).also { save(Record(record.library,record.replica,scope,it)) }
     }
 
-    private fun key(scope: ReplicaCredentialScope)="replica.v1."+digest(scope.json().toString())
-    private fun readLocked(scope: ReplicaCredentialScope): ReplicaCredential? {
-        val raw=backend.readStrict(key(scope)) ?: return null
+    private fun checkTarget(record: Record, scope: ReplicaCredentialScope) {
+        check(record.replica == scope.replica) { "Private replica identity differs; recovery required" }
+        if (record.scope != null && record.scope != scope) throw ReplicaScopeMismatch()
+    }
+
+    // v1 belonged only to disposable D22–D26 experiments. It is intentionally not
+    // promoted into ownership evidence for a database merely found on this device.
+    private fun key(library: String)="replica.registration.v2."+digest(library)
+    private fun load(library: String): Record? {
+        val raw=backend.readStrict(key(library)) ?: return null
         return try {
             val value=Json.parseToJsonElement(raw).jsonObject
-            require(value.keys==setOf("v","scope","token","enrolled"))
-            require(value.getValue("v").jsonPrimitive.int==1 && value["scope"]==scope.json())
-            val token=value.getValue("token").jsonPrimitive.content
-            require(token.matches(Regex("fn-device-v1_[0-9a-f]{64}")))
-            ReplicaCredential(token,value.getValue("enrolled").jsonPrimitive.boolean)
+            require(value.keys==setOf("v","library","replica","scope","token","enrolled"))
+            require(value["v"]==JsonPrimitive(2) && value.getValue("library").jsonPrimitive.content==library)
+            val replica=value.getValue("replica").jsonPrimitive.content.also { require(it.isNotBlank()) }
+            require(!value.getValue("enrolled").jsonPrimitive.isString)
+            val enrolled=value.getValue("enrolled").jsonPrimitive.boolean
+            if(value["scope"]==JsonNull) {
+                require(value["token"]==JsonNull && !enrolled)
+                Record(library,replica,null,null)
+            } else {
+                val s=value.getValue("scope").jsonObject
+                require(s.keys==setOf("server","account","library","replica"))
+                val scope=ReplicaCredentialScope(s.getValue("server").jsonPrimitive.content,
+                    s.getValue("account").jsonPrimitive.content, library,replica)
+                require(s==scope.json())
+                val token=value.getValue("token").jsonPrimitive.content
+                require(token.matches(Regex("fn-device-v1_[0-9a-f]{64}")))
+                Record(library,replica,scope,ReplicaCredential(token,enrolled))
+            }
         } catch (_: Exception) { throw IllegalStateException("Invalid private replica record; recovery required") }
     }
 
-    private fun save(scope: ReplicaCredentialScope,record: ReplicaCredential) {
+    private fun save(record: Record) {
         val value=buildJsonObject {
-            put("v",1);put("scope",scope.json());put("token",record.token);put("enrolled",record.enrolled)
+            put("v",2);put("library",record.library);put("replica",record.replica)
+            put("scope",record.scope?.json() ?: JsonNull)
+            put("token",record.credential?.token?.let(::JsonPrimitive) ?: JsonNull)
+            put("enrolled",record.credential?.enrolled ?: false)
         }
-        check(backend.putDurably(key(scope),value.toString())) { "Private replica credential was not durably saved" }
+        check(backend.putDurably(key(record.library),value.toString())) { "Private replica record was not durably saved" }
     }
 }
 

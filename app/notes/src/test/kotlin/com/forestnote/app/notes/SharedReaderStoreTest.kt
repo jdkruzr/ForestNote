@@ -42,6 +42,28 @@ class SharedReaderStoreTest {
         assertTrue(rows(file,"SELECT name FROM sqlite_master WHERE name LIKE 'reader_%' OR name='forestnote_library_identity'").isEmpty())
     }
 
+    @Test fun privateOwnershipSaveFailureRollsBackSharedInstallation() {
+        val file=File(temp.root,"private-failure.db")
+        val privateBackend=object:com.forestnote.app.notes.caldav.KeyValueBackend {
+            override fun getString(key:String):String?=null
+            override fun putString(key:String,value:String):Unit=error("Durable writes only")
+            override fun remove(key:String):Unit=error("No deletion")
+            override fun readStrict(key:String):String?=null
+            override fun putDurably(key:String,value:String)=false
+        }
+        val store=NotebookStore(repoProvider={
+            NotebookRepository.forTesting(JdbcSqliteDriver("jdbc:sqlite:${file.absolutePath}"))
+        },executor=Executors.newSingleThreadExecutor(),poster={it.run()},qualifyReaderStorage=true,
+            secureCredentials=com.forestnote.app.notes.caldav.SecureCredentialsStore(privateBackend))
+        val opened=java.util.concurrent.CompletableFuture<Result<Unit>>()
+        try {
+            store.openingResult {opened.complete(it)}
+            assertTrue(opened.get(5,java.util.concurrent.TimeUnit.SECONDS).isFailure)
+        } finally {store.shutdown()}
+        assertTrue(rows(file,"SELECT name FROM sqlite_master WHERE name LIKE 'reader_%' OR name='forestnote_library_identity'").isEmpty())
+        assertEquals(listOf(listOf("1")),rows(file,"SELECT COUNT(*) FROM notebook"))
+    }
+
     @Test fun sharedWriterKeepsOneOfflineSequenceAndStableIdentityAcrossReopen()=runBlocking<Unit> {
         val file=File(temp.root,"mixed.db")
         val first=open(file)

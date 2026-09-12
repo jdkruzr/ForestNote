@@ -1,6 +1,29 @@
-# Stage 2 shared-library foundation (through D26)
+# Stage 2 shared-library foundation (through D27)
 
 Current status and remaining integration work: [2026-09-12 plan review](../../design-plans/2026-09-12-forestread-progress-review.md).
+
+## D27: Android enrollment and recovery gating
+
+[D27](../../design-plans/2026-09-12-forestread-android-enrollment.md) binds the live Android owner
+to a single durable private ownership/target/credential record and an explicit-approval enrollment
+coordinator. Missing/corrupt private state does not create replacement authority; response loss
+reuses the original token and stale owners cannot confirm late responses. The native HTTPS adapter
+rejects untrusted TLS and redirects. Strict credential transactions and uncertain-write fencing now
+share process lifetime across recreated backends, matching Android's shared prefs cache.
+
+Verified: **381 app + 287 format JVM tests**, zero failures/skips, four host-runner tests, main FN
+debug and qualification APK builds. The Go passes all **nine** standard phases in
+`/tmp/forestread-device-UfxVKR/report.json`; new enrollment phases use the real Android vault with
+injected transport results. Local JVM socket tests independently qualify the real HTTPS adapter.
+The main app/library and device trust store are unchanged; no production UB request or activation.
+
+`/tmp/forestread-stage-2-wputU5/report.json` passes 186 headless Kotlin tests, all 61 process scenarios,
+Go race checks and eight byte-identical original books. All 175 recorded source hashes match.
+Next is the actual Android read-only recovery snapshot/fresh-library workflow and explicit setup
+UI, followed by disposable-host TLS qualification and the remaining upgrade/mixed-transport gates.
+This checkpoint does not implement a recovery archive viewer, uncertain-edit merge, key rotation,
+automatic enrollment or production mixed sync. The earlier v1 private records were test-only and
+remain preserved, not silently adopted as local ownership.
 
 ## D23–D26: installed-device storage and lifecycle qualification
 

@@ -148,6 +148,13 @@ the headless result does not activate production integration.
    Next: enrollment/recovery orchestration and known-prior-registry upgrade wiring, then mixed
    transport and reader UI. Disk-full, historical restore and the public signed upgrade remain
    qualification gates; the normal library and server have not been used as test fixtures.
+   **D27 enrollment orchestration:** [private ownership and native enrollment](2026-09-12-forestread-android-enrollment.md)
+   ties explicit approval to the live Android owner and one durable private registration record.
+   Missing ownership/credentials require recovery; target changes, redirects and implicit legacy
+   adoption are refused. Network waits do not hold the writer, and a stale result cannot confirm
+   a replaced owner. Production activation remains off. Next is the Android read-only recovery
+   snapshot/fresh-library workflow and explicit setup UI, then disposable-host TLS enrollment
+   qualification and known-prior-registry/mixed-transport activation.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

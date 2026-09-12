@@ -15,6 +15,8 @@ data class SyncCredentials(
  * ([EncryptedPrefsCredentialsBackend]) wraps `EncryptedSharedPreferences`.
  */
 interface KeyValueBackend {
+    /** Shared by every facade over the same private record store/cache. */
+    val strictLock: Any get() = this
     /** Enrollment must distinguish unavailable storage from an absent identity. */
     fun readStrict(key: String): String? = error("Strict credential reads unavailable")
     /** Success means durable, not merely queued. Called on the DB/background owner. */

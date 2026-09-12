@@ -66,7 +66,11 @@ identity cannot be inferred; clone/retention/recovery policy remains a separate 
 
 ## Remaining activation work
 
-Android must bind this to `SecureCredentialsStore`, the actual storage owner and explicit sync setup,
+Follow-up: [D27](2026-09-12-forestread-android-enrollment.md) now supplies the gated Android
+private ownership record, live-owner coordinator and native HTTPS adapter. It does not activate
+Settings/setup, production network sync, legacy-site adoption or the recovery archive workflow.
+
+Production still must connect the gated coordinator to explicit sync setup and recovery UI,
 off the main thread. Pending credential writes must be atomic; incomplete/lost credentials require
 visible recovery, never a silent new author or a silent Basic fallback. Account/server/library
 scoping must be enforced by the host, not inferred from a copied database or device display name.
