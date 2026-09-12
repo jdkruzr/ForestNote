@@ -7,8 +7,8 @@ name: Release
 # ForestNote's build pulls two sibling projects that live outside this repo during local dev:
 #   - vw_ink_sdk_unofficial — a Gradle *composite build* (`includeBuild("../vw_ink_sdk_unofficial")`),
 #     so it just needs its source checked out as a sibling of the ForestNote checkout.
-#   - RhizomeSync (io.rhizome:*) — consumed as a binary from `mavenLocal()`, so we check it out and
-#     `publishToMavenLocal` before building ForestNote.
+#   - RhizomeSync (io.rhizome:*) — another source composite, verified against
+#     gradle/rhizome-integration-revision.txt before configuration can succeed.
 # Both are public repos, so the default token can clone them. To keep the sibling layout the
 # `includeBuild("../…")` path expects, every repo is checked out into a subdirectory of the workspace.
 on:
@@ -42,16 +42,14 @@ jobs:
           ref: v0.2.0
           path: vw_ink_sdk_unofficial
 
-      # PINNED to a tag on purpose. This checkout is `publishToMavenLocal`-ed and ForestNote resolves
-      # `io.rhizome:*` against it, so an unpinned default-branch checkout would mean a signed release
-      # silently bakes in whatever rhizome main happened to be at build time — for the sync core,
-      # that is the one component where "which code shipped?" must stay answerable. Keep this ref in
-      # lockstep with the io.rhizome version in gradle/libs.versions.toml; bump both together.
+      # Source dependency: keep this exact ref in lockstep with
+      # gradle/rhizome-integration-revision.txt. Never publish integration code
+      # under an existing versioned Maven coordinate.
       - name: Checkout RhizomeSync
         uses: actions/checkout@v4
         with:
           repository: jdkruzr/rhizome
-          ref: v0.8.2
+          ref: 5b05030aabc6e14f38575a867d9b0cac3b50bc13
           path: rhizome
 
       # JDK 21: supported by AGP 8.7, Gradle 9.1, and Kotlin 2.0.21 (ForestNote) + 2.2.0 (rhizome).
@@ -72,10 +70,8 @@ jobs:
       - name: Install SDK platform + build-tools
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      # RhizomeSync is consumed from mavenLocal (its Kotlin client lives under client-kotlin/).
-      - name: Publish RhizomeSync to mavenLocal
-        working-directory: rhizome/client-kotlin
-        run: ./gradlew publishToMavenLocal --no-daemon --stacktrace
+      # Android settings verifies this source pin and uses a composite build;
+      # unpublished integration code must not replace versioned Maven artifacts.
 
       - name: Decode release keystore
         env:

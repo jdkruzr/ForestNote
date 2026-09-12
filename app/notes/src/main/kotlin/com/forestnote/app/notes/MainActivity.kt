@@ -1787,10 +1787,12 @@ class MainActivity : Activity() {
                 caldavDrainer.pause()
                 caldavNetworkMonitor.stop()
                 backend.setInputSuspended(true)
+                // Even a timed-out close leaves this Activity unusable. Reopen through
+                // the ordered owner; never install a replacement after a failed barrier.
+                storeClosedForRestore = true
                 withContext(Dispatchers.IO) {
                     store.shutdown()
                 }
-                storeClosedForRestore = true
                 withContext(Dispatchers.IO) { installRestoredDatabase(restored) }
             }.onSuccess {
                 restartAfterRestore()
@@ -2475,6 +2477,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        if (::store.isInitialized) store.pauseReaderWork()
         // A successful restore closes the store before launching a clean replacement task. Android
         // then pauses this outgoing Activity as usual; skip every persistence trigger in that one
         // lifecycle pass, because its database executor no longer exists.
@@ -2576,6 +2579,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (::store.isInitialized) store.resumeReaderWork()
         // If the user just granted All-Files-Access, re-open the datastore at /sdcard (via recreate)
         // and skip the rest — this Activity instance is being torn down, so don't spin up sync/drainer
         // work on it (the store is about to shut down).
@@ -2671,10 +2675,12 @@ class MainActivity : Activity() {
             syncScope.cancel()
             recognizer.close()
             backend.release()
-            // Drains pending saves, then closes the driver as its last task.
-            if (!storeClosedForRestore) store.shutdown()
         } catch (_: Throwable) {
             // Ignore cleanup errors
+        } finally {
+            // The application-wide owner prevents recreation from racing this drain.
+            // Never wait for SQLite or worker cancellation on Android's main thread.
+            if (::store.isInitialized && !storeClosedForRestore) store.shutdownAsync()
         }
     }
 

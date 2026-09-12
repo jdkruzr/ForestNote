@@ -3,8 +3,7 @@
 [← Documentation index](../README.md)
 
 ForestNote is a multi-repository build. A fresh checkout of this repository alone is not enough:
-the Viwoods ink library is a Gradle composite-build sibling, and RhizomeSync is resolved from the
-local Maven repository.
+the Viwoods ink library and RhizomeSync are Gradle composite-build siblings.
 
 ## Toolchain
 
@@ -27,31 +26,42 @@ src/
 └── rhizome/
 ```
 
-For a build matching ForestNote 2.0, use the dependency versions pinned by the release workflow:
+For this integration branch, use the dependency revisions pinned by the release workflow:
 
 ```sh
 cd src
 git clone https://github.com/jdkruzr/ForestNote.git
 git clone --branch v0.2.0 https://github.com/jdkruzr/vw_ink_sdk_unofficial.git
-git clone --branch v0.8.2 https://github.com/jdkruzr/rhizome.git
+git clone https://github.com/jdkruzr/rhizome.git
+git -C rhizome checkout 5b05030aabc6e14f38575a867d9b0cac3b50bc13
 ```
 
 The sibling directory name `vw_ink_sdk_unofficial` is significant because `settings.gradle.kts`
 includes that exact relative path. UltraBridge is not required to compile or use ForestNote; it is
 only needed to exercise optional network sync.
 
-## Publish Rhizome locally
+## Verify the Rhizome source pin
 
-Before the first ForestNote build—or after changing the Rhizome checkout—publish its Kotlin client
-artifacts:
+The Android build requires a clean Rhizome checkout at the exact revision recorded in
+`gradle/rhizome-integration-revision.txt`. The source composite substitutes all `io.rhizome:*`
+dependencies; the old catalog version is not the source version used on this branch.
+No `publishToMavenLocal` step is needed, and integration code must not overwrite released artifacts.
 
 ```sh
-cd src/rhizome/client-kotlin
-./gradlew publishToMavenLocal
+git -C src/rhizome rev-parse HEAD
+git -C src/rhizome status --short
 ```
 
-Keep the Rhizome tag in lockstep with `rhizome` in `gradle/libs.versions.toml` and the checkout in
-`.github/workflows/release.yml`.
+Keep the source-pin file and `.github/workflows/release.yml` checkout in lockstep.
+Preserve any local Rhizome work before arranging a matching checkout; the build will refuse a
+mismatch rather than change or clean that repository for you. The historical ForestNote 2.0
+release used Rhizome v0.8.2 and Maven-local artifacts; use its tagged build guide for that release.
+
+`core/reader/android.gradle.kts` packages only production reader sources into Android. Its separate
+standalone `build.gradle.kts` remains the JVM cross-repository harness (including JDBC fixtures);
+those fixture sources are not packaged in an APK. Reader activation in the real app remains gated.
+Run the Android build and the standalone cross-repository harness sequentially: both compile
+the same Rhizome sibling, and concurrent `--rerun-tasks` runs can replace each other's outputs.
 
 ## Build and test
 
@@ -75,7 +85,7 @@ checkout rather than downloaded as a binary.
 
 Official APKs are built by `.github/workflows/release.yml`. A `v*` tag creates a signed GitHub
 Release; a manual workflow run produces a signed candidate artifact without publishing a release.
-The workflow pins the Viwoods and Rhizome source tags so the shipped dependency code remains
+The workflow pins the Viwoods tag and Rhizome source commit so the shipped dependency code remains
 reproducible.
 
 Release signing uses these GitHub Actions secrets:

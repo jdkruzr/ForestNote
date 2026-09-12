@@ -14,12 +14,12 @@ completion of the main-app integration or authorization to activate production m
 |---|---|---|
 | Stage 1 domain/sync contracts | Approved record, ownership, identity, asset and reference decisions; 47 catalog definitions validate. | Executable adapters for those catalog actions/assertions. Passing regressions are not 47 completed acceptance cases. |
 | Shared Rhizome transport | D14 now joins real reader rows, assets and ordinary notes through the actual required-assets view/coordinator and combined registry, including independently killed clients/UB and byte verification. | Production lifecycle, device identity and migration qualification; this remains a disposable headless fixture. |
-| Reader repositories and import | Standalone JVM `core/reader`: transactional commands, sessions, offline provenance, lifecycle, import staging and EPUB/MOBI/KF8/HUFF validation. | Bind to FN's actual shared storage owner and Android lifecycle; import UI and realistic migration/clone/reset qualification. |
+| Reader repositories and import | `core/reader`: transactional commands, sessions, offline provenance, lifecycle, import staging and EPUB/MOBI/KF8/HUFF validation. D22 adds the Android module and gated shared-owner/local-inbox attachment. | Device qualification, production activation/enrollment/upgrade wiring and import UI; the shipped factory still leaves reader storage off. |
 | Deterministic annotation state | Kotlin/Go contracts, original provenance, 68 projection cases × 12 orders, all portable brushes. | Integrated-device recovery/concurrency/reflow acceptance; new storage code is not yet driving the Reader Lab UI. |
 | UB receipt and materialization | Candidate notedb mirrors, atomic relay/ACK, bounded snapshots, restart-safe worker and durable change journal. | Production source lifecycle/configuration and operational migration/recovery gates. |
 | Jobs and reader search — D13 | Durable paged fan-out, current fingerprint-matched recognition alternatives, title/quote FTS, stale-result suppression, authenticated fixture HTTP and restart tests. | Production search federation/UI, derived cache/queue maintenance, and any later rendering/embedding pipeline. No OCR re-authoring or automatic server OCR was added. |
 | Authentication and rollout | D16 adds persistent credential-to-site enrollment, explicit legacy adoption and revocation on the inactive host path, with actual Kotlin process-loss/retry tests. D15 qualifies incompatible-server preservation and consistent fixture snapshots. | Android private-vault/setup and production enrollment wiring; rotation/lost-key recovery; actual mixed migrations, old-client upgrades/schema re-pull, clone/reset and historical restore of data or old credentials. Shared account Basic auth alone is not device identity. |
-| Main FN UX and devices | Reader Lab prototypes and earlier device work remain available. Root Gradle includes Reader Lab, but not the standalone reader storage module; writer registry/controller remain unchanged. | Reader/writer shared DB/UI integration, queued main-FN Penu cleanup, certificate-matched installation and Mini↔UB↔Go qualification. No device testing in this review. |
+| Main FN UX and devices | Reader Lab prototypes and earlier device work remain available. D22 includes reader storage in root Android builds, with an explicitly gated combined adapter; ordinary production sync remains writer-only. | Reader/writer UI integration, queued main-FN Penu cleanup, certificate-matched installation and Mini↔UB↔Go qualification. No device testing in this review. |
 | Cross-document references | Schemas/repositories preserve opaque selectors and directed edges. | Anchor resolver, ID-preserving move audit, navigation/backlinks/UI. Do not treat stored selectors as already resolved links. |
 
 ## Verification this slice
@@ -125,6 +125,29 @@ the headless result does not activate production integration.
 3. Wire repositories/coordinator/workers into FN's storage owner and lifecycle, then reuse the
    Reader Lab UX in the main app and apply the queued shared Penu cleanup. Incoming sync must not
    reflow active handwriting or navigate the reader.
+   **D22 Android foundation:** [shared-owner boundary and remaining gates](2026-09-12-forestread-android-foundation.md)
+   adds the Android reader module, exact Rhizome source pin, transactionally attached shared
+   adapter/executor, lifecycle-owned local inbox worker and durable private credential storage.
+   Production activation remains off. Next is a disposable-device qualification entry point,
+   then real enrollment/recovery and known-prior-registry upgrade wiring before mixed sync/UI.
+   **D23 device entry point:** [isolated APK pair and runner](../test-plans/forestread-device/README.md)
+   provides actual Android SQLite/Keystore/restart and killed-install tests in a separate package.
+   The Go 6 II on Android 11 passes all five phases (`/tmp/forestread-device-MRwbEC/report.json`),
+   including credential persistence across process restart and killed-transaction rollback/retry.
+   Installed test APK hashes match the local pair; the normal FN APK path and main library-file
+   hash are unchanged. Production activation remains off. Physical sleep/wake and in-place
+   older-APK upgrades are later gates.
+   **D24–D26 device lifecycle and upgrade:** the same device passes real Activity display
+   sleep/wake, recreation and seven standard phases (`/tmp/forestread-device-5DXWhc/report.json`).
+   [D26's application-owned close queue](2026-09-12-forestread-android-owner-handoff.md) removes
+   the database wait from `onDestroy`, prevents overlapping replacement owners and preserves
+   accepted ink through delayed closure; its measured close request is 3 ms with no hook disk I/O.
+   A separately recompiled historical v2.0 source APK seeds offline/joined synthetic libraries;
+   in-place update preserves ink, provenance and pending history (`/tmp/forestread-device-APsoeu/report.json`).
+   That is not an unmodified public/release-signed upgrade. Production mixed activation remains off.
+   Next: enrollment/recovery orchestration and known-prior-registry upgrade wiring, then mixed
+   transport and reader UI. Disk-full, historical restore and the public signed upgrade remain
+   qualification gates; the normal library and server have not been used as test fixtures.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

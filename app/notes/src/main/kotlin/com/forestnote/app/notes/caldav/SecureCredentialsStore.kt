@@ -15,6 +15,10 @@ data class SyncCredentials(
  * ([EncryptedPrefsCredentialsBackend]) wraps `EncryptedSharedPreferences`.
  */
 interface KeyValueBackend {
+    /** Enrollment must distinguish unavailable storage from an absent identity. */
+    fun readStrict(key: String): String? = error("Strict credential reads unavailable")
+    /** Success means durable, not merely queued. Called on the DB/background owner. */
+    fun putDurably(key: String, value: String): Boolean = error("Durable credential writes unavailable")
     /** Returns the stored value, or `null` if the key has never been written. */
     fun getString(key: String): String?
 
@@ -57,6 +61,8 @@ data class SettingsCredsView(
  *   - `setSyncCreds(null)` / `setCaldavCreds(null)` remove the underlying keys
  */
 class SecureCredentialsStore(private val backend: KeyValueBackend) {
+
+    val replicas = ReplicaCredentialsStore(backend)
 
     /**
      * Pre-resolve the backend's deferred initialization off the main thread. See

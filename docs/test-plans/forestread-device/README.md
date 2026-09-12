@@ -1,0 +1,188 @@
+# D23–D26: disposable Android storage qualification
+
+Returns to [D22's hardware handoff](../../design-plans/2026-09-12-forestread-android-foundation.md)
+and [the larger plan, item 3](../../design-plans/2026-09-12-forestread-progress-review.md#recommended-next-order).
+
+## Isolation and scope
+
+The `qualification` build is a **separate application**, `com.forestnote.qualification`, plus
+`com.forestnote.qualification.test`. It is debug-signed and installs beside the real ForestNote.
+Its editor/deep-link Activity is disabled, backup is disabled, and network/external-storage
+permissions are removed. No all-files-access grant is needed. Instrumentation is selected only
+with `-PreaderQualification=true`; it refuses any other target package at runtime.
+
+`NotebookRepository.openIsolatedQualification` also requires that exact debuggable package,
+accepts only a restricted run ID (not a path), and bypasses `StorageLocation` completely.
+Files live in that package's private databases directory as `reader-qualification-RUN.db`.
+The production helper, migration callback, SQLDelight driver and Rhizome SQLite handle are shared,
+not reimplemented by a test-only database adapter. Secrets use the production encrypted-prefs
+backend under the isolated package's own UID/Keystore. Nothing contacts UB.
+
+No automatic reset, uninstall, data clear or deletion of old evidence. Use a new run ID for each
+complete run. Never install an ordinary debug `com.forestnote` APK over the user's installed app
+to run these tests; this APK pair exists specifically to avoid that signing/data boundary.
+
+## Build and install
+
+```sh
+./gradlew -PreaderQualification=true :app:notes:assembleQualification :app:notes:assembleQualificationAndroidTest
+node --test docs/test-plans/forestread-device/run.test.mjs
+```
+
+Artifacts:
+
+- `app/notes/build/outputs/apk/qualification/notes-qualification.apk`
+- `app/notes/build/outputs/apk/androidTest/qualification/notes-qualification-androidTest.apk`
+
+Before installation inspect each APK's package ID, certificate and merged permissions. If a
+qualification package already exists, verify its signature before updating; do not uninstall to
+resolve a mismatch. Install both packages using the selected device's normal ADB or root package
+session route. The runner intentionally does **not** install software.
+
+For ADB, after the artifacts are verified (replace `SERIAL` with the selected tablet):
+
+```sh
+adb -s SERIAL install -r app/notes/build/outputs/apk/qualification/notes-qualification.apk
+adb -s SERIAL install -r app/notes/build/outputs/apk/androidTest/qualification/notes-qualification-androidTest.apk
+node docs/test-plans/forestread-device/run.mjs --serial SERIAL
+```
+
+For Viwoods after installing the same APK pair using root package sessions:
+
+```sh
+node docs/test-plans/forestread-device/run.mjs --ssh USER@DEVICE --port 8022
+```
+
+SSH uses existing key/host-key configuration and `su -c` for Android commands. It does not change
+SELinux or device security settings. Every force-stop targets only the isolated package.
+
+## What runs
+
+1. `smoke`: real Android shared-owner writes, contiguous offline sequence, received foreign
+   provenance/shared clock, resume-before-open, pause/resume, legacy-sync refusal and reopen.
+2. `sleep-wake`: launch a real isolated Activity, send display sleep/wake three times, require
+   actual pause/resume callbacks and local-worker state changes, then recreate the Activity.
+   Check stable identity/history/credential hash and StrictMode disk violations around the hooks.
+   Refuse secure keyguard rather than bypassing it. USB display sleep is **not** deep Doze.
+3. `handoff`: stall the old writer, accept a final synthetic stroke, destroy a real Activity and
+   request asynchronous close. Create its replacement through the production ownership factory
+   on the main thread; prove its opener waits, then release the stall and verify ink/history and
+   identity. Measure the close request and check its StrictMode disk-I/O count.
+4. `seed`: synthetic ink and reader state plus a durable private enrollment credential. Stores
+   expected library/replica identity, credential **hash** and history in private test evidence.
+5. Force-stop/restart, then `verify`: reads (does not recreate) that credential and checks unchanged
+   identity/history/data in a genuinely different process. The raw credential is never printed.
+6. `crash-install`: save existing synthetic writer ink, enter the real shared-install transaction,
+   create reader/asset state, durably mark the exact crash boundary outside the database, then
+   kill **this isolated process** before commit. An instrumentation crash here is expected.
+7. `verify-crash`: requires the crash-boundary marker and a different process; allows SQLite hot
+   journal recovery, checks integrity and rolled-back schema/identity, verifies old writer ink and
+   notebook identity, then retries installation and writes successfully.
+
+The Node runner requires one actual passing instrumentation test in each normal phase. An
+arbitrary crash cannot count as success: the last phase must prove rollback and retry. Reports
+and per-phase output go into a new `/tmp/forestread-device-*` directory on the host. A failed run
+retains both local and on-device evidence. A successful run is **not** a device/UI integration
+signoff: it does not measure touch/pen latency, rendering, whole-Activity teardown, deep sleep,
+or the user's existing library. Historical-source upgrades are a separate phase set below.
+
+## Current verification boundary
+
+The isolated app and instrumentation APKs compile locally. **287 format + 364 app JVM tests**
+and initially **3 host-runner tests** pass. Packaged manifests confirm the isolated target, disabled editor,
+and absence of network/external-storage permissions; both APK signatures verify and match.
+The **Go 6 II / Android 11 passed all five phases** over ADB on 2026-09-12:
+`/tmp/forestread-device-MRwbEC/report.json`, run `device_1789253198652`.
+The crash phase produced `shortMsg=Process crashed`; the next process verified the armed boundary,
+rollback, preserved prior ink/notebook and successful retry. This is installed-device execution,
+not an inference from compilation. Later D24–D26 evidence is recorded below; disk-full and the
+unmodified public/release-signed APK upgrade remain follow-up qualification.
+
+Initial D23 artifact SHA-256 values (historical; later builds supersede these):
+
+- Qualification app: `d67181d13f47cb1e5c966941042f2b0b972a0aaf87e9a2c1321df132a4ef1cd4`
+- Instrumentation: `d8db75da41d8d510bbf0faaf28f472d3c7bb5ec25d7aca318b6e912a4d40e745`
+- Both debug certificate SHA-256: `e91d14f5065a1eb6cfbd42aee993b51c6cb16f7cc21d4879b0b4db1e136f9680`
+
+Both isolated packages were installed and their on-device APK hashes matched the values above.
+The normal `com.forestnote` APK path was unchanged. The existing 116,711,424-byte
+`/sdcard/ForestNote/default.forestnote` had the same SHA-256 before and after:
+`e9d4b69ed4a378730ef6d84431db48408da13a1cf49acbc54624a095bd29c549`.
+This hashes the main database file, not a separately captured live WAL snapshot. No ordinary FN
+open/upgrade, original-library write, uninstall, data clear, server deployment or new commit/push
+was performed. The isolated packages and synthetic evidence remain installed for follow-up.
+The prior headless D22 report remains historical evidence; it was not rerun for this Android-only
+entry point.
+
+## D24: real Activity display sleep/wake
+
+The Go 6 II passed all six then-current phases in `/tmp/forestread-device-dFWMZI/report.json`.
+The sleep/wake phase completed three cycles and Activity recreation with unchanged identity,
+credential hash and history, **zero lifecycle-hook disk violations**, and hook requests taking
+**0–5 ms**. This scopes the result to the measured hooks, not the whole Android lifecycle or
+vendor suspend behavior. No human pen input was required.
+
+## D25: historical v2.0 source upgrade
+
+`v2-isolation.patch` applies to the actual v2.0 commit
+`e14cf45a9ae89b5e0d50823d55254425ad53cf76`. It changes only the application/package hosting,
+private database entry point, disabled editor/permissions, and added seed instrumentation.
+The historical repository, generated schema and Rhizome 0.8.2 dependency perform the writes.
+This is a **recompiled historical-source APK**, not an unmodified public/release-signed artifact.
+
+Reproduce in a separate detached worktree, with the existing Viwoods SDK sibling available:
+
+```sh
+git worktree add --detach /EXPLICIT/TEMP/PATH/ForestNote e14cf45a9ae89b5e0d50823d55254425ad53cf76
+git -C /EXPLICIT/TEMP/PATH/ForestNote apply /home/jtd/ForestNote/docs/test-plans/forestread-device/v2-isolation.patch
+```
+
+Provide the Android SDK location in that worktree's usual environment. Build its
+`:app:notes:assembleDebug` and `:app:notes:assembleDebugAndroidTest` **sequentially with current
+builds**, not concurrently (shared composite SDK outputs). Verify both package IDs are the
+isolated ones and the certificates match the installed qualification pair, then install with `-r`.
+Seed a fresh run; require `OK (1 test)` rather than trusting ADB's zero exit status:
+
+```sh
+adb -s SERIAL shell am instrument -w -r -e class com.forestnote.app.notes.LegacyWriterSeedTest -e runId FRESH_ID com.forestnote.qualification.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+Rebuild and install the **current qualification pair** with `-r`, retaining the private data.
+Then run:
+
+```sh
+node docs/test-plans/forestread-device/run.mjs --serial SERIAL --phase-set upgrade --run-id FRESH_ID
+```
+
+On 2026-09-12, `upgrade_v2_d25b` passed on the Go:
+`/tmp/forestread-device-tkS3WC/report.json`. Both offline and already-sync-enabled synthetic
+libraries preserve notebook/page IDs, exact stroke rows including binary data, pending outbox,
+row metadata and schema version. The joined fixture keeps its site/cursor, refuses unqualified
+mixed activation, and appends the next sequence above its received future timestamp. The offline
+fixture attaches reader storage without inventing history for its old unsynced notes.
+No network request or real-library upgrade occurs.
+
+The first seed (`upgrade_v2_d25a`) failed in the evidence helper because `Cursor.getString` cannot
+read a BLOB. The comparison now uses exact Base64 for BLOB values; the failed fixture was retained,
+and the successful run used a new ID. The reproduction patch passes reverse-apply validation
+against `/tmp/forestread-v2-upgrade-DIqHZR/ForestNote`. Nothing from that worktree is a release build.
+
+## D26: ordered asynchronous teardown
+
+[Owner mechanics and limits](../../design-plans/2026-09-12-forestread-android-owner-handoff.md).
+The final Go run passes all seven standard phases in `/tmp/forestread-device-5DXWhc/report.json`.
+The measured Activity close request takes **3 ms**, with no hook disk violations; the replacement
+waits for the deliberately stalled writer and preserves its accepted final stroke, history and
+identity. Three sleep/wake cycles and recreation also pass (0–1 ms hook requests).
+Local checks pass **368 app + 287 format JVM tests** and **4 host-runner tests**. The final pair also
+passes the historical-source upgrade (`upgrade_v2_d26`) in `/tmp/forestread-device-APsoeu/report.json`.
+The earlier seven-phase run `Esn7pN` passed before the final failed-initialization-cleanup regression
+was added; its 1 ms close timing is retained in that report, not substituted for the final measurement.
+
+Installed D26 APK SHA-256 values, verified against the local pair:
+
+- Qualification app: `7fbec08284bd8d34aad73780a125652cf2b61c14eeb642295342e53b0563818e`
+- Instrumentation: `4831d0e4e436d1286eb89e562eadc4a9700263b8f57700326ad60e8f59a3120c`
+
+The debug certificate is unchanged. The normal app's APK path and main library-file hash remain
+unchanged from D23. This does not claim a live WAL snapshot or signed public APK qualification.

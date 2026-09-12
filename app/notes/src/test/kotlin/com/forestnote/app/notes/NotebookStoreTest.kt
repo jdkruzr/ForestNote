@@ -31,8 +31,8 @@ import kotlin.test.assertTrue
  *
  * Pure JVM (no Robolectric): a real single-thread executor proves work runs off the
  * caller thread (AC1.1), a file-backed driver proves a save drains before close
- * (AC6.1), and a hand-written fake executor proves the drain-timeout fallback to
- * shutdownNow() (AC6.2). Failure paths (AC7.4/AC8.1/AC8.2) inject a repository whose
+ * (AC6.1). Drain timeout now fails closed without interrupting accepted writes;
+ * StorageOwnerQueueTest covers that boundary. Failure paths (AC7.4/AC8.1/AC8.2) inject a repository whose
  * driver is already closed so its operations throw. No Mockito on this classpath, so
  * fakes are hand-written.
  */
@@ -215,9 +215,9 @@ class NotebookStoreTest {
         )
     }
 
-    // AC6.2: when draining exceeds the timeout, shutdownNow() is called (no hang).
+    // An executor termination report is not the driver-close boundary.
     @Test
-    fun drainTimeoutFallsBackToShutdownNow() {
+    fun completedCloseNeverForcesExecutorInterruption() {
         val fake = FakeExecutorService()
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val store = NotebookStore(
@@ -229,7 +229,7 @@ class NotebookStoreTest {
         store.shutdown()
 
         assertTrue(fake.shutdownCalled, "shutdown() should be requested first")
-        assertTrue(fake.shutdownNowCalled, "timed-out drain must fall back to shutdownNow()")
+        assertFalse(fake.shutdownNowCalled, "accepted writes must never be discarded by shutdownNow()")
     }
 
     // AC7.4: a load failure posts an empty list (canvas stays usable), no crash.

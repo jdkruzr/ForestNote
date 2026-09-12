@@ -1,6 +1,64 @@
-# Stage 2 headless shared-library foundation (through D21)
+# Stage 2 shared-library foundation (through D26)
 
 Current status and remaining integration work: [2026-09-12 plan review](../../design-plans/2026-09-12-forestread-progress-review.md).
+
+## D23–D26: installed-device storage and lifecycle qualification
+
+The [isolated device entry point](../forestread-device/README.md) supplies a separate package and
+credential sandbox, real production SQLite binding, restart and killed-install qualification.
+The final Go 6 II / Android 11 run passes **seven phases** in
+`/tmp/forestread-device-5DXWhc/report.json`: real Activity display sleep/wake and recreation,
+ordered close/open with a stalled writer and accepted final ink, durable credentials across
+process restart, and killed-install rollback/retry. Measured close request: **3 ms**, zero
+lifecycle-hook disk violations. The normal installed app and main library-file hash are unchanged.
+
+A recompiled historical **v2.0 source** APK seeds synthetic offline and sync-enabled libraries;
+in-place update to the final candidate preserves ink, pending history and provenance, and keeps
+unqualified mixed activation blocked. `/tmp/forestread-device-APsoeu/report.json` passes with
+fresh run `upgrade_v2_d26`. This is not an unmodified public/release-signed artifact upgrade.
+
+[D26's application-lifetime owner queue](../../design-plans/2026-09-12-forestread-android-owner-handoff.md)
+moves the close wait out of `onDestroy`, rejects new submissions while draining accepted writes,
+and fences successors after failed closure, including failed initialization cleanup. A synchronous
+restore barrier times out as failure without discarding accepted writes or replacing an open file.
+
+Final Android checks: **368 app + 287 format JVM tests**, zero failures/skips; **4 host tests**;
+main FN debug and isolated app/test APK builds. Final sequential cross-repository repeat:
+`/tmp/forestread-stage-2-u8ezC3/report.json` passes **186 headless Kotlin tests**, **61 process
+scenarios**, Go race checks and all **eight** original books byte-identically. All **175 recorded
+source hashes** match the final snapshot. The earlier `MCzWj1` run passed but preceded the last
+Android initialization-cleanup change and is not the final source-matched report.
+
+This checkpoint includes D22–D26 on `integration/forestread`. No production mixed activation,
+normal-library migration, live UB deployment, public artifact or release tag. Next is production
+enrollment/recovery and known-prior-registry upgrade wiring; disk-full, historical restore,
+public signed upgrade, integrated reader UI and cross-device qualification remain gates.
+
+## D22: Android build and shared-owner foundation
+
+[D22 boundary and device handoff](../../design-plans/2026-09-12-forestread-android-foundation.md)
+adds a pinned-source Android reader module, gated shared storage/adapter/executor, a foreground-owned
+local inbox worker and durable private replica-credential storage. Production factories remain
+writer-only; real enrollment/recovery/upgrade orchestration and reader UI activation are not enabled.
+
+Verified: **287 format + 364 app JVM tests**, zero failures/skips, and both FN/Reader Lab debug APK
+builds. Twelve new tests exercise rollback/confinement, shared offline ordering, foreign provenance
+and the shared clock, worker lifetime, gated reopen/transport, and strict credential persistence.
+Android runtime dependency inspection confirms source-substituted Rhizome and no SQLite JDBC driver.
+
+`/tmp/forestread-stage-2-oClS1Y/report.json` passes **186 headless Kotlin tests**, zero skips,
+all **61 process scenarios**, Go race checks and all eight original books byte-identically.
+All **175 source hashes** were rechecked against the final snapshot with no mismatches.
+An earlier green report (`a9iZ9i`) preceded the final repository test-helper correction; the repeat
+above is the matching evidence. Android and headless builds must run sequentially because they
+share Rhizome build outputs; an overlapping run caused transient compiler failures, resolved by
+the final sequential runs. Initial test failures (test-driver ownership and invalid fixture/test
+signatures) were corrected before the green checks; no tests were removed or skipped.
+
+D21 checkpoint is pushed: FN `1be41c5`, UB `023d4f5`, Rhizome unchanged at `5b05030`.
+D22 was initially local with no device execution, installation, live deployment or artifact
+publication. It is included in the D22–D26 checkpoint above; the later device evidence supersedes
+that initial hardware handoff, not its production activation gates.
 
 ## D21: single-user recovery safety
 

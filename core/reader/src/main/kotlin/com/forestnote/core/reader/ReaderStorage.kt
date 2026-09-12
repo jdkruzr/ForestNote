@@ -8,7 +8,7 @@ import java.util.Base64
 
 /** Explicit experimental storage owner. Host supplies one real, reentrant DB
  * transaction implementation and writer dispatcher, shared with writer/asset data.
- * Not wired into NotebookRepository.open or any Android migration/registry yet.
+ * Android attachment is explicitly qualified; production activation remains gated.
  */
 class ReaderStorage private constructor(
     internal val db: SqliteHandle,
@@ -32,30 +32,34 @@ class ReaderStorage private constructor(
             existingRegistry: Registry = Registry(emptyList()), clock: () -> Long = System::currentTimeMillis): ReaderStorage {
             site(actor)
             val registry = Registry(existingRegistry.tables + ReaderSchema.registry.tables)
-            val assets = SqliteAssetStore(db, writer)
-            val adapter = withContext(writer) { db.transaction {
+            return withContext(writer) { db.transaction {
                 ReaderSchema.install(db)
-                SqliteStorageAdapter(db, registry, clock, incomingPolicies = listOf(ReaderIncomingPolicy())).also { adapter ->
-                    // Older experimental offline rows have no recoverable chronology. Never let
-                    // a generic backfill invent one by scanning table/primary-key order.
-                    for (table in ReaderSchema.registry.tables) {
-                        require(db.query("SELECT 1 AS present FROM ${table.name} r WHERE NOT EXISTS " +
-                            "(SELECT 1 FROM rhizome_row_meta m WHERE m.tbl=? AND m.pk=r.id) LIMIT 1",
-                            listOf(table.name)) { true }.isEmpty()) {
-                            "Unversioned legacy reader rows in ${table.name}; explicit recovery/import required, database preserved"
-                        }
-                    }
-                    runBlocking { adapter.bindLocalAuthor(actor) }
-                    // One additive upgrade boundary, including original-byte
-                    // storage. A failure here must roll back reader tables AND
-                    // author binding, not leave a half-installed mixed library.
-                    // This DDL-only facade executes inline on the already-held
-                    // writer; dispatching back to it from runBlocking deadlocks.
-                    // The returned asset store retains the real writer dispatcher.
-                    runBlocking { SqliteAssetStore(db, Dispatchers.Unconfined).createSchema() }
-                }
+                val adapter=SqliteStorageAdapter(db, registry, clock, incomingPolicies = listOf(ReaderIncomingPolicy()))
+                attachOnWriter(db,writer,actor,adapter,clock)
             } }
-            return ReaderStorage(db, writer, actor, adapter, assets, clock)
+        }
+
+        /** Host already owns the writer and real outer transaction. Never opens a
+         * connection or constructs another adapter/HLC. Used by Android's shared
+         * owner and the experimental factory above, not an activation decision.
+         */
+        fun attachOnWriter(db: SqliteHandle, writer: CoroutineDispatcher, actor: String,
+            adapter: SqliteStorageAdapter, clock: () -> Long = System::currentTimeMillis): ReaderStorage {
+            site(actor)
+            ReaderSchema.install(db)
+            // Never invent chronology for unversioned experimental rows.
+            for (table in ReaderSchema.registry.tables) {
+                require(db.query("SELECT 1 AS present FROM ${table.name} r WHERE NOT EXISTS " +
+                    "(SELECT 1 FROM rhizome_row_meta m WHERE m.tbl=? AND m.pk=r.id) LIMIT 1",
+                    listOf(table.name)) { true }.isEmpty()) {
+                    "Unversioned legacy reader rows in ${table.name}; explicit recovery/import required, database preserved"
+                }
+            }
+            runBlocking { adapter.bindLocalAuthor(actor) }
+            // DDL executes inline within the owner's transaction; dispatching back
+            // to its single writer from runBlocking would deadlock.
+            runBlocking { SqliteAssetStore(db, Dispatchers.Unconfined).createSchema() }
+            return ReaderStorage(db, writer, actor, adapter, SqliteAssetStore(db,writer), clock)
         }
     }
 

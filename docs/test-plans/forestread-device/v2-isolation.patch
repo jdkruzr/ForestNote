@@ -1,0 +1,125 @@
+diff --git a/app/notes/build.gradle.kts b/app/notes/build.gradle.kts
+index fe9865a..815e64f 100644
+--- a/app/notes/build.gradle.kts
++++ b/app/notes/build.gradle.kts
+@@ -6,7 +6,7 @@ android {
+     namespace = "com.forestnote.app.notes"
+
+     defaultConfig {
+-        applicationId = "com.forestnote"
++        applicationId = "com.forestnote.qualification"
+
+         // The Onyx Pen SDK (pulled in transitively via :core:ink) ships native libs for every ABI,
+         // inflating the APK to ~66 MB. Every target e-ink tablet (Boox + Viwoods) is arm64 — restrict
+diff --git a/core/format/src/main/kotlin/com/forestnote/core/format/NotebookRepository.kt b/core/format/src/main/kotlin/com/forestnote/core/format/NotebookRepository.kt
+index 7c8e40b..d3ddcb8 100644
+--- a/core/format/src/main/kotlin/com/forestnote/core/format/NotebookRepository.kt
++++ b/core/format/src/main/kotlin/com/forestnote/core/format/NotebookRepository.kt
+@@ -169,20 +169,22 @@ class NotebookRepository private constructor(
+          * and restoring the active context from `app_state`.
+          * If the file is corrupted, deletes it and starts fresh.
+          */
+-        fun open(context: Context, now: () -> Long = { System.currentTimeMillis() }): NotebookRepository {
++        fun open(context: Context, qualificationName: String = DEFAULT_FILENAME, now: () -> Long = { System.currentTimeMillis() }): NotebookRepository {
+             // Resolve where the datastore lives: `/sdcard/ForestNote` (migrating the private DB out
+             // once if needed) when external storage is usable, else the app-private dir as a safe
+             // fallback. See StorageLocation / StorageLocationLogic. `dbContext` redirects every
+             // framework DB-file lookup, so the driver + corruption-recovery delete below all target
+             // the resolved location transparently.
+-            val dbContext = StorageLocation.resolve(context, DEFAULT_FILENAME)
++            check(context.applicationContext.packageName == "com.forestnote.qualification")
++            require(Regex("reader-qualification-[A-Za-z0-9_-]{1,64}\\.db").matches(qualificationName))
++            val dbContext = context.applicationContext
+             // Build the SQLDelight Android driver and the RhizomeSync handle over ONE shared
+             // SupportSQLiteOpenHelper, so the adapter's `rhizome_*` tables and SQLDelight's data tables
+             // live on the same connection (and the same write transaction — see Phase 8 C3).
+             fun build(): NotebookRepository {
+                 val helper = FrameworkSQLiteOpenHelperFactory().create(
+                     SupportSQLiteOpenHelper.Configuration.builder(dbContext)
+-                        .name(DEFAULT_FILENAME)
++                        .name(qualificationName)
+                         .callback(AndroidSqliteDriver.Callback(NotebookDatabase.Schema))
+                         .build()
+                 )
+@@ -195,7 +197,7 @@ class NotebookRepository private constructor(
+                 build()
+             } catch (e: Throwable) {
+                 // Corrupted database — delete and recreate (at the resolved location).
+-                dbContext.deleteDatabase(DEFAULT_FILENAME)
++                dbContext.deleteDatabase(qualificationName)
+                 build()
+             }
+         }
+diff --git a/app/notes/src/debug/AndroidManifest.xml b/app/notes/src/debug/AndroidManifest.xml
+new file mode 100644
+--- /dev/null
++++ b/app/notes/src/debug/AndroidManifest.xml
+@@ -0,0 +1,10 @@
++<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
++    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
++    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:node="remove" />
++    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
++    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="remove" />
++    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
++    <application android:label="ForestNote Historical Storage Lab" tools:replace="android:label">
++        <activity android:name=".MainActivity" android:enabled="false" />
++    </application>
++</manifest>
+diff --git a/app/notes/src/androidTest/kotlin/com/forestnote/app/notes/LegacyWriterSeedTest.kt b/app/notes/src/androidTest/kotlin/com/forestnote/app/notes/LegacyWriterSeedTest.kt
+new file mode 100644
+--- /dev/null
++++ b/app/notes/src/androidTest/kotlin/com/forestnote/app/notes/LegacyWriterSeedTest.kt
+@@ -0,0 +1,53 @@
++package com.forestnote.app.notes
++
++import android.content.Context
++import android.database.sqlite.SQLiteDatabase
++import androidx.test.platform.app.InstrumentationRegistry
++import com.forestnote.core.format.NotebookRepository
++import com.forestnote.core.ink.Stroke
++import com.forestnote.core.ink.StrokePoint
++import com.forestnote.core.ink.BrushKind
++import kotlinx.coroutines.runBlocking
++import org.json.JSONObject
++import org.junit.Test
++
++/** Hosting-only instrumentation around the actual v2.0 repository and dependency. */
++class LegacyWriterSeedTest {
++    @Test fun seed()=runBlocking<Unit> {
++        val context=InstrumentationRegistry.getInstrumentation().targetContext
++        check(context.packageName=="com.forestnote.qualification")
++        val id=requireNotNull(InstrumentationRegistry.getArguments().getString("runId"))
++        require(Regex("[A-Za-z0-9_-]{1,40}").matches(id))
++        fun rows(name:String,sql:String):String = SQLiteDatabase.openDatabase(context.getDatabasePath(name).path,null,
++            SQLiteDatabase.OPEN_READONLY).use {db -> db.rawQuery(sql,null).use {c -> buildList {
++                while(c.moveToNext()) add((0 until c.columnCount).map {
++                    if(c.isNull(it)) null else if(c.getType(it)==android.database.Cursor.FIELD_TYPE_BLOB)
++                        "blob:"+android.util.Base64.encodeToString(c.getBlob(it),android.util.Base64.NO_WRAP) else c.getString(it)
++                })
++            }.toString() } }
++        for(mode in listOf("offline","joined")) {
++            val name="reader-qualification-${id}_$mode.db"
++            check(!context.getDatabasePath(name).exists()) {"Never overwrite a previous fixture"}
++            val repo=NotebookRepository.open(context,qualificationName=name)
++            val expected=JSONObject()
++            try {
++                repo.createNotebook("Historical v2.0 $mode")
++                if(mode=="joined") repo.enableSync()
++                val stroke=Stroke(points=listOf(StrokePoint(12,34,321,7),StrokePoint(56,78,654,8)))
++                repo.saveStroke(stroke)
++                if(mode=="joined") {
++                    val foreign=repo.pendingOps().first().copy(siteId="01ARZ3NDEKTSV4RRFFQ69G5FAV",opSeq=17,opTs=4_000_000_000_000L)
++                    repo.applySyncOps(listOf(foreign));repo.setSyncCursor(42)
++                }
++                expected.put("notebook",repo.currentNotebookId()).put("page",repo.currentPageId())
++                    .put("stroke",stroke.id).put("site",repo.syncSiteId() ?: JSONObject.NULL)
++            } finally {repo.close()}
++            expected.put("history",rows(name,"SELECT op_seq,tbl,pk,op_ts,cols FROM rhizome_outbox ORDER BY op_seq"))
++                .put("meta",rows(name,"SELECT tbl,pk,op_ts,op_seq,site_id FROM rhizome_row_meta ORDER BY tbl,pk"))
++                .put("strokeRows",rows(name,"SELECT * FROM stroke ORDER BY id"))
++                .put("version",rows(name,"PRAGMA user_version"))
++            check(context.getSharedPreferences("qualification_upgrade_evidence",Context.MODE_PRIVATE).edit()
++                .putString("${id}_$mode",expected.toString()).commit())
++        }
++    }
++}

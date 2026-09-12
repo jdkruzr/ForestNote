@@ -10,6 +10,9 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.BrushKind
 import io.rhizome.core.Op
+import io.rhizome.core.Registry
+import io.rhizome.sqlite.IncomingRowPolicy
+import io.rhizome.sqlite.SqliteRow
 import io.rhizome.sqlite.SqliteHandle
 import io.rhizome.sqlite.SqliteStorageAdapter
 import kotlinx.coroutines.runBlocking
@@ -119,10 +122,17 @@ class NotebookRepository private constructor(
      * [syncStore]; also used by [LegacySyncHistory] for the one-shot cross-table
      * copy into the adapter's `rhizome_*` tables (which SQLDelight doesn't know about).
      */
-    private val syncHandle: SqliteHandle
+    private val syncHandle: SqliteHandle,
+    allowStorageExtension: Boolean = false,
 ) {
     private var currentNotebookId: String = ""
     private var currentPageId: String = ""
+
+    init {
+        check(allowStorageExtension || syncHandle.query(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='forestnote_library_identity'"
+        ) { true }.isEmpty()) { "Shared library requires the qualified storage owner; database preserved" }
+    }
 
     /**
      * The registry-driven RhizomeSync store (Phase 8 cutover). Its `init` creates the `rhizome_*`
@@ -131,8 +141,45 @@ class NotebookRepository private constructor(
      * NotebookStore writer, exactly like every other DB access here. The legacy capture/apply
      * surface below still drives sync until C3/C4 route through this adapter.
      */
-    internal val syncStore: SqliteStorageAdapter =
+    internal var syncStore: SqliteStorageAdapter =
         db.transactionWithResult { LegacySyncHistory.installAndMigrate(syncHandle, ForestNoteRegistry.registry, clock) }
+        private set
+
+    private var extensionInstalled = false
+    private var closed = false
+
+    /** Explicit, gated shared-library installation on the owner's writer thread.
+     * SQLDelight owns the real transaction, including on JDBC where the legacy
+     * handle's transaction implementation is a pass-through. Publish the ONE
+     * replacement adapter only after commit; failed installation preserves it.
+     */
+    fun <T> installStorageExtension(registry: Registry, policies: List<IncomingRowPolicy>,
+        install: (SqliteHandle, SqliteStorageAdapter, String, String) -> T): T {
+        check(!closed && !extensionInstalled) { "Storage extension already installed or library closed" }
+        check(settings().syncEnabled != true && syncSiteId() == null) { "Mixed-library sync activation is not qualified yet" }
+        val owner = Thread.currentThread()
+        val handle = object : SqliteHandle {
+            private fun guard() { check(!closed && Thread.currentThread() === owner) { "Shared library handle used outside its live writer" } }
+            override fun execute(sql: String, args: List<Any?>) { guard(); syncHandle.execute(sql,args) }
+            override fun <R> query(sql: String,args: List<Any?>,map:(SqliteRow)->R): List<R> { guard();return syncHandle.query(sql,args,map) }
+            override fun <R> transaction(body:()->R):R { guard();return db.transactionWithResult { body() } }
+        }
+        var candidate: SqliteStorageAdapter? = null
+        val result = db.transactionWithResult {
+            handle.execute("CREATE TABLE IF NOT EXISTS forestnote_library_identity(id INTEGER PRIMARY KEY CHECK(id=0),library_id TEXT NOT NULL)")
+            handle.execute("INSERT OR IGNORE INTO forestnote_library_identity VALUES(0,?)",listOf(Ulid.generate(clock())))
+            val libraryId=handle.query("SELECT library_id FROM forestnote_library_identity WHERE id=0") {it.getString("library_id")!!}.single()
+            val combined=Registry(ForestNoteRegistry.registry.tables+registry.tables)
+            val adapter=SqliteStorageAdapter(handle,combined,clock,incomingPolicies=policies)
+            val actor=runBlocking { adapter.localAuthorId() ?: adapter.siteId() } ?: Ulid.generate(clock())
+            install(handle,adapter,actor,libraryId).also { candidate=adapter }
+        }
+        syncStore=requireNotNull(candidate)
+        extensionInstalled=true
+        return result
+    }
+
+    fun requireWriterOnlySync() { check(!extensionInstalled) { "Mixed-library transport is not activated; pending history preserved" } }
 
     companion object {
         private const val TAG = "NotebookRepository"
@@ -176,30 +223,43 @@ class NotebookRepository private constructor(
             // framework DB-file lookup, so the driver and recovery diagnostics all target
             // the resolved location transparently.
             val dbContext = StorageLocation.resolve(context, DEFAULT_FILENAME)
+            return openAndroidDatabase(dbContext, DEFAULT_FILENAME, now, false)
+        }
+
+        /** Only the separate debuggable qualification APK may use this private-file
+         * entry point. It deliberately bypasses external-storage discovery/migration.
+         * Uses exactly the production helper, migration callback and SQLite binding.
+         */
+        fun openIsolatedQualification(context: Context, runId: String): NotebookRepository {
+            val app = context.applicationContext
+            check(app.packageName == "com.forestnote.qualification" &&
+                app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                "Isolated qualification package required"
+            }
+            require(Regex("[A-Za-z0-9_-]{1,64}").matches(runId)) { "Invalid qualification run ID" }
+            return openAndroidDatabase(app, "reader-qualification-$runId.db", System::currentTimeMillis, true)
+        }
+
+        private fun openAndroidDatabase(dbContext: Context, filename: String, now: () -> Long,
+            allowStorageExtension: Boolean): NotebookRepository {
             // Build the SQLDelight Android driver and the RhizomeSync handle over ONE shared
             // SupportSQLiteOpenHelper, so the adapter's `rhizome_*` tables and SQLDelight's data tables
             // live on the same connection (and the same write transaction — see Phase 8 C3).
-            fun build(): NotebookRepository {
-                val helper = FrameworkSQLiteOpenHelperFactory().create(
-                    SupportSQLiteOpenHelper.Configuration.builder(dbContext)
-                        .name(DEFAULT_FILENAME)
-                        .callback(PreservingDatabaseCallback())
-                        .build()
-                )
-                val driver = AndroidSqliteDriver(helper)
-                return try {
-                    val db = NotebookDatabase(driver)
-                    val syncHandle = SupportSqliteHandle(helper.writableDatabase)
-                    NotebookRepository(driver, db, now, syncHandle).also { it.bootstrap() }
-                } catch (failure: Throwable) {
-                    try { driver.close() } catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
-                    throw failure
-                }
+            val helper = FrameworkSQLiteOpenHelperFactory().create(
+                SupportSQLiteOpenHelper.Configuration.builder(dbContext)
+                    .name(filename)
+                    .callback(PreservingDatabaseCallback())
+                    .build()
+            )
+            val driver = AndroidSqliteDriver(helper)
+            return try {
+                val db = NotebookDatabase(driver)
+                val syncHandle = SupportSqliteHandle(helper.writableDatabase)
+                NotebookRepository(driver, db, now, syncHandle, allowStorageExtension).also { it.bootstrap() }
+            } catch (failure: Throwable) {
+                try { driver.close() } catch (closeFailure: Throwable) { failure.addSuppressed(closeFailure) }
+                throw failure
             }
-            // An exception is not permission to delete the user's library. In
-            // particular, schema downgrade, disk-full and migration bugs are not
-            // corruption. The store/UI reports the failure; retry opens this file.
-            return build()
         }
 
         /**
@@ -220,10 +280,12 @@ class NotebookRepository private constructor(
          */
         fun openExisting(
             driver: SqlDriver,
+            allowStorageExtension: Boolean = false,
             now: () -> Long = { System.currentTimeMillis() }
         ): NotebookRepository {
             val db = NotebookDatabase(driver)
-            return NotebookRepository(driver, db, now, jdbcHandleFor(driver)).also { it.bootstrap() }
+            // Test caller owns this supplied driver, including inspection/retry after failure.
+            return NotebookRepository(driver, db, now, jdbcHandleFor(driver), allowStorageExtension).also { it.bootstrap() }
         }
 
         /**
@@ -1312,7 +1374,7 @@ class NotebookRepository private constructor(
         // still live in the legacy `sync_state` row (D7), so ensure that row exists here — nothing
         // else creates it now that capture writes only rhizome_* tables.
         db.notebookQueries.ensureSyncState()
-        return runBlocking { syncStore.siteId() ?: Ulid.generate(clock()).also { syncStore.enableSync(it) } }
+        return runBlocking { syncStore.siteId() ?: (syncStore.localAuthorId() ?: Ulid.generate(clock())).also { syncStore.enableSync(it) } }
     }
 
     /**
@@ -1479,7 +1541,10 @@ class NotebookRepository private constructor(
      * already-open transaction (the adapter's handle nests into it).
      */
     private fun enqueueOp(table: String, pk: String, @Suppress("UNUSED_PARAMETER") wallTs: Long) {
-        runBlocking { syncStore.capture(table, pk) }
+        runBlocking {
+            val author=syncStore.localAuthorId()
+            if(author==null) syncStore.capture(table, pk) else syncStore.captureAuthored(table,pk,author)
+        }
     }
 
     // -- Sync send side ----------------------------------------------------------
@@ -1566,6 +1631,7 @@ class NotebookRepository private constructor(
      * Close the database connection.
      */
     fun close() {
+        closed = true
         driver.close()
     }
 }

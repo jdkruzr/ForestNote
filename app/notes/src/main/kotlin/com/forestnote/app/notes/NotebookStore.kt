@@ -30,6 +30,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.CancellationException
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.CompletableFuture
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -37,6 +38,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.*
+import com.forestnote.core.reader.ReaderStorage
+import com.forestnote.core.reader.ReaderSchema
+import com.forestnote.core.reader.ReaderIncomingPolicy
 
 // pattern: Imperative Shell
 // Owns the executor, the repository handle, and all I/O orchestration + logging.
@@ -93,7 +98,7 @@ data class EditorPageSnapshot(
  */
 class NotebookStore(
     private val repoProvider: () -> NotebookRepository,
-    private val executor: ExecutorService,
+    executor: ExecutorService,
     private val poster: (Runnable) -> Unit,
     /**
      * Optional credential store used by [SyncController] (after migration) for sync auth.
@@ -103,15 +108,57 @@ class NotebookStore(
      * resolves them itself, so this field is purely a Settings-migration concern.
      */
     private val secureCredentials: SecureCredentialsStore? = null,
+    /** Internal qualification only; no production factory or UI enables this yet. */
+    private val qualifyReaderStorage: Boolean = false,
+    private val closeRepository: (NotebookRepository) -> Unit = { it.close() },
 ) {
     // Written and read only on the executor thread, so no synchronization is needed.
     private var repo: NotebookRepository? = null
     private var openFailure: Throwable? = null
+    private var failedInitializationClose: Throwable? = null
+    private val persistenceExecutor = executor
+    // Reader cancellation must still dispatch while public submissions are closed.
+    // Its worker is joined before the final driver-close task is submitted.
+    private val writerDispatcher = persistenceExecutor.asCoroutineDispatcher()
+    @Volatile private var readerRuntime: ReaderRuntime? = null
+    private val lifecycleLock = Any()
+    private var readerForeground = false
+    private var closing = false
+    private val closeResult = CompletableFuture<Unit>()
+    private val executor = object : ExecutorService by persistenceExecutor {
+        override fun execute(command: Runnable) = synchronized(lifecycleLock) {
+            if (closing) throw RejectedExecutionException("Notebook store is closing")
+            persistenceExecutor.execute(command)
+        }
+    }
 
     init {
         // Open as the first enqueued task; every later task queues behind it.
         executor.execute {
-            repo = runCatching { repoProvider() }
+            repo = runCatching {
+                val opened=repoProvider()
+                try {
+                    if(qualifyReaderStorage) {
+                        val attached=opened.installStorageExtension(ReaderSchema.registry,listOf(ReaderIncomingPolicy())) { db,adapter,actor,libraryId ->
+                            ReaderStorage.attachOnWriter(db,writerDispatcher,actor,adapter) to libraryId
+                        }
+                        // Publish/start only after commit, never while installation can roll back.
+                        synchronized(lifecycleLock) {
+                            if (!closing) readerRuntime=ReaderRuntime(attached.first,attached.second).also {
+                                if (readerForeground) it.resume()
+                            }
+                        }
+                    }
+                    opened
+                } catch(e:Throwable) {
+                    try { closeRepository(opened) }
+                    catch(closeFailure:Throwable) {
+                        failedInitializationClose = closeFailure
+                        if (closeFailure !== e) e.addSuppressed(closeFailure)
+                    }
+                    throw e
+                }
+            }
                 .onFailure { openFailure = it; android.util.Log.e(TAG, "failed to open repository", it) }
                 .getOrNull()
         }
@@ -124,6 +171,27 @@ class NotebookStore(
                 else Result.failure(openFailure ?: IllegalStateException("Library unavailable"))
             poster { onResult(result) }
         }
+    }
+
+    /** All reader DB work dispatches through the same executor as ordinary notes. */
+    internal suspend fun <T> withReader(block: suspend (ReaderStorage)->T):T {
+        val runtime=onDb {requireNotNull(readerRuntime) {"Reader storage is gated off"}}
+        return block(runtime.storage)
+    }
+    fun resumeReaderWork() = synchronized(lifecycleLock) {
+        if (!closing) { readerForeground=true; readerRuntime?.resume() }
+    }
+    fun pauseReaderWork() = synchronized(lifecycleLock) {
+        readerForeground=false; readerRuntime?.pause()
+    }
+    internal suspend fun readerWorkStatus(): String = onDb { requireNotNull(readerRuntime).status.value }
+    internal suspend fun readerIdentity(): Pair<String,String> = onDb {
+        requireNotNull(readerRuntime).let { it.libraryId to it.storage.actor }
+    }
+    internal suspend fun prepareReplicaEnrollment(server: String,account: String) = onDb {
+        val runtime=requireNotNull(readerRuntime) { "Reader storage is gated off" }
+        requireNotNull(secureCredentials).replicas.prepareEnrollment(
+            com.forestnote.app.notes.caldav.ReplicaCredentialScope(server,account,runtime.libraryId,runtime.storage.actor))
     }
 
     /** Load all strokes (z-ordered) off-thread; result posted to the main thread. */
@@ -910,21 +978,22 @@ class NotebookStore(
     val remoteApplied: StateFlow<Long> = _remoteApplied.asStateFlow()
 
     fun syncLocalStore(): SyncLocalStore = object : SyncLocalStore {
-        override suspend fun siteId(): String? = onDb { it.syncSiteId() }
-        override suspend fun cursor(): Long = onDb { it.syncCursor() }
-        override suspend fun pendingOps(): List<Op> = onDb { it.pendingOps() }
+        override suspend fun siteId(): String? = onDb { it.requireWriterOnlySync(); it.syncSiteId() }
+        override suspend fun cursor(): Long = onDb { it.requireWriterOnlySync(); it.syncCursor() }
+        override suspend fun pendingOps(): List<Op> = onDb { it.requireWriterOnlySync(); it.pendingOps() }
         override suspend fun applyRelayed(ops: List<Op>) = onDb {
+            it.requireWriterOnlySync()
             it.applySyncOps(ops)
             if (ops.isNotEmpty()) _remoteApplied.value += 1
         }
-        override suspend fun markAckedThrough(through: Long) = onDb { it.markAckedThrough(through) }
-        override suspend fun setCursor(cursor: Long) = onDb { it.setSyncCursor(cursor) }
+        override suspend fun markAckedThrough(through: Long) = onDb { it.requireWriterOnlySync(); it.markAckedThrough(through) }
+        override suspend fun setCursor(cursor: Long) = onDb { it.requireWriterOnlySync(); it.setSyncCursor(cursor) }
     }
 
     // Join-handshake bridges (used by SyncController.enableAndJoin).
-    suspend fun syncMintSiteId(): String = onDb { it.mintSiteId() }
-    suspend fun syncBackfillOutbox() = onDb { it.backfillOutbox() }
-    suspend fun syncBackfillUntrackedOutbox() = onDb { it.backfillUntrackedOutbox() }
+    suspend fun syncMintSiteId(): String = onDb { it.requireWriterOnlySync(); it.mintSiteId() }
+    suspend fun syncBackfillOutbox() = onDb { it.requireWriterOnlySync(); it.backfillOutbox() }
+    suspend fun syncBackfillUntrackedOutbox() = onDb { it.requireWriterOnlySync(); it.backfillUntrackedOutbox() }
     suspend fun syncIsPristineBootstrap(): Boolean = onDb { it.isPristineBootstrap() }
     suspend fun syncCurrentNotebookId(): String = onDb { it.currentNotebookId() }
     suspend fun syncNotebookIds(): List<String> = onDb { it.listNotebooks().map { nb -> nb.id } }
@@ -934,13 +1003,13 @@ class NotebookStore(
             if (discarded) _remoteApplied.value += 1
         }
     suspend fun syncJoined(): Boolean = onDb { it.syncJoined() }
-    suspend fun syncMarkJoined() = onDb { it.setSyncJoined(true) }
+    suspend fun syncMarkJoined() = onDb { it.requireWriterOnlySync(); it.setSyncJoined(true) }
     /** Re-backfill once if this joined device is behind the current synced-schema generation. */
-    suspend fun syncRebackfillIfNeeded() = onDb { it.rebackfillIfSchemaAdvanced() }
+    suspend fun syncRebackfillIfNeeded() = onDb { it.requireWriterOnlySync(); it.rebackfillIfSchemaAdvanced() }
     /** §I.9: reset the cursor for a one-shot full re-pull if the synced-schema hash changed. */
-    suspend fun syncResetCursorIfSchemaChanged() = onDb { it.resetCursorIfSchemaChanged() }
+    suspend fun syncResetCursorIfSchemaChanged() = onDb { it.requireWriterOnlySync(); it.resetCursorIfSchemaChanged() }
     /** Stamp the current schema hash as reconciled (after a successful join's full pull). */
-    suspend fun syncMarkSchemaReconciled() = onDb { it.markSchemaReconciled() }
+    suspend fun syncMarkSchemaReconciled() = onDb { it.requireWriterOnlySync(); it.markSchemaReconciled() }
 
     /** Read the persisted sync config (server URL + credentials), off-thread. */
     suspend fun syncSettings(): Settings = onDb { it.settings() }
@@ -960,25 +1029,79 @@ class NotebookStore(
         }
     }
 
-    /** Drain pending writes, then close the driver as the last task. */
-    fun shutdown() {
-        executor.execute { runCatching { repo?.close() } }
-        executor.shutdown()
-        try {
-            if (!executor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                android.util.Log.w(TAG, "persistence executor did not drain in time; forcing shutdown")
-                executor.shutdownNow()
-            }
-        } catch (e: InterruptedException) {
-            android.util.Log.w(TAG, "interrupted while draining persistence executor", e)
-            executor.shutdownNow()
-            Thread.currentThread().interrupt()
+    /** Stop accepting public work immediately; join the reader and drain saves off-main.
+     * Returned futures are detached views: cancellation cannot cancel database cleanup.
+     */
+    fun shutdownAsync(): CompletableFuture<Unit> {
+        val runtime=synchronized(lifecycleLock) {
+            if (closing) return closeResult.thenApply { it }
+            closing=true
+            readerRuntime
         }
+        CoroutineScope(Dispatchers.Default).launch {
+            try {
+                runtime?.close()
+                persistenceExecutor.execute {
+                    val result = runCatching {
+                        failedInitializationClose?.let { throw it }
+                        repo?.let(closeRepository)
+                        repo = null
+                    }
+                    persistenceExecutor.shutdown()
+                    result.fold(
+                        onSuccess = { closeResult.complete(Unit) },
+                        onFailure = { closeResult.completeExceptionally(it) },
+                    )
+                }
+            } catch (e: Throwable) {
+                // No competing open is safe if cancellation/join or closure failed.
+                persistenceExecutor.shutdown()
+                closeResult.completeExceptionally(e)
+            }
+        }
+        return closeResult.thenApply { it }
+    }
+
+    /** Background-only barrier for restore/tests. A timeout is NOT successful closure:
+     * accepted writes keep draining, and restore must not replace the file yet.
+     */
+    fun shutdown() = awaitShutdown(TimeUnit.SECONDS.toMillis(SHUTDOWN_TIMEOUT_SECONDS))
+
+    internal fun awaitShutdown(timeoutMillis: Long) {
+        shutdownAsync()
+        try { closeResult.get(timeoutMillis, TimeUnit.MILLISECONDS) }
+        catch (e: InterruptedException) { Thread.currentThread().interrupt(); throw e }
     }
 
     companion object {
         private const val TAG = "NotebookStore"
         private const val SHUTDOWN_TIMEOUT_SECONDS = 5L
+        private val applicationOwner = StorageOwnerQueue()
+
+        /** Same ownership path for production and the isolated device harness. */
+        internal fun createOwned(
+            owner: StorageOwnerQueue,
+            repoProvider: () -> NotebookRepository,
+            executor: ExecutorService = Executors.newSingleThreadExecutor(),
+            poster: (Runnable) -> Unit,
+            secureCredentials: SecureCredentialsStore? = null,
+            qualifyReaderStorage: Boolean = false,
+            closeRepository: (NotebookRepository) -> Unit = { it.close() },
+        ): NotebookStore {
+            val lease = owner.reserve()
+            return try {
+                NotebookStore(
+                    repoProvider = { lease.awaitPreviousClose(); repoProvider() },
+                    executor = executor, poster = poster, secureCredentials = secureCredentials,
+                    qualifyReaderStorage = qualifyReaderStorage,
+                    closeRepository = closeRepository,
+                ).also { store -> store.closeResult.whenComplete { _, failure -> lease.release(failure) } }
+            } catch (e: Throwable) {
+                executor.shutdown()
+                lease.release(e)
+                throw e
+            }
+        }
 
         /**
          * Production factory: real single-thread executor, main-thread Handler poster.
@@ -992,7 +1115,8 @@ class NotebookStore(
         ): NotebookStore {
             val appContext = context.applicationContext
             val mainHandler = Handler(Looper.getMainLooper())
-            return NotebookStore(
+            return createOwned(
+                owner = applicationOwner,
                 repoProvider = { NotebookRepository.open(appContext) },
                 executor = Executors.newSingleThreadExecutor(),
                 poster = { runnable -> mainHandler.post(runnable) },

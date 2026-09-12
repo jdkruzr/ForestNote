@@ -11,7 +11,7 @@ import androidx.security.crypto.MasterKey
  * (`forestnote_secrets.xml`), AES-256 master key in the Android Keystore. This includes the optional
  * endpoint-transcription API key, so backups of Settings never contain it.
  *
- * The class is a thin shell: it never throws, every call is wrapped because the
+ * Legacy get/put/remove tolerate failures because the
  * encrypted-prefs library has historically been fragile (keyset corruption on
  * OS upgrades). On any read/write failure we return `null` or silently no-op —
  * the caller treats that the same as "no creds configured", which means the
@@ -40,6 +40,27 @@ class EncryptedPrefsCredentialsBackend(
         } catch (t: Throwable) {
             log("EncryptedPrefs init failed: $t")
             null
+        }
+    }
+
+    // SharedPreferences updates memory even when commit fails. Never mistake that
+    // cached value for a durable identity; require reopen/recovery after failure.
+    private var strictWriteFailed = false
+
+    @Synchronized override fun readStrict(key: String): String? {
+        check(!strictWriteFailed) { "Credential durability uncertain; reopen required" }
+        return checkNotNull(prefs) { "Private credentials unavailable" }.getString(key,null)
+    }
+
+    @Synchronized override fun putDurably(key: String,value: String): Boolean {
+        check(!strictWriteFailed) { "Credential durability uncertain; reopen required" }
+        return try {
+            checkNotNull(prefs) { "Private credentials unavailable" }.edit().putString(key,value).commit().also {
+                if(!it) strictWriteFailed=true
+            }
+        } catch (failure: Exception) {
+            strictWriteFailed=true
+            throw IllegalStateException("Private credential save failed",failure)
         }
     }
 

@@ -5,6 +5,19 @@ plugins {
 android {
     namespace = "com.forestnote.app.notes"
 
+    buildTypes {
+        create("qualification") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".qualification"
+            matchingFallbacks += "debug"
+        }
+    }
+    // Opt in only when building the isolated on-device instrumentation pair.
+    if (providers.gradleProperty("readerQualification").orNull == "true") {
+        testBuildType = "qualification"
+        sourceSets.getByName("androidTest").java.srcDir("src/qualificationTest/kotlin")
+    }
+
     defaultConfig {
         applicationId = "com.forestnote"
 
@@ -36,6 +49,8 @@ val libs = extensions.getByType<VersionCatalogsExtension>().named("libs")
 dependencies {
     implementation(project(":core:ink"))
     implementation(project(":core:format"))
+    implementation(project(":core:reader"))
+    implementation(libs.findLibrary("rhizome-sqlite").get())
     implementation(project(":core:sync"))
 
     // RhizomeSync engine + transport (Phase 8 cutover): SyncController drives io.rhizome.core.SyncEngine

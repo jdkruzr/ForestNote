@@ -1,0 +1,360 @@
+package com.forestnote.app.notes
+
+import android.content.Context
+import android.content.Intent
+import android.app.KeyguardManager
+import android.database.sqlite.SQLiteDatabase
+import android.os.Bundle
+import android.os.ParcelFileDescriptor
+import android.os.PowerManager
+import android.os.Looper
+import android.os.Process
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.core.app.ActivityScenario
+import com.forestnote.app.notes.caldav.*
+import com.forestnote.core.format.NotebookRepository
+import com.forestnote.core.ink.Stroke
+import com.forestnote.core.ink.StrokePoint
+import com.forestnote.core.reader.*
+import io.rhizome.core.Op
+import kotlinx.coroutines.*
+import kotlinx.serialization.json.*
+import org.junit.Test
+import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+
+/** Run only in the separate qualification package. No network or external files.
+ * Seed/verify are separate instrumentation invocations; crash-install deliberately
+ * kills this disposable process inside the real SQLite installation transaction.
+ */
+class ReaderDeviceQualificationTest {
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    private val context: Context get() = instrumentation.targetContext
+    private val args get() = InstrumentationRegistry.getArguments()
+    private val invocation: String get() = requireNotNull(args.getString("invocation")).also {UUID.fromString(it)}
+    private val runId: String get() = requireNotNull(args.getString("runId")).also {
+        require(Regex("[A-Za-z0-9_-]{1,40}").matches(it))
+    }
+    private fun database(id: String) = context.getDatabasePath("reader-qualification-$id.db")
+    private fun credentials() = SecureCredentialsStore(EncryptedPrefsCredentialsBackend(context))
+    private fun scope(identity: Pair<String,String>) =
+        ReplicaCredentialScope("https://qualification.invalid", "single-author", identity.first, identity.second)
+    private fun store(id: String, secrets: SecureCredentialsStore = credentials()) = NotebookStore(
+        repoProvider = {
+            check(Looper.myLooper() != Looper.getMainLooper())
+            NotebookRepository.openIsolatedQualification(context,id)
+        }, executor = Executors.newSingleThreadExecutor(), poster = { it.run() },
+        secureCredentials = secrets, qualifyReaderStorage = true,
+    )
+    private fun rows(id: String,sql: String): List<List<String?>> =
+        SQLiteDatabase.openDatabase(database(id).path,null,SQLiteDatabase.OPEN_READONLY).use { db ->
+            db.rawQuery(sql,null).use { cursor -> buildList {
+                while(cursor.moveToNext()) add((0 until cursor.columnCount).map {
+                    if(cursor.isNull(it)) null else if(cursor.getType(it)==android.database.Cursor.FIELD_TYPE_BLOB)
+                        "blob:"+android.util.Base64.encodeToString(cursor.getBlob(it),android.util.Base64.NO_WRAP) else cursor.getString(it)
+                })
+            } }
+        }
+    private fun evidence() = context.getSharedPreferences("qualification_evidence",Context.MODE_PRIVATE)
+    private fun saveEvidence(key: String,value: JsonObject) {
+        check(evidence().edit().putString(key,value.toString()).commit()) { "Evidence save failed" }
+    }
+    private fun loadEvidence(key: String) = Json.parseToJsonElement(
+        checkNotNull(evidence().getString(key,null)) { "Run the preparation phase first" }).jsonObject
+    private fun history(id: String) = rows(id,"SELECT op_seq,tbl,pk,op_ts,cols FROM rhizome_outbox ORDER BY op_seq").toString()
+
+    @Test fun qualification() = runBlocking<Unit> {
+        check(context.packageName == "com.forestnote.qualification") { "Refusing non-isolated target" }
+        check(Looper.myLooper() != Looper.getMainLooper())
+        withTimeout(45_000) {
+            when(val phase=args.getString("phase") ?: "smoke") {
+                "smoke" -> smoke()
+                "sleep-wake" -> sleepWake()
+                "handoff" -> closeHandoff()
+                "seed" -> seed()
+                "verify" -> verifyRestart()
+                "crash-install" -> crashInstall()
+                "verify-crash" -> verifyCrash()
+                "upgrade-verify" -> verifyHistoricalUpgrade()
+                else -> error("Unknown qualification phase: $phase")
+            }
+        }
+    }
+
+    private suspend fun closeHandoff() {
+        val id = "${runId}_handoff"
+        check(!database(id).exists())
+        val owner = StorageOwnerQueue()
+        val executor = Executors.newSingleThreadExecutor()
+        val blocked = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val first = NotebookStore.createOwned(owner,
+            repoProvider = { NotebookRepository.openIsolatedQualification(context, id) },
+            executor = executor, poster = { it.run() }, qualifyReaderStorage = true)
+        var second: NotebookStore? = null
+        var activity: ActivityScenario<StorageQualificationActivity>? = null
+        try {
+            val identity = first.readerIdentity()
+            first.save(Stroke(points = listOf(StrokePoint(11, 22, 500, 0))))
+            first.withReader { it.setDeleted("handoff", LifecycleTarget.BOOK, "a".repeat(64), true) }
+            val before = history(id)
+            StorageQualificationSession.store = first
+            StorageQualificationSession.closeOnDestroy = true
+            shell("input keyevent 224"); shell("wm dismiss-keyguard")
+            activity = ActivityScenario.launch(Intent(context, StorageQualificationActivity::class.java))
+            executor.execute { blocked.countDown(); check(release.await(10, TimeUnit.SECONDS)) }
+            check(blocked.await(5, TimeUnit.SECONDS))
+            // This save is accepted before onDestroy; shutdown must not drop it.
+            first.save(Stroke(points = listOf(StrokePoint(33, 44, 500, 0))))
+            activity.close()
+            activity = null
+            val opened = AtomicBoolean()
+            instrumentation.runOnMainSync {
+                second = NotebookStore.createOwned(owner,
+                    repoProvider = {
+                        check(Looper.myLooper() != Looper.getMainLooper())
+                        opened.set(true)
+                        NotebookRepository.openIsolatedQualification(context, id)
+                    }, poster = { it.run() }, qualifyReaderStorage = true)
+                second!!.resumeReaderWork()
+            }
+            delay(150)
+            check(!opened.get()) { "Replacement opened while predecessor still had accepted work" }
+            check(!first.shutdownAsync().isDone)
+            check(StorageQualificationSession.diskViolations.get() == 0)
+            val closeMs = StorageQualificationSession.timings.single { it.first == "close" }.second
+            check(closeMs < 100) { "Main-thread close request took ${closeMs}ms" }
+            release.countDown()
+            first.shutdown()
+            check(second!!.readerIdentity() == identity)
+            check(rows(id, "SELECT COUNT(*) FROM stroke").single().single() == "2")
+            check(rows(id, "SELECT op_seq FROM rhizome_outbox ORDER BY op_seq").map { it.single() } == listOf("1", "2", "3"))
+            check(history(id) != before) // accepted final save, not invented reopen history
+            withTimeout(5000) { while(second!!.readerWorkStatus() != "Running") delay(10) }
+            instrumentation.sendStatus(0, Bundle().apply {
+                putString("close_request_ms", closeMs.toString())
+                putString("handoff", "old-close-before-new-open; queued ink and identity preserved")
+                putString("lifecycle_disk_violations", "0")
+            })
+        } finally {
+            release.countDown()
+            activity?.close()
+            first.shutdown()
+            second?.shutdown()
+            StorageQualificationSession.store = null
+            StorageQualificationSession.closeOnDestroy = false
+        }
+    }
+
+    private suspend fun verifyHistoricalUpgrade() {
+        val expectedPrefs=context.getSharedPreferences("qualification_upgrade_evidence",Context.MODE_PRIVATE)
+        for(mode in listOf("offline","joined")) {
+            val id="${runId}_$mode"
+            check(database(id).exists()) {"Historical APK must seed this fixture first"}
+            val expected=Json.parseToJsonElement(checkNotNull(expectedPrefs.getString(id,null))).jsonObject
+            fun expectedText(key:String)=expected.getValue(key).jsonPrimitive.content
+            fun metadata()=rows(id,"SELECT tbl,pk,op_ts,op_seq,site_id FROM rhizome_row_meta ORDER BY tbl,pk").toString()
+            check(rows(id,"PRAGMA user_version").toString()==expectedText("version"))
+            val writer=Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+            try {withContext(writer) {
+                val repo=NotebookRepository.openIsolatedQualification(context,id)
+                try {
+                    check(repo.currentNotebookId()==expectedText("notebook") && repo.currentPageId()==expectedText("page"))
+                    check(rows(id,"SELECT * FROM stroke ORDER BY id").toString()==expectedText("strokeRows"))
+                    check(history(id)==expectedText("history") && metadata()==expectedText("meta"))
+                    if(mode=="joined") {
+                        check(repo.syncSiteId()==expectedText("site") && repo.syncCursor()==42L)
+                        val before=repo.pendingOps()
+                        check(before.isNotEmpty())
+                        check(runCatching {
+                            repo.installStorageExtension(ReaderSchema.registry,listOf(ReaderIncomingPolicy())) {_,_,_,_->error("Gate failed")}
+                        }.exceptionOrNull()?.message=="Mixed-library sync activation is not qualified yet")
+                        repo.saveStroke(Stroke(points=listOf(StrokePoint(90,91,500,0))))
+                        val after=repo.pendingOps()
+                        check(after.dropLast(1)==before)
+                        check(after.last().opSeq==before.last().opSeq+1 && after.last().opTs>4_000_000_000_000L)
+                    } else check(repo.syncSiteId()==null)
+                } finally {repo.close()}
+            }} finally {writer.close()}
+            if(mode=="offline") {
+                val s=store(id)
+                try {
+                    s.withReader {it.setDeleted("upgrade-reader",LifecycleTarget.BOOK,"a".repeat(64),true)}
+                    check(rows(id,"SELECT * FROM stroke ORDER BY id").toString()==expectedText("strokeRows"))
+                    check(rows(id,"SELECT op_seq,tbl FROM rhizome_outbox")==listOf(listOf("1","reader_book_lifecycle")))
+                } finally {s.shutdown()}
+            }
+        }
+    }
+
+    private fun shell(command: String) = ParcelFileDescriptor.AutoCloseInputStream(
+        instrumentation.uiAutomation.executeShellCommand(command)).use {it.readBytes().toString(Charsets.UTF_8)}
+
+    private suspend fun sleepWake() {
+        check(!context.getSystemService(KeyguardManager::class.java).isDeviceSecure) {
+            "Secure keyguard needs user coordination; no automatic bypass"
+        }
+        val id="${runId}_sleep"
+        check(!database(id).exists())
+        val secrets=credentials()
+        val s=store(id,secrets)
+        val power=context.getSystemService(PowerManager::class.java)
+        var activity: ActivityScenario<StorageQualificationActivity>?=null
+        try {
+            val identity=s.readerIdentity()
+            val credential=s.prepareReplicaEnrollment("https://qualification.invalid","single-author")
+            s.withReader {it.setDeleted("sleep-baseline",LifecycleTarget.BOOK,"a".repeat(64),true)}
+            val baseline=history(id)
+            check(StorageQualificationSession.store==null)
+            StorageQualificationSession.store=s
+            shell("input keyevent 224");shell("wm dismiss-keyguard")
+            activity=ActivityScenario.launch(Intent(context,StorageQualificationActivity::class.java))
+            withTimeout(10_000) {while(s.readerWorkStatus()!="Running") delay(20)}
+            repeat(3) {
+                val resumes=StorageQualificationSession.resumes.get()
+                val pauses=StorageQualificationSession.pauses.get()
+                shell("input keyevent 223")
+                withTimeout(10_000) {
+                    while(power.isInteractive || StorageQualificationSession.pauses.get()<=pauses || s.readerWorkStatus()!="Paused") delay(20)
+                }
+                delay(1000)
+                check(history(id)==baseline)
+                shell("input keyevent 224");shell("wm dismiss-keyguard")
+                withTimeout(10_000) {
+                    while(!power.isInteractive || StorageQualificationSession.resumes.get()<=resumes || s.readerWorkStatus()!="Running") delay(20)
+                }
+                check(s.readerIdentity()==identity)
+                check(withContext(Dispatchers.IO) {secrets.replicas.read(scope(identity))}?.tokenHash==credential.tokenHash)
+            }
+            // Actual Activity destruction/recreation retains the same application-owned store.
+            val resumes=StorageQualificationSession.resumes.get()
+            activity.recreate()
+            withTimeout(10_000) {while(StorageQualificationSession.resumes.get()<=resumes || s.readerWorkStatus()!="Running") delay(20)}
+            check(s.readerIdentity()==identity && history(id)==baseline)
+            check(StorageQualificationSession.diskViolations.get()==0) {"Lifecycle hook performed main-thread disk I/O"}
+            instrumentation.sendStatus(0,Bundle().apply {
+                putString("sleep_wake_cycles","3")
+                putString("lifecycle_hook_ms",StorageQualificationSession.timings.toString())
+                putString("lifecycle_disk_violations","0")
+            })
+        } finally {
+            shell("input keyevent 224");shell("wm dismiss-keyguard")
+            activity?.close()
+            s.shutdown()
+            StorageQualificationSession.store=null
+        }
+    }
+
+    private suspend fun smoke() {
+        val id="${runId}_smoke"
+        check(!database(id).exists()) { "Use a fresh run ID; old evidence is preserved" }
+        val s=store(id)
+        try {
+            s.resumeReaderWork() // before open completes
+            withTimeout(10_000) {while(s.readerWorkStatus()!="Running") delay(10)}
+            s.pauseReaderWork()
+            withTimeout(10_000) {while(s.readerWorkStatus()!="Paused") delay(10)}
+            val foreign="01ARZ3NDEKTSV4RRFFQ69G5FAV"
+            s.withReader {it.incoming.stage(listOf(Op("reader_book_lifecycle","c".repeat(64),foreign,1,
+                4_000_000_000_000L,buildJsonObject {put("deleted",1);put("changed_at",1)})))}
+            s.resumeReaderWork()
+            withTimeout(10_000) {while(s.withReader {it.incoming.records("applied")}.isEmpty()) delay(10)}
+            s.save(Stroke(points=listOf(StrokePoint(1,2,500,0))))
+            s.withReader {it.setDeleted("local-delete",LifecycleTarget.BOOK,"a".repeat(64),true)}
+            check(runCatching {s.syncMintSiteId()}.isFailure)
+            s.pauseReaderWork()
+            withTimeout(10_000) {while(s.readerWorkStatus()!="Paused") delay(10)}
+        } finally {s.shutdown()}
+        val outbox=rows(id,"SELECT op_seq,tbl,op_ts FROM rhizome_outbox ORDER BY op_seq")
+        check(outbox.map {it[0]}==listOf("1","2"))
+        check(outbox.map {it[1]}==listOf("stroke","reader_book_lifecycle"))
+        check(outbox.first()[2]!!.toLong()>4_000_000_000_000L)
+        check(rows(id,"SELECT site_id FROM rhizome_row_meta WHERE pk='${"c".repeat(64)}'").single().single()=="01ARZ3NDEKTSV4RRFFQ69G5FAV")
+        val reopened=store(id)
+        try {check(reopened.withReader {it.record("reader_book_lifecycle","a".repeat(64))}!=null)}
+        finally {reopened.shutdown()}
+    }
+
+    private suspend fun seed() {
+        check(!database(runId).exists()) { "Use a fresh run ID; never overwrite an earlier run" }
+        val s=store(runId)
+        try {
+            s.save(Stroke(points=listOf(StrokePoint(10,20,500,0))))
+            s.withReader {it.setDeleted("seed-delete",LifecycleTarget.BOOK,"a".repeat(64),true)}
+            val identity=s.readerIdentity()
+            val credential=s.prepareReplicaEnrollment("https://qualification.invalid","single-author")
+            saveEvidence(runId,buildJsonObject {
+                put("library",identity.first);put("replica",identity.second)
+                put("tokenHash",credential.tokenHash);put("process",processNonce)
+                put("invocation",invocation)
+                put("history",history(runId))
+            })
+        } finally {s.shutdown()}
+    }
+
+    private suspend fun verifyRestart() {
+        check(database(runId).exists()) { "Missing seeded database" }
+        val expected=loadEvidence(runId)
+        check(expected.getValue("invocation").jsonPrimitive.content==invocation)
+        check(expected.getValue("process").jsonPrimitive.content!=processNonce) { "A new process is required" }
+        val secrets=credentials()
+        val s=store(runId,secrets)
+        try {
+            val identity=s.readerIdentity()
+            check(identity.first==expected.getValue("library").jsonPrimitive.content)
+            check(identity.second==expected.getValue("replica").jsonPrimitive.content)
+            val credential=withContext(Dispatchers.IO) {checkNotNull(secrets.replicas.read(scope(identity)))}
+            check(credential.tokenHash==expected.getValue("tokenHash").jsonPrimitive.content)
+            check(history(runId)==expected.getValue("history").jsonPrimitive.content)
+            check(s.withReader {it.record("reader_book_lifecycle","a".repeat(64))}!=null)
+            // Only scan this tiny synthetic DB, not any real library/private settings.
+            check(!database(runId).readBytes().toString(Charsets.ISO_8859_1).contains(credential.token))
+        } finally {s.shutdown()}
+    }
+
+    private suspend fun crashInstall(): Nothing {
+        val id="${runId}_crash"
+        check(!database(id).exists()) { "Use a fresh run ID" }
+        val writer=Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        return withContext(writer) {
+            val repo=NotebookRepository.openIsolatedQualification(context,id)
+            repo.saveStroke(Stroke(points=listOf(StrokePoint(30,40,500,0))))
+            saveEvidence(id,buildJsonObject {
+                put("process",processNonce);put("notebook",repo.currentNotebookId());put("invocation",invocation)
+            })
+            repo.installStorageExtension(ReaderSchema.registry,listOf(ReaderIncomingPolicy())) {db,adapter,actor,_ ->
+                ReaderStorage.attachOnWriter(db,writer,actor,adapter)
+                db.execute("CREATE TABLE qualification_uncommitted(id TEXT)")
+                // Durable, private evidence that we reached this exact uncommitted boundary.
+                check(evidence().edit().putBoolean("$id-armed",true).commit())
+                Process.killProcess(Process.myPid())
+                error("Process kill returned")
+            }
+        }
+    }
+
+    private suspend fun verifyCrash() {
+        val id="${runId}_crash"
+        check(evidence().getBoolean("$id-armed",false)) { "Crash boundary was not reached" }
+        check(loadEvidence(id).getValue("invocation").jsonPrimitive.content==invocation) { "Stale crash evidence" }
+        check(loadEvidence(id).getValue("process").jsonPrimitive.content!=processNonce)
+        check(database(id).exists())
+        // A killed rollback-journal transaction may need writable recovery before
+        // a read-only inspection can open it. No schema/bootstrap runs at this point.
+        SQLiteDatabase.openDatabase(database(id).path,null,SQLiteDatabase.OPEN_READWRITE).use {db ->
+            db.rawQuery("PRAGMA quick_check",null).use {check(it.moveToFirst() && it.getString(0)=="ok")}
+        }
+        check(rows(id,"SELECT name FROM sqlite_master WHERE name IN ('forestnote_library_identity','reader_book','qualification_uncommitted')").isEmpty())
+        check(rows(id,"SELECT COUNT(*) FROM stroke").single().single()=="1")
+        check(rows(id,"SELECT id FROM notebook").single().single()==loadEvidence(id).getValue("notebook").jsonPrimitive.content)
+        val s=store(id)
+        try {s.withReader {it.setDeleted("after-crash",LifecycleTarget.BOOK,"a".repeat(64),true)}}
+        finally {s.shutdown()}
+        check(rows(id,"SELECT COUNT(*) FROM stroke").single().single()=="1")
+    }
+
+    companion object { private val processNonce=UUID.randomUUID().toString() }
+}
