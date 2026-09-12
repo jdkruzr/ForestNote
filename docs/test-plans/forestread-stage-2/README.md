@@ -1,6 +1,20 @@
-# Stage 2 headless shared-library foundation (through D20)
+# Stage 2 headless shared-library foundation (through D21)
 
 Current status and remaining integration work: [2026-09-12 plan review](../../design-plans/2026-09-12-forestread-progress-review.md).
+
+## D21: single-user recovery safety
+
+[D21 policy and qualification](../../design-plans/2026-09-12-forestread-recovery-safety.md) adds
+read-only recovery snapshots and separately enrolled fresh replicas, plus an offline UB restore
+fence. One human owns all the work; replica IDs separate operation sequences and contributions.
+Uncertain edits stay preserved and explicitly unreconciled, not uploaded automatically. Full-private
+clone detection, Android recovery UI and production activation remain outside this slice. Thirteen
+process scenarios supplement four Kotlin and two Go tests.
+
+Verified: `/tmp/forestread-stage-2-NXRXl2/report.json` passes 186 headless Kotlin tests (zero skips),
+all 61 process scenarios and Go race checks. All 175 source hashes match; all eight original books
+remain byte-identical. UB builds locally; unchanged Android regression results remain green.
+No commit/push, artifact publication, device install or deployment in this slice.
 
 ## D20: pre-Rhizome sync-history preservation
 

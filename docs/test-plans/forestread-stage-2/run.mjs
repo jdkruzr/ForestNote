@@ -99,7 +99,8 @@ try {
       'client-kotlin/rhizome-sqlite/src/test/kotlin/io/rhizome/sqlite/AssetInteropTest.kt',
       'conformance/pending/assets-v1.json']],
     [ub, ['internal/syncassets/assets.go', 'internal/syncassets/assets_test.go', 'cmd/assetlab/main.go', 'cmd/assetlab/checkpoint.go', 'cmd/assetlab/inspect.go', 'cmd/assetlab/backup.go', 'cmd/assetlab/backup_test.go',
-      ...['store.go','http.go','store_test.go'].map(name => `internal/syncidentity/${name}`),
+      'cmd/assetlab/restore.go', 'cmd/assetlab/restore_test.go',
+      ...['store.go','http.go','store_test.go','recovery.go'].map(name => `internal/syncidentity/${name}`),
       ...['schema.go', 'store.go', 'snapshot.go', 'store_test.go', 'install_host_test.go', 'mixed_migration_test.go', 'work.go', 'worker.go', 'worker_test.go'].map(name => `internal/readerstore/${name}`),
       ...['handler.go', 'handler_test.go', 'enrollment_test.go', 'projection.go'].map(name => `internal/readerlab/${name}`),
       ...['schema.go', 'targets.go', 'projection.go', 'store.go', 'search.go', 'store_test.go'].map(name => `internal/readersearch/${name}`),
@@ -113,6 +114,10 @@ try {
       'docs/test-plans/forestread-stage-2/run.mjs', 'docs/test-plans/forestread-stage-2/huff-oracle.mjs', 'docs/test-plans/forestread-stage-2/shared-library-e2e.mjs',
       'docs/test-plans/forestread-stage-2/activation-safety.mjs',
       'docs/test-plans/forestread-stage-2/enrollment-identity.mjs',
+      'docs/test-plans/forestread-stage-2/recovery-safety.mjs',
+      'core/reader/src/main/kotlin/com/forestnote/core/reader/LibraryRecoveryPolicy.kt',
+      'core/reader/src/test/kotlin/com/forestnote/core/reader/RecoveryFiles.kt',
+      'core/reader/src/test/kotlin/com/forestnote/core/reader/LibraryRecoveryTest.kt',
       'core/reader/src/test/kotlin/com/forestnote/core/reader/SharedLibraryChild.kt',
       'core/format/src/main/sqldelight/com/forestnote/core/format/notebook.sq',
       'app/readerlab/foliate-lock.json', 'core/reader/build.gradle.kts', 'core/reader/settings.gradle.kts',
@@ -191,11 +196,13 @@ try {
     });
   const shared = await runSharedLibrary({binary, classpath:(await readFile(join(fn,'core/reader/build/e2e-classpath.txt'),'utf8')).trim(),
     output:join(output,'shared-library'), corpus:importBooks, repeats:3});
-  if(shared.status!=='passed' || shared.scenarios.length!==40+importBooks.length || shared.scenarios.some(s=>s.status!=='passed') ||
+  if(shared.status!=='passed' || shared.scenarios.length!==53+importBooks.length || shared.scenarios.some(s=>s.status!=='passed') ||
     shared.activation?.status!=='passed' || shared.activation.scenarios.length!==4 ||
     shared.enrollment?.status!=='passed' || shared.enrollment.scenarios.length!==4)
     throw Error('Shared-library/crash qualification incomplete');
   report.sharedLibrary = {report:join(output,'shared-library/report.json'), scenarios:shared.scenarios.length, crashRepetitions:3, corpus:shared.corpus.length};
+  if(shared.recovery?.status!=='passed'||shared.recovery.scenarios.length!==13) throw Error('D21 recovery scenarios incomplete');
+  report.recoverySafety=shared.recovery;
   report.activationSafety=shared.activation;
   report.enrollmentIdentity=shared.enrollment;
   const contractBytes = await readFile(contractVectors);
@@ -290,6 +297,8 @@ try {
   if(!upgradeRecovery || upgradeRecovery.tests!==2 || upgradeRecovery.skipped || upgradeRecovery.failures || upgradeRecovery.errors) throw Error('Writer upgrade recovery qualification incomplete');
   report.columnUpgrades.recoveryTests=upgradeRecovery.cases;
   const legacyHistory=report.suites.find(s=>s.name==='com.forestnote.core.reader.LegacyHistoryUpgradeTest');
+  const recoveryPolicy=report.suites.find(s=>s.name==='com.forestnote.core.reader.LibraryRecoveryTest');
+  if(!recoveryPolicy || recoveryPolicy.tests!==4 || recoveryPolicy.skipped || recoveryPolicy.failures || recoveryPolicy.errors) throw Error('Recovery policy qualification incomplete');
   if(!legacyHistory || legacyHistory.tests!==5 || legacyHistory.skipped || legacyHistory.failures || legacyHistory.errors) throw Error('Legacy sync history qualification incomplete');
   report.legacySyncHistory={tests:legacyHistory.cases,androidCallbackWired:true,deployed:false,
     scope:'Transfer before historical log drop, local archives, exact payload/provenance/counter verification, clock reseeding, generated v14/v18 upgrades and process-death rollback; missing historical data needs explicit backup recovery'};

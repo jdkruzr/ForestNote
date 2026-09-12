@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
 import { runActivationSafety } from './activation-safety.mjs';
 import { runEnrollmentIdentity } from './enrollment-identity.mjs';
+import { runRecoverySafety } from './recovery-safety.mjs';
 
 const fn = fileURLToPath(new URL('../../../', import.meta.url));
 const chunk = 262144;
@@ -89,8 +90,8 @@ export async function runSharedLibrary({ binary, classpath, output, corpus = [],
     console.log(`Shared-library: ${name}`);
     const processes=[]; let generation=0;
     const w={dir,row};
-    w.client=async (label,file=join(dir,`${label}.forestnote`)) => {
-      const p=new Process('java',['-Xmx96m','-cp',classpath,'com.forestnote.core.reader.SharedLibraryChild',file,`0000000000000000000000000${label}`,join(fn,'core/format/src/main/sqldelight/com/forestnote/core/format/notebook.sq')],join(dir,`${label}-${++generation}.log`),row.events);
+    w.client=async (label,file=join(dir,`${label}.forestnote`),actor=`0000000000000000000000000${label}`) => {
+      const p=new Process('java',['-Xmx96m','-cp',classpath,'com.forestnote.core.reader.SharedLibraryChild',file,actor,join(fn,'core/format/src/main/sqldelight/com/forestnote/core/format/notebook.sq')],join(dir,`${label}-${++generation}.log`),row.events);
       processes.push(p); p.label=label; assert.deepEqual(await p.next(),{ready:true}); w[label]=p; return p;
     };
     w.server=async (target,profile='combined',file=join(dir,'ub.db')) => {
@@ -106,6 +107,15 @@ export async function runSharedLibrary({ binary, classpath, output, corpus = [],
       const p=new Process(binary,['--reader','--reader-assets','--db',file,...flags],join(dir,`tool-${++generation}.log`),row.events);
       processes.push(p); const result=await p.next(); await p.close(); return result;
     };
+    w.startTool=(flags,file=w.serverFile) => {
+      const p=new Process(binary,['--reader','--reader-assets','--db',file,...flags],join(dir,`tool-${++generation}.log`),row.events);
+      processes.push(p);return p;
+    };
+    w.recoveryTask=request => {
+      const p=new Process('java',['-Xmx96m','-cp',classpath,'com.forestnote.core.reader.RecoveryChild',JSON.stringify(request)],join(dir,`recovery-${++generation}.log`),row.events);
+      processes.push(p);return p;
+    };
+    w.recovery=async request => {const p=w.recoveryTask(request);const result=await p.next();await p.close();assert.ok(!result.error,result.error);return result};
     w.snap=async label => {
       const s=await w[label].call('inspect');
       for(const event of s.events) row.events.push({client:label,event});
@@ -279,6 +289,7 @@ export async function runSharedLibrary({ binary, classpath, output, corpus = [],
     });
     report.activation = await runActivationSafety({scenario,seed,epubPath,waitSearch});
     report.enrollment = await runEnrollmentIdentity({scenario,seed,epubPath,waitSearch});
+    report.recovery = await runRecoverySafety({scenario,seed,epubPath,waitSearch});
     for(const path of corpus) {
       const original=await identity(path);
       await scenario(`corpus-${report.corpus.length}`,w=>baseline(w,path));

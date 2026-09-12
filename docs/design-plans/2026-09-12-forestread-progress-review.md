@@ -111,6 +111,17 @@ the headless result does not activate production integration.
    scenarios and Go race checks; 168 source hashes match and eight originals remain byte-identical.
    Separate Android-module tests pass: 284 format + 355 app. No publication, install or deployment.
    Next: clone/reset and historical data/credential rollback, then remaining activation work.
+   **D21 single-user recovery safety:** [policy and qualification](2026-09-12-forestread-recovery-safety.md)
+   preserves uncertain libraries as read-only recovery snapshots and establishes fresh replicas;
+   offline UB restore retires old credentials/replica IDs and resets only its new operation space.
+   These are replica-consistency rules for one human, not multi-user permissions. Automatic merging
+   and silent full-image rollback detection are excluded by explicit choice. Android recovery UI/
+   vault, production activation, ordinary key rotation and uncertain-edit reconciliation remain
+   separate work; a fresh pull does not prove missing later work was recovered.
+   `/tmp/forestread-stage-2-NXRXl2/report.json` passes 186 headless Kotlin tests with zero skips,
+   all 61 process scenarios and Go race checks; 175 source hashes match and eight originals remain
+   byte-identical. UB builds locally, and unchanged Android regression checks remain green.
+   No installed APK, deployment or publication. Return here before production lifecycle activation.
 3. Wire repositories/coordinator/workers into FN's storage owner and lifecycle, then reuse the
    Reader Lab UX in the main app and apply the queued shared Penu cleanup. Incoming sync must not
    reflow active handwriting or navigate the reader.

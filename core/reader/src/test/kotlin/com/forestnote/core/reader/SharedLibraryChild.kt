@@ -42,6 +42,7 @@ object SharedLibraryChild {
     }
     @JvmStatic fun main(args: Array<String>) = runBlocking {
         val (path, actor, schemaFile) = args
+        RecoveryFiles.assertWritable(File(path),actor)
         // Disposable analogue of the future Android private credential vault. The
         // secret is never in the shared .forestnote DB, its backup or a pipe response.
         val keyFile = File("$path.device-key")

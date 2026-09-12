@@ -1,7 +1,7 @@
 # ForestRead integration: Stage 1 contract
 
 Status: **design contract; not shipped**. Decisions approved 2026-09-07.
-2026-09-12: the [Stage 2 headless foundation through D20](../test-plans/forestread-stage-2/README.md)
+2026-09-12: the [Stage 2 headless foundation through D21](../test-plans/forestread-stage-2/README.md)
 includes candidate reader repositories/import, Kotlin/Go projection parity, actual reader HTTP
 receipt/relay/ACK, durable materialization/jobs and current-recognition search in the disposable UB
 harness. See the [plan-versus-current-state review](2026-09-12-forestread-progress-review.md).
@@ -15,6 +15,10 @@ D20 adds [pre-Rhizome history preservation](2026-09-12-forestread-legacy-sync-hi
 historical log deletion, with verified raw copies, local archives and generated v14/v18 rollback
 tests. Its Android callback is source-wired; already-lost history, clone/restore policy, D19 column
 repair activation and actual old-APK/device qualification remain separate gates.
+D21 adds [explicit recovery workflows](2026-09-12-forestread-recovery-safety.md): preserve uncertain
+data, prepare fresh replicas and fence offline UB restores. ForestNote has one human author;
+internal authorship IDs identify replicas, not users. Automatic historical-edit merging and silent
+full-private-state clone/rollback detection are deliberately outside this milestone.
 The [combined reader-row/asset-coordinator gate](2026-09-12-forestread-shared-library-e2e.md) now passes
 40 end-to-end scenarios, including actual process kills and all eight supplied books. Real device binding, main-app lifecycle/UI,
 legacy recovery, coordinated production migrations and activation remain pending.
