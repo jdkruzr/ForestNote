@@ -12,6 +12,8 @@ const crashVerifiers = new Map([
     ['crash-install','verify-crash'],
     ['recovery-kill-snapshot','recovery-verify-snapshot'],
     ['recovery-kill-fresh','recovery-verify-fresh'],
+    ['selection-kill-before','selection-verify-before'],
+    ['selection-kill-after','selection-verify-after'],
 ]);
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -72,6 +74,7 @@ export async function run(options) {
         const phases=options['--phase-set']==='upgrade' ? ['upgrade-verify'] :
             ['smoke','sleep-wake','handoff','enrollment-seed','enrollment-verify',
                 'recovery','recovery-kill-snapshot','recovery-verify-snapshot','recovery-kill-fresh','recovery-verify-fresh',
+                'setup-ui','selection-kill-before','selection-verify-before','selection-kill-after','selection-verify-after',
                 'seed','verify','crash-install','verify-crash'];
         for(const phase of phases) {
             const stopped=await call(['am','force-stop',target]);

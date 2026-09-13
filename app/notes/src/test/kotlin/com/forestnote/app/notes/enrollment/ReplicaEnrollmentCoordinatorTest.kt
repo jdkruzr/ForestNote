@@ -58,10 +58,10 @@ class ReplicaEnrollmentCoordinatorTest {
         assertTrue(backend.data.isEmpty())
         vault.claimLocal(target.library,target.replica)
         backend.failWrite=true
-        assertEquals(EnrollmentResult.RECOVERY_REQUIRED,c.approve(target.server,approval))
+        assertEquals(EnrollmentResult.PRIVATE_STORAGE_UNAVAILABLE,c.approve(target.server,approval))
         assertNull(vault.read(target))
         backend.failWrite=false;backend.failRead=true
-        assertEquals(EnrollmentResult.RECOVERY_REQUIRED,c.inspect(target.server,target.account))
+        assertEquals(EnrollmentResult.PRIVATE_STORAGE_UNAVAILABLE,c.inspect(target.server,target.account))
         backend.failRead=false
         backend.data[backend.data.keys.single()]="broken-private-record"
         assertEquals(EnrollmentResult.RECOVERY_REQUIRED,c.approve(target.server,approval))
@@ -93,7 +93,7 @@ class ReplicaEnrollmentCoordinatorTest {
         val backend=Backend();val vault=ReplicaCredentialsStore(backend)
         vault.claimLocal(target.library,target.replica)
         val c=controller(vault,EnrollmentTransport {_,_,_->backend.failWrite=true;EnrollmentResult.CONFIRMED})
-        assertEquals(EnrollmentResult.RECOVERY_REQUIRED,c.approve(target.server,approval))
+        assertEquals(EnrollmentResult.PRIVATE_STORAGE_UNAVAILABLE,c.approve(target.server,approval))
         assertFalse(vault.read(target)!!.enrolled)
         backend.failWrite=false
         val old=vault.read(target)!!.tokenHash

@@ -241,3 +241,30 @@ Same debug certificate; the isolated app still lacks Internet/external-storage p
 Normal `com.forestnote` APK path and main library-file hash remain unchanged from D23. No active
 library switch, production recovery UI, `/sdcard` migration, actual tablet TLS enrollment, public
 release-signed upgrade, physical power-loss or literal disk-full qualification is implied.
+
+## D29: setup UI and durable selection
+
+[Design and remaining gates](../../design-plans/2026-09-12-forestread-android-setup.md).
+The final Go run passes **19 standard phases** in `/tmp/forestread-device-TwGhag/report.json`.
+Five new phases exercise actual UI Cancel/Confirm, Activity recreation, process death immediately
+before/after selection commit, and reopening/writing through the selected Android database. The
+new replica starts its own operation sequence; original source and archive hashes remain intact.
+
+The isolated APK now has a **ForestNote Setup Lab** launcher. It retains its lack of Internet and
+external-storage permissions and does not open the normal editor or ask for passwords. Additional
+hands-on checks restarted its interactive workspace after preparation and observed explicit Resume
+Preparation. No automatic switching or credential replacement occurs on startup. Final screen:
+`/tmp/forestread-d29-final.png` (temporary screenshot, not a committed product asset).
+
+Local checks: **397 app + 287 format JVM tests**, four host-runner tests and APK builds pass.
+`/tmp/forestread-stage-2-jBUPIT/report.json`: 186 headless Kotlin tests, 61 process scenarios, Go
+race checks, eight byte-identical books; 175 recorded source hashes match. Earlier device report
+`veK52B` also passed, before the final status-label/inspection-identity clarification.
+
+Final installed APK hashes match the local tested pair:
+
+- Qualification app: `79961bd52d41142c5979141dccbfa61e77082689f89f580cf32912c074817654`
+- Instrumentation: `c8c807401a52f59987ac4dbe8bf732fd09b7592cdd10ccba562b3b35e59c3d28`
+
+Same debug certificate; normal `com.forestnote` package path and main library-file hash unchanged.
+No private-data clear, uninstall, device trust-store change, production UB activation or release.

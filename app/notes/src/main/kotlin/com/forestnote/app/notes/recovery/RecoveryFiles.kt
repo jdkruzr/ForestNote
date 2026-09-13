@@ -85,6 +85,37 @@ internal class RecoveryFiles(private val root: File, private val db: RecoveryDat
         return Archive(archive,digest(archive),db.inspect(archive))
     }
 
+    /** Lightweight startup validation. Never creates a directory, opens a writer,
+     * runs a migration, or verifies entire book assets merely to route a library. */
+    fun selectedFile(selection: SelectedLibrary): File {
+        val dir=File(root,selection.attempt)
+        check(dir.isDirectory && dir.canonicalFile==dir.absoluteFile)
+        val manifest=child(dir,"request.json")
+        check(manifest.isFile && manifest.length() in 1..8192)
+        val value=Json.parseToJsonElement(manifest.readText()).jsonObject
+        val request=Request(value.getValue("source").jsonPrimitive.content,selection.attempt,
+            LibraryRecoveryPolicy.Reason.valueOf(value.getValue("reason").jsonPrimitive.content),selection.identity)
+        check(value==request.json()) {"Selected library does not match its recovery reservation"}
+        val file=child(dir,"working.forestnote")
+        check(file.isFile && db.identity(file)==selection.identity) {"Selected library identity mismatch; no fallback permitted"}
+        return file
+    }
+
+    fun pendingReason(source: File, attempt: String): LibraryRecoveryPolicy.Reason? {
+        require(attempt.matches(Regex("[A-Za-z0-9_-]{1,64}")))
+        val dir=File(root,attempt)
+        if(!dir.exists()) return null
+        check(dir.canonicalFile==dir.absoluteFile && dir.isDirectory)
+        val manifest=child(dir,"request.json")
+        check(manifest.isFile && manifest.length() in 1..8192) {"Incomplete recovery reservation; restart will not replace it"}
+        val value=Json.parseToJsonElement(manifest.readText()).jsonObject
+        val reason=LibraryRecoveryPolicy.Reason.valueOf(value.getValue("reason").jsonPrimitive.content)
+        val request=Request(source.canonicalPath,attempt,reason,ReservedIdentity(
+            value.getValue("library").jsonPrimitive.content,value.getValue("replica").jsonPrimitive.content))
+        check(value==request.json()) {"Recovery request differs from the selected source"}
+        return reason
+    }
+
     fun publishWorking(dir: File, stage: File): File {
         // Android's TRUNCATE journal mode retains an empty journal after close.
         // Leave that harmless evidence in place; never discard a hot/nonempty file.
@@ -131,4 +162,5 @@ internal data class RecoveryInspection(val identity: ReservedIdentity?, val pend
 internal interface RecoveryDatabase {
     fun snapshot(source: File, target: File)
     fun inspect(file: File): RecoveryInspection
+    fun identity(file: File): ReservedIdentity? = inspect(file).identity
 }

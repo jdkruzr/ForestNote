@@ -167,4 +167,22 @@ class RecoveryFilesTest {
         owner.reserve().also {it.awaitPreviousClose();it.release(null)}
         assertTrue(File(temp.root,"recovery/cancelled/working.forestnote").exists())
     }
+
+    @Test fun explicitSelectionKeepsBothFilesAndChecksManifestAndPrivateOwnership()=runBlocking<Unit> {
+        val source=source();val owner=StorageOwnerQueue();val service=coordinator(owner)
+        val prepared=service.prepare(source,"choose",Reason.COPY)
+        val selections=SelectedLibraryStore(backend,"workspace")
+        val archive=prepared.archive.file.readBytes();val working=prepared.working.readBytes()
+        assertNull(selections.read())
+        val choice=service.select(selections,null,prepared) {assertFails {owner.reserve()}}
+        assertEquals(choice,selections.read())
+        assertEquals(prepared.working,service.selectedFile(choice))
+        assertContentEquals(archive,prepared.archive.file.readBytes())
+        assertContentEquals(working,prepared.working.readBytes())
+        assertFails {service.selectedFile(choice.copy(identity=choice.identity.copy(actor="0".repeat(26))))}
+        backend.values.keys.filter {it.startsWith("replica.registration")}.forEach {backend.values.remove(it)}
+        assertFails {service.selectedFile(choice)}
+        assertEquals(prepared.working,service.inspectSelectedFile(choice))
+        assertEquals(choice,selections.read()) // no fallback on loss
+    }
 }

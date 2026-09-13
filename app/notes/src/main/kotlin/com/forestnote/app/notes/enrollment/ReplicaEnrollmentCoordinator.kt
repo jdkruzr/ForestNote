@@ -12,6 +12,7 @@ enum class EnrollmentResult {
     LOCAL_ONLY, PREPARED, CONFIRMED, RECOVERY_REQUIRED, DIFFERENT_TARGET,
     ADMIN_REJECTED, BINDING_CONFLICT, SERVER_UNSUPPORTED, RETRYABLE,
     SECURE_CONNECTION_REQUIRED, REQUEST_REJECTED,
+    PRIVATE_STORAGE_UNAVAILABLE,
 }
 
 /** Explicit user approval. This secret is transient and never copied to the library. */
@@ -50,7 +51,9 @@ internal class ReplicaEnrollmentCoordinator(
         }
     } catch (e: CancellationException) { throw e }
     catch (_: ReplicaScopeMismatch) { EnrollmentResult.DIFFERENT_TARGET }
-    catch (_: Exception) { EnrollmentResult.RECOVERY_REQUIRED }
+    catch (_: ReplicaRecordInvalid) { EnrollmentResult.RECOVERY_REQUIRED }
+    catch (_: ReplicaIdentityMismatch) { EnrollmentResult.RECOVERY_REQUIRED }
+    catch (_: Exception) { EnrollmentResult.PRIVATE_STORAGE_UNAVAILABLE }
 
     suspend fun approve(server: String, approval: EnrollmentApproval): EnrollmentResult = mutex.withLock {
         val original = identity()
@@ -60,7 +63,9 @@ internal class ReplicaEnrollmentCoordinator(
         val credential = try { withContext(io) { credentials.prepareEnrollment(scope) } }
         catch (e: CancellationException) { throw e }
         catch (_: ReplicaScopeMismatch) { return@withLock EnrollmentResult.DIFFERENT_TARGET }
-        catch (_: Exception) { return@withLock EnrollmentResult.RECOVERY_REQUIRED }
+        catch (_: ReplicaRecordInvalid) { return@withLock EnrollmentResult.RECOVERY_REQUIRED }
+        catch (_: ReplicaIdentityMismatch) { return@withLock EnrollmentResult.RECOVERY_REQUIRED }
+        catch (_: Exception) { return@withLock EnrollmentResult.PRIVATE_STORAGE_UNAVAILABLE }
 
         // No DB executor/transaction is held during DNS, TLS, upload or response wait.
         val response = withContext(io) { transport.enroll(scope, credential.tokenHash, approval) }
@@ -72,6 +77,6 @@ internal class ReplicaEnrollmentCoordinator(
             withContext(io) { credentials.markEnrolled(scope, credential.tokenHash) }
             EnrollmentResult.CONFIRMED
         } catch (e: CancellationException) { throw e }
-        catch (_: Exception) { EnrollmentResult.RECOVERY_REQUIRED }
+        catch (_: Exception) { EnrollmentResult.PRIVATE_STORAGE_UNAVAILABLE }
     }
 }

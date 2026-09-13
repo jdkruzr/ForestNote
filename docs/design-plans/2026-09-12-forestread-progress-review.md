@@ -160,6 +160,13 @@ the headless result does not activate production integration.
    reservations and separate empty working replicas. The gated Android implementation preserves
    source/pending history and interrupted stages; it does not switch the active library or merge
    uncertain work. Setup/recovery UI, shared-storage routing and disposable-host tablet TLS are next.
+   **D29 setup and selection:** [gated setup UI and durable routing](2026-09-12-forestread-android-setup.md)
+   add separate Prepare/Use confirmations, archive inspection, explicit resume after restart and
+   private compare-and-set selection under the owner lease. Selected opens validate manifest,
+   identity and private ownership before bootstrap; unavailable storage never triggers fallback
+   or automatic recovery. Nineteen Go phases pass, including UI recreation and both sides of
+   selection publication. Shipping shared-storage routing and enrollment UI remain gated; next is
+   actual tablet TLS enrollment against a disposable host, then mixed activation and ordinary pull.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

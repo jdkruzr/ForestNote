@@ -27,6 +27,33 @@ internal class LibraryRecoveryCoordinator(
     /** Independent of the old source, server and private vault. No owner/worker is opened. */
     suspend fun inspect(archive: File): RecoveryFiles.Archive = withContext(Dispatchers.IO) { files.inspectArchive(archive) }
 
+    fun pendingReason(source: File, attempt: String): Reason? = files.pendingReason(source,attempt)
+
+    /** Explicit selection only after preparation. The old writer closes before
+     * validation and one durable pointer commit; failed commits never fall back. */
+    suspend fun select(selections: SelectedLibraryStore, expected: SelectedLibrary?,
+        prepared: RecoveryFiles.Prepared, active: NotebookStore? = null,
+        gate: (String) -> Unit = {}): SelectedLibrary = exclusive(active) {
+        val choice=SelectedLibrary(requireNotNull(prepared.working.parentFile).name,prepared.identity)
+        check(files.selectedFile(choice)==prepared.working)
+        check(prepared.archive.file==File(prepared.working.parentFile,"archive.forestnote"))
+        check(files.inspectArchive(prepared.archive.file).sha256==prepared.archive.sha256) {"Recovery archive changed"}
+        checkNotNull(credentials.registration(choice.identity.libraryId,choice.identity.actor)) {"Private ownership missing"}
+        gate("before-selection")
+        selections.select(expected,choice)
+        gate("selected")
+        choice
+    }
+
+    /** Invoked on the new owner's database executor, before normal bootstrap. */
+    fun selectedFile(choice: SelectedLibrary): File {
+        val file=inspectSelectedFile(choice)
+        checkNotNull(credentials.registration(choice.identity.libraryId,choice.identity.actor)) {"Selected library private ownership missing"}
+        return file
+    }
+
+    fun inspectSelectedFile(choice: SelectedLibrary): File = files.selectedFile(choice)
+
     suspend fun archive(source: File, attempt: String, reason: Reason, active: NotebookStore? = null,
         gate: (String) -> Unit = {}): RecoveryFiles.Archive = exclusive(active) {
         files.locked(source,attempt,reason) { request,dir -> files.snapshot(request,dir,gate) }

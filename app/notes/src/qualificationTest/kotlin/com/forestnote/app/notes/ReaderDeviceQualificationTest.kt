@@ -84,6 +84,11 @@ class ReaderDeviceQualificationTest {
                 "recovery-verify-snapshot" -> recoveryVerify("snapshot")
                 "recovery-kill-fresh" -> recoveryKill("fresh")
                 "recovery-verify-fresh" -> recoveryVerify("fresh")
+                "setup-ui" -> setupUi()
+                "selection-kill-before" -> selectionKill("before-selection")
+                "selection-verify-before" -> selectionVerify("before-selection")
+                "selection-kill-after" -> selectionKill("selected")
+                "selection-verify-after" -> selectionVerify("selected")
                 "seed" -> seed()
                 "verify" -> verifyRestart()
                 "crash-install" -> crashInstall()
@@ -92,6 +97,115 @@ class ReaderDeviceQualificationTest {
                 else -> error("Unknown qualification phase: $phase")
             }
         }
+    }
+
+    private suspend fun setupUi() {
+        val workspace="ui_"+io.rhizome.core.assetDigest(runId.toByteArray()).take(24)
+        val host=QualificationSetupController(context,workspace)
+        SetupQualificationSession.host=host
+        suspend fun await(status:SetupStatus) {
+            withTimeout(8000) {
+                while(host.state.value.status!=status) {
+                    check(host.state.value.status!=SetupStatus.STOPPED) {host.state.value.detail}
+                    delay(20)
+                }
+            }
+        }
+        fun descendants(view:android.view.View):Sequence<android.view.View> = sequence {
+            yield(view)
+            if(view is android.view.ViewGroup) for(i in 0 until view.childCount) yieldAll(descendants(view.getChildAt(i)))
+        }
+        val activity=ActivityScenario.launch<SetupQualificationActivity>(Intent(context,SetupQualificationActivity::class.java))
+        fun click(id:Int) {
+            activity.onActivity {a ->
+                val button=descendants(a.window.decorView).filterIsInstance<android.widget.Button>().single {it.text==context.getString(id)}
+                check(button.isEnabled && button.visibility==android.view.View.VISIBLE);button.performClick()
+            }
+            instrumentation.waitForIdleSync()
+        }
+        fun confirm(positive:Boolean) {
+            activity.onActivity {a ->
+                val view=descendants(a.window.decorView).filterIsInstance<LibrarySetupView>().single()
+                val dialog=checkNotNull(view.confirmation);check(dialog.isShowing)
+                dialog.getButton(if(positive) android.app.AlertDialog.BUTTON_POSITIVE else android.app.AlertDialog.BUTTON_NEGATIVE).performClick()
+            }
+            instrumentation.waitForIdleSync()
+        }
+        try {
+            await(SetupStatus.EMPTY)
+            click(R.string.setup_create);await(SetupStatus.LOCAL_ONLY)
+            val id="setup-$workspace"
+            val identity=host.state.value.identity
+            val selections=SelectedLibraryStore(EncryptedPrefsCredentialsBackend(context),workspace)
+            click(R.string.setup_prepare);confirm(false)
+            check(host.state.value.status==SetupStatus.LOCAL_ONLY && selections.read()==null)
+            click(R.string.setup_prepare);confirm(true);await(SetupStatus.PREPARED)
+            val original=RecoveryFiles.digest(database(id))
+            val fresh=host.state.value.identity
+            check(fresh!=identity)
+            activity.recreate();await(SetupStatus.PREPARED)
+            check(host.state.value.identity==fresh && selections.read()==null)
+            click(R.string.setup_inspect);await(SetupStatus.PREPARED)
+            check(host.state.value.detail.startsWith("Archive:"))
+            click(R.string.setup_use);confirm(false)
+            check(selections.read()==null && host.state.value.status==SetupStatus.PREPARED)
+            click(R.string.setup_use);confirm(true);await(SetupStatus.SELECTED)
+            check(selections.read()?.identity?.libraryId==fresh)
+            check(RecoveryFiles.digest(database(id))==original)
+            check(host.state.value.archiveAvailable)
+            activity.recreate();await(SetupStatus.SELECTED)
+            click(R.string.setup_inspect);await(SetupStatus.SELECTED)
+            check(host.state.value.detail.startsWith("Archive:"))
+        } finally {activity.close();SetupQualificationSession.host=null}
+    }
+
+    private suspend fun selectionKill(checkpoint:String) {
+        val id="${runId}_sel_${if(checkpoint=="selected") "after" else "before"}"
+        check(!database(id).exists())
+        val old=store(id)
+        old.save(Stroke(points=listOf(StrokePoint(71,72,500,0))))
+        old.readerIdentity();old.shutdown()
+        val service=LibraryRecoveryCoordinator.forQualification(context,StorageOwnerQueue(),credentials())
+        val prepared=service.prepare(database(id),id,LibraryRecoveryPolicy.Reason.COPY)
+        val selections=SelectedLibraryStore(EncryptedPrefsCredentialsBackend(context),id)
+        check(selections.read()==null)
+        service.select(selections,null,prepared) {
+            if(it==checkpoint) {
+                saveEvidence(id,buildJsonObject {
+                    put("invocation",invocation);put("process",processNonce);put("checkpoint",checkpoint)
+                    put("source",RecoveryFiles.digest(database(id)));put("archive",prepared.archive.sha256)
+                    put("library",prepared.identity.libraryId);put("replica",prepared.identity.actor)
+                })
+                Process.killProcess(Process.myPid());error("Expected selection checkpoint death")
+            }
+        }
+        error("Checkpoint was not reached")
+    }
+
+    private suspend fun selectionVerify(checkpoint:String) {
+        val id="${runId}_sel_${if(checkpoint=="selected") "after" else "before"}"
+        val expected=loadEvidence(id)
+        check(expected.getValue("invocation").jsonPrimitive.content==invocation && expected.getValue("process").jsonPrimitive.content!=processNonce)
+        check(expected.getValue("checkpoint").jsonPrimitive.content==checkpoint)
+        val owner=StorageOwnerQueue();val secrets=credentials()
+        val service=LibraryRecoveryCoordinator.forQualification(context,owner,secrets)
+        val prepared=service.prepare(database(id),id,LibraryRecoveryPolicy.Reason.COPY)
+        check(prepared.identity.libraryId==expected.getValue("library").jsonPrimitive.content && prepared.identity.actor==expected.getValue("replica").jsonPrimitive.content)
+        val selections=SelectedLibraryStore(EncryptedPrefsCredentialsBackend(context),id)
+        val expectedChoice=SelectedLibrary(id,prepared.identity)
+        if(checkpoint=="selected") check(selections.read()==expectedChoice)
+        else {check(selections.read()==null);check(service.select(selections,null,prepared)==expectedChoice)}
+        val current=NotebookStore.createOwned(owner,repoProvider={
+            val selected=checkNotNull(selections.read())
+            NotebookRepository.openSelectedRecoveryForQualification(context,service.selectedFile(selected))
+        },poster={it.run()},secureCredentials=secrets,qualifyReaderStorage=true)
+        try {
+            check(current.readerIdentity()==(prepared.identity.libraryId to prepared.identity.actor))
+            current.save(Stroke(points=listOf(StrokePoint(73,74,500,0))))
+        } finally {current.shutdown()}
+        check(AndroidRecoveryDatabase().inspect(prepared.working).let {it.strokes==1L && it.pending==1L})
+        check(RecoveryFiles.digest(database(id))==expected.getValue("source").jsonPrimitive.content)
+        check(RecoveryFiles.digest(prepared.archive.file)==expected.getValue("archive").jsonPrimitive.content)
     }
 
     private suspend fun recovery() {

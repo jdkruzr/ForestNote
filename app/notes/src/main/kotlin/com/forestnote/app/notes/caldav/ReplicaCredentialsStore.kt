@@ -25,6 +25,8 @@ class ReplicaCredential internal constructor(val token: String,val enrolled: Boo
 
 enum class ReplicaRegistrationState { LOCAL_ONLY, PREPARED, ENROLLED }
 class ReplicaScopeMismatch : IllegalStateException("Replica is bound to a different enrollment target")
+class ReplicaRecordInvalid : IllegalStateException("Invalid private replica record; recovery required")
+class ReplicaIdentityMismatch : IllegalStateException("Private replica identity differs; recovery required")
 
 /** One private atomic record per locally created library. Ownership is recorded
  * before the new shared identity commits; finding an existing/copied DB never claims it.
@@ -57,7 +59,7 @@ class ReplicaCredentialsStore(private val backend: KeyValueBackend) {
 
     fun registration(library: String, replica: String): ReplicaRegistrationState? = synchronized(backend.strictLock) {
         val record = load(library) ?: return@synchronized null
-        check(record.replica == replica) { "Private replica identity differs; recovery required" }
+        if (record.replica != replica) throw ReplicaIdentityMismatch()
         when {
             record.credential == null -> ReplicaRegistrationState.LOCAL_ONLY
             record.credential.enrolled -> ReplicaRegistrationState.ENROLLED
@@ -89,7 +91,7 @@ class ReplicaCredentialsStore(private val backend: KeyValueBackend) {
     }
 
     private fun checkTarget(record: Record, scope: ReplicaCredentialScope) {
-        check(record.replica == scope.replica) { "Private replica identity differs; recovery required" }
+        if (record.replica != scope.replica) throw ReplicaIdentityMismatch()
         if (record.scope != null && record.scope != scope) throw ReplicaScopeMismatch()
     }
 
@@ -118,7 +120,7 @@ class ReplicaCredentialsStore(private val backend: KeyValueBackend) {
                 require(token.matches(Regex("fn-device-v1_[0-9a-f]{64}")))
                 Record(library,replica,scope,ReplicaCredential(token,enrolled))
             }
-        } catch (_: Exception) { throw IllegalStateException("Invalid private replica record; recovery required") }
+        } catch (_: Exception) { throw ReplicaRecordInvalid() }
     }
 
     private fun save(record: Record) {

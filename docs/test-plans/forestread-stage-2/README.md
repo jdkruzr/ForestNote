@@ -1,6 +1,24 @@
-# Stage 2 shared-library foundation (through D28)
+# Stage 2 shared-library foundation (through D29)
 
 Current status and remaining integration work: [2026-09-12 plan review](../../design-plans/2026-09-12-forestread-progress-review.md).
+
+## D29: isolated setup UI and selected-library routing
+
+[D29](../../design-plans/2026-09-12-forestread-android-setup.md) adds the qualification launcher,
+explicit prepare/switch confirmations, read-only inspection and restart/resume behavior. Durable
+selection holds the recovery owner lease and validates manifest, identity and private ownership
+before the next writer opens. Unavailable private storage is not mistaken for missing credentials.
+No automatic selection fallback, enrollment, recovery or merge; no production app/server activation.
+
+Go 6 II: **19 phases** pass in `/tmp/forestread-device-TwGhag/report.json`, including UI recreation
+and killed selection before/after commit. **397 app + 287 format JVM tests** and four runner tests
+pass. `/tmp/forestread-stage-2-jBUPIT/report.json`: 186 headless Kotlin tests, 61 process scenarios,
+Go race checks, eight byte-identical books and 175 matching source hashes. New Android files have
+their separate JVM/device evidence. Normal installed FN and production UB remain untouched.
+
+Next: actual tablet-to-disposable-host TLS enrollment; then upgrade/mixed-transport activation and
+ordinary pull. Shipping shared-storage routing, enrollment form and main-app setup integration
+remain gated; the lab does not request passwords while its network access remains disabled.
 
 ## D28: Android read-only recovery and fresh preparation
 

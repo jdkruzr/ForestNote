@@ -264,6 +264,18 @@ class NotebookRepository private constructor(
             return openAndroidDatabase(ExternalStorageContext(app,file.parentFile),file.name,System::currentTimeMillis,true)
         }
 
+        /** Selection host has already checked the private pointer, manifest and
+         * ownership on this writer thread. Never accepts archives or new files. */
+        fun openSelectedRecoveryForQualification(context: Context, file: File): NotebookRepository {
+            val app=context.applicationContext
+            check(app.packageName=="com.forestnote.qualification" &&
+                app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0)
+            val root=File(app.filesDir,"reader-recovery").canonicalFile
+            check(file.canonicalFile==file.absoluteFile && file.parentFile.parentFile==root &&
+                file.name=="working.forestnote" && file.isFile)
+            return openAndroidDatabase(ExternalStorageContext(app,file.parentFile),file.name,System::currentTimeMillis,true)
+        }
+
         private fun openAndroidDatabase(dbContext: Context, filename: String, now: () -> Long,
             allowStorageExtension: Boolean): NotebookRepository {
             // Build the SQLDelight Android driver and the RhizomeSync handle over ONE shared

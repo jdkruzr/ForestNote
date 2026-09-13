@@ -33,12 +33,7 @@ internal class AndroidRecoveryDatabase : RecoveryDatabase {
         }
         fun exists(table: String) = db.rawQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",arrayOf(table)).use { it.moveToFirst() }
         fun count(table: String) = if(!exists(table)) 0L else db.rawQuery("SELECT count(*) FROM $table",null).use {check(it.moveToFirst());it.getLong(0)}
-        val identity = if (!exists("forestnote_library_identity")) null else {
-            db.rawQuery("SELECT library_id,site_id FROM forestnote_library_identity CROSS JOIN rhizome_local_author WHERE forestnote_library_identity.id=0 AND rhizome_local_author.id=0",null).use {
-                check(it.moveToFirst()) { "Incomplete recovery identity" }
-                ReservedIdentity(it.getString(0),it.getString(1)).also { _ -> check(!it.moveToNext()) }
-            }
-        }
+        val identity = readIdentity(db)
         val books=buildList {
             if(exists("reader_book")) db.rawQuery("SELECT id,asset_id,byte_length FROM reader_book ORDER BY id",null).use { rows ->
                 while(rows.moveToNext()) {
@@ -58,6 +53,17 @@ internal class AndroidRecoveryDatabase : RecoveryDatabase {
             }
         }
         RecoveryInspection(identity,count("rhizome_outbox"),count("stroke"),books)
+    }
+
+    override fun identity(file: File): ReservedIdentity? = open(file).use {requireVersion(it);readIdentity(it)}
+
+    private fun readIdentity(db: SQLiteDatabase): ReservedIdentity? {
+        val present=db.rawQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name='forestnote_library_identity'",null).use {it.moveToFirst()}
+        if(!present) return null
+        return db.rawQuery("SELECT library_id,site_id FROM forestnote_library_identity CROSS JOIN rhizome_local_author WHERE forestnote_library_identity.id=0 AND rhizome_local_author.id=0",null).use {
+            check(it.moveToFirst()) {"Incomplete recovery identity"}
+            ReservedIdentity(it.getString(0),it.getString(1)).also {_ -> check(!it.moveToNext())}
+        }
     }
 
     private fun requireVersion(db: SQLiteDatabase) {
