@@ -229,7 +229,7 @@ function syncMenuInput() {
 const popups = createPopupHost({ onChange: syncMenuInput });
 for (const [id, closeId] of [['controls', 'closeControls'], ['penOptions', 'closePenOptions'],
   ['noteOptions', 'closeNoteOptions'], ['spaceOptions', 'closeSpace'], ['boundaryOptions', null]]) {
-  popups.register($(id), { closeButton: closeId ? $(closeId) : null });
+  popups.register($(id), { closeButton: closeId ? $(closeId) : null, modal: id !== 'boundaryOptions' });
 }
 popups.register($('savedHighlightOptions'), { closeButton: $('closeSavedHighlight'), onClose: () => {
   savedHighlight = null; reader.highlightMenuOpen = false; updateNavigationButtons();

@@ -40,9 +40,9 @@ export function createPopupHost({ onChange = () => {} } = {}) {
       top: `${y}px`, maxHeight: `${Math.max(0, top + height - y - margin)}px`,
     });
   }
-  function register(dialog, { closeButton, onClose } = {}) {
+  function register(dialog, { closeButton, onClose, modal = true } = {}) {
     if (registrations.has(dialog)) throw new Error(`Popup already registered: ${dialog.id}`);
-    registrations.set(dialog, { onClose });
+    registrations.set(dialog, { onClose, modal });
     if (closeButton) closeButton.onclick = () => close(dialog);
     // Native close events are queued. Ignore an old event if this dialog has since reopened.
     dialog.addEventListener('close', () => { if (!dialog.open) finish(dialog); });
@@ -72,7 +72,8 @@ export function createPopupHost({ onChange = () => {} } = {}) {
         trigger.setAttribute('aria-expanded', 'true');
       }
       position(dialog);
-      dialog.showModal();
+      if (registrations.get(dialog).modal) dialog.showModal();
+      else dialog.show();
     } catch (error) {
       finish(dialog, false); throw error;
     } finally { switching = false; onChange(); }
@@ -86,5 +87,19 @@ export function createPopupHost({ onChange = () => {} } = {}) {
   window.addEventListener('resize', reposition);
   window.visualViewport?.addEventListener('resize', reposition);
   window.visualViewport?.addEventListener('scroll', reposition);
+  // Boundary controls must coexist with the handles. Dismiss on pointer-down so
+  // the very same gesture can grab a handle; never steal its focus/capture.
+  document.addEventListener('pointerdown', event => {
+    for (const [dialog, session] of sessions) {
+      if (!registrations.get(dialog).modal && !dialog.contains(event.target) &&
+          !session.trigger?.contains(event.target)) close(dialog, false);
+    }
+  }, true);
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    for (const dialog of sessions.keys()) if (!registrations.get(dialog).modal) {
+      event.preventDefault(); close(dialog);
+    }
+  });
   return { register, open, close };
 }

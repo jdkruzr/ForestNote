@@ -227,18 +227,53 @@ class ReaderAnnotationRenderingTest {
                 db.rawQuery("SELECT count(*) FROM rhizome_outbox",null).use {c ->c.moveToFirst();c.getLong(0)}
             }
             val draftHistory=outboxCount()
-            suspend fun adjust() {
+            suspend fun adjust(tool:Int=android.view.MotionEvent.TOOL_TYPE_FINGER) {
                 js("document.querySelector('foliate-paginator').getContents()[0].doc.querySelector('mark').click();true")
                 waitFor("document.getElementById('savedHighlightOptions').open")
                 assertEquals("\"Edit Handwriting\"",js("document.getElementById('writeSavedHighlight').textContent"))
                 js("document.getElementById('adjustSavedHighlight').click();true")
                 waitFor("!document.getElementById('selection').hidden")
-                js("document.getElementById('boundaryMenu').click();document.getElementById('endEarlier').click();document.getElementById('boundaryOptions').close();true")
+                js("document.getElementById('boundaryMenu').click();true")
+                // Android hit-tested drag, with the word popup still open. A DOM .click()
+                // bypasses modal inertness and would miss the blocked-handle regression.
+                val drag=JSONObject(js("""(()=>{
+                    const h=document.getElementById('startHandle'),b=h.getBoundingClientRect();
+                    const d=document.querySelector('foliate-paginator').getContents()[0].doc;
+                    const n=d.createTreeWalker(d.querySelector('mark'),NodeFilter.SHOW_TEXT).nextNode(),r=d.createRange();
+                    r.setStart(n,7);r.setEnd(n,8);const t=r.getBoundingClientRect(),f=d.defaultView.frameElement.getBoundingClientRect();
+                    const x=b.x+b.width/2,y=b.y+b.height/2;
+                    return {x,y,width:innerWidth,hit:document.elementFromPoint(x,y)?.id,
+                        toX:f.x+t.x+t.width/2+x-Number(h.dataset.tipX),
+                        toY:f.y+t.y+t.height/2+y-Number(h.dataset.tipY)+Number(h.dataset.lineHeight)/2};})()"""))
+                assertEquals("startHandle",drag.getString("hit"))
+                val origin=IntArray(2);var scale=1.0
+                instrumentation.runOnMainSync {
+                    val web=ReaderHostQualificationSession.view!!.web;web.getLocationOnScreen(origin)
+                    scale=web.width/drag.getDouble("width")
+                }
+                val down=android.os.SystemClock.uptimeMillis()
+                fun touch(action:Int,fraction:Double) {
+                    val properties=android.view.MotionEvent.PointerProperties().apply {this.id=0;toolType=tool}
+                    val coords=android.view.MotionEvent.PointerCoords().apply {
+                        x=(origin[0]+(drag.getDouble("x")+(drag.getDouble("toX")-drag.getDouble("x"))*fraction)*scale).toFloat()
+                        y=(origin[1]+(drag.getDouble("y")+(drag.getDouble("toY")-drag.getDouble("y"))*fraction)*scale).toFloat()
+                        pressure=1f;size=0.1f
+                    }
+                    val event=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,1,
+                        arrayOf(properties),arrayOf(coords),0,0,1f,1f,0,0,
+                        if(tool==android.view.MotionEvent.TOOL_TYPE_STYLUS) android.view.InputDevice.SOURCE_STYLUS else android.view.InputDevice.SOURCE_TOUCHSCREEN,0)
+                    try {instrumentation.sendPointerSync(event)} finally {event.recycle()}
+                }
+                touch(android.view.MotionEvent.ACTION_DOWN,0.0)
+                try {for(step in 1..12) {delay(20);touch(android.view.MotionEvent.ACTION_MOVE,step/12.0)}}
+                finally {touch(android.view.MotionEvent.ACTION_UP,1.0)}
+                waitFor("!document.getElementById('boundaryOptions').open")
+                assertEquals("true",js("Number(document.getElementById('startHandle').dataset.tipX)>${drag.getDouble("x")}"))
             }
             adjust();assertEquals(draftHistory,outboxCount())
             js("document.getElementById('cancel').click();true")
             assertEquals(beforeAnchor.anchor,access.annotation("note")!!.anchor);assertEquals(draftHistory,outboxCount())
-            adjust()
+            adjust(android.view.MotionEvent.TOOL_TYPE_STYLUS)
             val beforeAnchorRefresh=ReaderHostQualificationSession.refreshes
             js("document.getElementById('highlight').click();true")
             waitFor("document.getElementById('status').textContent==='Highlight Updated · Handwriting Preserved'")

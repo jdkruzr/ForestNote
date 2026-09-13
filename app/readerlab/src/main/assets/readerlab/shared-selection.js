@@ -85,7 +85,7 @@ export function setupSharedSelection(reader, $, { rpc, current, editing, beginEd
     } finally { running = false; chrome(); }
   }
   popups.register($('savedHighlightOptions'), { closeButton: $('closeSavedHighlight') });
-  popups.register($('boundaryOptions'));
+  popups.register($('boundaryOptions'), { modal: false });
   reader.addEventListener('highlightmenu', ({ detail: { annotation } }) => {
     if (action || editing() || reader.navigationLocked || reader.busy) return;
     savedHighlight = annotation;

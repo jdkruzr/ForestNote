@@ -253,6 +253,8 @@ the headless result does not activate production integration.
    **D44 saved boundaries:** [anchor-only adjustment](2026-09-13-forestread-saved-highlight-adjustment.md)
    reuses the live handles for existing highlights, including those with handwriting. Apply is a
    retryable atomic contribution; Cancel authors nothing and ink/box geometry stay intact.
+   Physical follow-up fixed the word popup blocking visible handles; its nonmodal coexistence
+   now has hit-tested finger/stylus regression coverage on the Go (see the D44 follow-up).
    The [library navigation outline](2026-09-13-forestread-library-navigation.md) records a proposed
    top-level Notebooks/Books switch; its final UI is not approved or implemented yet.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,

@@ -43,6 +43,32 @@ for (const height of [0, 3000]) test(`saved highlight adjustment preserves ${hei
   const mark = () => page.evaluate(() => document.querySelector('foliate-paginator').getContents()[0].doc.querySelector('mark').click());
   const adjust = async () => { await mark(); await page.locator('#adjustSavedHighlight').click(); };
   await adjust(); await expect(page.locator('#startHandle')).toBeVisible(); await expect(page.locator('#write')).toBeHidden();
+  // Real hit-tested drag with the word menu still open, across the inserted ink gap.
+  await page.locator('#boundaryMenu').click();
+  const drag = await page.evaluate(async () => {
+    const { TextIndex } = await import('/readerlab/anchors.js');
+    const d = document.querySelector('foliate-paginator').getContents()[0].doc;
+    const h = document.getElementById('endHandle'), b = h.getBoundingClientRect();
+    const r = new TextIndex(d).rects(7, 8)[0], f = d.defaultView.frameElement.getBoundingClientRect();
+    const x = b.x + b.width / 2, y = b.y + b.height / 2;
+    const end = new TextIndex(d).rects(6, 10).at(-1);
+    return { x, y, target: document.elementFromPoint(x, y)?.id, tipX: f.x + end.right, tipY: f.y + end.bottom,
+      toX: f.x + r.x + r.width / 2 + x - Number(h.dataset.tipX),
+      toY: f.y + r.y + r.height / 2 + y - Number(h.dataset.tipY) + Number(h.dataset.lineHeight) / 2 };
+  });
+  expect(drag.target).toBe('endHandle');
+  await page.mouse.move(drag.x, drag.y); await page.mouse.down();
+  await page.mouse.move(drag.toX, drag.toY, { steps: 12 });
+  await expect(page.locator('#boundaryOptions')).toBeHidden();
+  await expect.poll(async () => Number(await page.locator('#endHandle').getAttribute('data-tip-x'))).toBeCloseTo(drag.tipX, 1);
+  await expect.poll(async () => Number(await page.locator('#endHandle').getAttribute('data-tip-y'))).toBeCloseTo(drag.tipY, 1);
+  const movedTip = await page.locator('#endHandle').getAttribute('data-tip-y');
+  await page.mouse.up();
+  expect(await page.locator('#endHandle').getAttribute('data-tip-y')).toBe(movedTip);
+  // No save until Apply; cancellation still restores the original stored anchor.
+  await page.locator('#cancel').click();
+  expect(await page.evaluate(() => note.anchor.quote)).toBe('Write');
+  await adjust();
   await page.locator('#boundaryMenu').click(); await page.locator('#endLater').click(); await page.keyboard.press('Escape');
   expect(await page.locator('#reader').boundingBox()).toEqual(bounds);
   expect(await page.evaluate(() => calls.filter(r => r.action === 'adjustHighlight').length)).toBe(0);

@@ -10,7 +10,7 @@ body.selectingText .menuLabel{display:none}
 body.selectingText #menu{width:var(--menu-icon-target)}
 #draftHighlight{position:fixed;inset:0;z-index:3;pointer-events:none}
 #draftHighlight span{position:absolute;background:rgba(0,0,0,.2);pointer-events:none}
-#boundaryOptions{padding:var(--menu-heading-inset)}
+#boundaryOptions{padding:var(--menu-heading-inset);z-index:5}
 #boundaryOptions .row{border:0;padding:0}
 #boundaryOptions::backdrop{background:transparent}
 button:disabled{opacity:.5}

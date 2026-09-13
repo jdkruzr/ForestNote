@@ -72,6 +72,33 @@ Physical handoff: tap highlighted text, choose Adjust Highlight, drag a drop or 
 then Apply. Check that the handwriting follows the new attachment without changing shape/size.
 Try Cancel too. Physical handle/refresh acceptance remains separate from the automated checks.
 
+### Follow-up: boundary popup blocked handle input
+
+The physical check found a real UI bug: `boundaryOptions` used `showModal()`, making the
+visible handles inert outside the dialog. Live Go WebView hit-testing returned the popup,
+not either handle. Earlier scripted `.click()` checks bypassed this input boundary.
+
+The common popup host now supports opt-in nonmodal controls; only the boundary popup in
+the shared reader and standalone lab uses this mode. A pointer-down on an exposed handle
+dismisses the popup without restoring focus, letting that same gesture acquire pointer
+capture and adjust the highlight. Escape still closes the popup; ordinary menus remain modal.
+No storage, sync, ink-rendering or production-activation changes.
+
+Verification: **119 browser tests** pass (`/tmp/forestread-d45-browser-full.log`), including
+live draft-end movement with the popup open, across an inserted handwriting gap, then Cancel.
+**4 Android rendering/integration tests** pass on Go 10.3 II
+(`/tmp/forestread-d45-native-final.log`); the saved-anchor test now injects hit-tested Android
+finger and stylus drags, Cancel/Apply, unchanged ink provenance and one settled refresh.
+An initial device-test coordinate landed under the visible popup itself; the final test grabs
+the exposed start handle, matching the coexistence contract instead of clicking through menu content.
+
+Certificate-matched qualification pair installed and hashes verified:
+app `61e9d71150b0836822b25ce5fd5da7809c443192cd408dc28d59e69643a2a8c6`;
+test `5c78e1de9377b8318092fcb9c4a3d0eac30e89953e58ebffd1f06946eea17e18`.
+Interactive database dumps are identical before/after: 51 strokes / 5,454 points / 67 outbox
+rows, integrity OK. Normal FN main-library SHA-256 remains
+`23c9904722e978eaac813ebef53f3a65f7e59785a53b73c9c7d4fa45a63bc691`.
+
 ## Next and library navigation
 
 Annotation browsing/recognized-text search and integrated Viwoods acceptance remain next.
