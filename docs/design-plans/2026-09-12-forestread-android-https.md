@@ -44,10 +44,17 @@ For networks where that does not converge, `--route adb-proxy` is an explicit al
 automatic retry/fallback. An additional ADB reverse mapping carries HTTP CONNECT to a loopback
 proxy that accepts only this exact disposable hostname on port 443. It forwards opaque TLS bytes,
 does not terminate TLS, accepts no proxy/administrator credential and cannot reach arbitrary
-destinations. Instrumentation installs a process-local `ProxySelector` only for that host; the
-untrusted loopback test stays direct. Android still performs the real TLS handshake and default
+destinations. Instrumentation selects an explicit per-connection HTTP proxy only for that host;
+the untrusted loopback test stays direct. The native transport's connection factory supplies real
+`HttpsURLConnection` sockets, never simulated responses or replacement trust/hostname checks.
+The direct route retains the default factory. Android still performs the real TLS handshake and default
 certificate/hostname checks. No tablet-wide DNS/proxy setting is changed. Reports distinguish
 direct Wi-Fi routing from this ADB carrier; neither proves production network reliability.
+
+D31 tightened this from a process-global `ProxySelector` to explicit per-connection routing after
+an extra regression reached direct DNS in a later process, consistent with Android startup replacing
+the global selector. Explicit routing removes that dependency. This changes only the
+qualification harness, not the production HTTPS adapter or device-wide network settings.
 
 The first successful UB enrollment response is recorded, then replaced with **503** before it
 reaches Android. This proves retry after a committed-but-undelivered success; it is not a claim

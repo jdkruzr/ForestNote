@@ -240,14 +240,16 @@ class NotebookRepository private constructor(
          * entry point. It deliberately bypasses external-storage discovery/migration.
          * Uses exactly the production helper, migration callback and SQLite binding.
          */
-        fun openIsolatedQualification(context: Context, runId: String): NotebookRepository {
+        fun openIsolatedQualification(context: Context, runId: String,
+            qualifyWriterUpgrade:Boolean = false, upgradeCheckpoint:()->Unit = {}): NotebookRepository {
             val app = context.applicationContext
             check(app.packageName == "com.forestnote.qualification" &&
                 app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
                 "Isolated qualification package required"
             }
             require(Regex("[A-Za-z0-9_-]{1,64}").matches(runId)) { "Invalid qualification run ID" }
-            return openAndroidDatabase(app, "reader-qualification-$runId.db", System::currentTimeMillis, true)
+            return openAndroidDatabase(app, "reader-qualification-$runId.db", System::currentTimeMillis, true,
+                qualifyWriterUpgrade,upgradeCheckpoint)
         }
 
         /** Only NEW recovery stages; archives and published working files never use
@@ -277,14 +279,15 @@ class NotebookRepository private constructor(
         }
 
         private fun openAndroidDatabase(dbContext: Context, filename: String, now: () -> Long,
-            allowStorageExtension: Boolean): NotebookRepository {
+            allowStorageExtension: Boolean, qualifyWriterUpgrade:Boolean = false,
+            upgradeCheckpoint:()->Unit = {}): NotebookRepository {
             // Build the SQLDelight Android driver and the RhizomeSync handle over ONE shared
             // SupportSQLiteOpenHelper, so the adapter's `rhizome_*` tables and SQLDelight's data tables
             // live on the same connection (and the same write transaction — see Phase 8 C3).
             val helper = FrameworkSQLiteOpenHelperFactory().create(
                 SupportSQLiteOpenHelper.Configuration.builder(dbContext)
                     .name(filename)
-                    .callback(PreservingDatabaseCallback())
+                    .callback(PreservingDatabaseCallback(qualifyWriterUpgrade,upgradeCheckpoint))
                     .build()
             )
             val driver = AndroidSqliteDriver(helper)

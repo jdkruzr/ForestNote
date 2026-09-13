@@ -125,6 +125,8 @@ try {
       'core/format/src/main/kotlin/com/forestnote/core/format/NotebookRepository.kt',
       'core/format/src/main/kotlin/com/forestnote/core/format/SchemaReconciliation.kt',
       'core/format/src/main/kotlin/com/forestnote/core/format/LegacySyncHistory.kt',
+      'core/format/src/main/kotlin/com/forestnote/core/format/KnownWriterUpgrade.kt',
+      'core/format/src/test/kotlin/com/forestnote/core/format/KnownWriterUpgradeTest.kt',
       'core/format/src/test/kotlin/com/forestnote/core/format/CursorResetTest.kt',
       'core/format/src/test/kotlin/com/forestnote/core/format/OutboxCaptureTest.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/SyncController.kt',

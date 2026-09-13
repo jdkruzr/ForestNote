@@ -9,6 +9,7 @@ export const target = 'com.forestnote.qualification';
 const runner = `${target}.test/androidx.test.runner.AndroidJUnitRunner`;
 const testClass = 'com.forestnote.app.notes.ReaderDeviceQualificationTest';
 const crashVerifiers = new Map([
+    ['columns-kill','columns-verify'],
     ['crash-install','verify-crash'],
     ['recovery-kill-snapshot','recovery-verify-snapshot'],
     ['recovery-kill-fresh','recovery-verify-fresh'],
@@ -72,7 +73,7 @@ export async function run(options) {
         }
         report.fingerprint=(await call(['getprop','ro.build.fingerprint'])).output.trim();
         const phases=options['--phase-set']==='upgrade' ? ['upgrade-verify'] :
-            ['smoke','sleep-wake','handoff','enrollment-seed','enrollment-verify',
+            ['smoke','sleep-wake','handoff','enrollment-seed','enrollment-verify','columns-seed','columns-kill','columns-verify',
                 'recovery','recovery-kill-snapshot','recovery-verify-snapshot','recovery-kill-fresh','recovery-verify-fresh',
                 'setup-ui','selection-kill-before','selection-verify-before','selection-kill-after','selection-verify-after',
                 'seed','verify','crash-install','verify-crash'];

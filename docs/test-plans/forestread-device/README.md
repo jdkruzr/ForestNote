@@ -1,4 +1,4 @@
-# D23–D30: disposable Android storage and HTTPS qualification
+# D23–D31: disposable Android storage, upgrade and HTTPS qualification
 
 Returns to [D22's hardware handoff](../../design-plans/2026-09-12-forestread-android-foundation.md)
 and [the larger plan, item 3](../../design-plans/2026-09-12-forestread-progress-review.md#recommended-next-order).
@@ -341,3 +341,47 @@ unchanged: `e9d4b69ed4a378730ef6d84431db48408da13a1cf49acbc54624a095bd29c549`.
 This is not an independent snapshot of a live WAL. Production UB and Rhizome checkouts are
 unchanged. The network-enabled lab remains installed for the next qualification gate, with no
 live test endpoint. Next: known-prior-registry/mixed transport activation and ordinary pull.
+
+## D31: known-prior Android writer upgrade
+
+The standard runner now has **22 phases**. `columns-seed` creates a private reconstructed v19
+writer schema with the known v4 registry, received notebook/page/ink provenance and a queued local
+folder. `columns-kill` dies inside the real Android migration transaction after repair-ticket
+publication. `columns-verify` requires its armed marker and a different process, verifies rollback,
+tests unknown-marker refusal, retries, reopens without another reset, and replays original versions
+through `NotebookRepository`. Geometry becomes 10000×16000 and the calligraphy seed becomes 42;
+the queued edit and original row versions are unchanged. No network is used by these phases.
+
+Only the explicit qualification opener enables this callback; main-app migration and mixed
+transport remain gated. Already-upgraded files are not guessed at or retroactively repaired.
+See [D31's exact scope](../../design-plans/2026-09-12-forestread-android-writer-upgrade.md).
+
+Go 6 II: **22/22** in `/tmp/forestread-device-jy4OUL/report.json`. The first attempt,
+`/tmp/forestread-device-hk46GN/report.json`, stopped in fixture construction because Android already
+owned `android_metadata`; the corrected fixture excludes that platform table. No failed phase is
+counted as passing. **397 app + 292 format JVM tests** pass, including five new policy tests; eight
+host tests pass. An existing shutdown test now awaits its own detached completion view, removing
+an ordering assumption without changing shutdown behavior.
+
+`/tmp/forestread-stage-2-RACgYm/report.json`: **186 headless Kotlin tests**, **61 process scenarios**,
+Go race checks, 13 HUFF vectors and eight unchanged books; all **177** source hashes match. The
+new policy tests execute in the Android-module JVM suite, not in the standalone headless count.
+
+The extra HTTPS regression initially passed four phases, then reached `UnknownHostException` in
+`https-revoked` (`/tmp/forestread-https-g4ADcB/report.json`). Android startup can replace a process-wide
+proxy selector; the qualification harness now selects its ADB carrier per actual HTTPS connection.
+It still uses real `HttpsURLConnection` sockets and default Android certificate/hostname checks,
+without injected responses or a tablet-wide proxy change. The corrected run passes **5/5** in
+`/tmp/forestread-https-6iuD4B/report.json`, with eleven carrier connections and no rejected destinations.
+This proves the explicit ADB-carried route, not direct tablet Wi-Fi/DNS reliability.
+The final standard regression also passes **22/22**, `/tmp/forestread-device-eIQRBb/report.json`,
+on the same installed APK pair as that successful HTTPS run. All nine HTTPS source hashes match.
+
+Installed/local APK hashes for this checkpoint:
+
+- Qualification app: `e3aad981949250d210aa7ec002fd6e1d2126c152f3eceb38bd80449bceef60fd`
+- Instrumentation: `0954e8e9dcf46a4fa061092a0c626831e1ae06cd748c0c793be818d678d84028`
+
+Same debug signing certificate and package IDs as D30; only in-place lab updates, no uninstall or
+data clear. Normal FN's package path and main library-file hash remain unchanged. No production UB
+deployment, Rhizome revision change, wire-hash change or historical migration-file rewrite.

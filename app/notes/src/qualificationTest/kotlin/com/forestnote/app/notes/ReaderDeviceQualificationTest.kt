@@ -80,6 +80,9 @@ class ReaderDeviceQualificationTest {
                 "handoff" -> closeHandoff()
                 "enrollment-seed" -> enrollmentSeed()
                 "enrollment-verify" -> enrollmentVerify()
+                "columns-seed" -> WriterUpgradeQualification(context,runId,invocation,processNonce).seed()
+                "columns-kill" -> WriterUpgradeQualification(context,runId,invocation,processNonce).kill()
+                "columns-verify" -> WriterUpgradeQualification(context,runId,invocation,processNonce).verify()
                 "https-refusal", "https-seed", "https-verify", "https-confirmed", "https-revoked" ->
                     httpsEnrollment(phase)
                 "recovery" -> recovery()
@@ -356,19 +359,16 @@ class ReaderDeviceQualificationTest {
         require(Regex("https://[a-z0-9-]+\\.trycloudflare\\.com/[0-9a-f]{64}").matches(server))
         val password=requireNotNull(args.getString("httpsPassword"))
         require(Regex("[0-9a-f]{64}").matches(password))
-        args.getString("httpsProxyPort")?.let {value ->
+        val proxy=args.getString("httpsProxyPort")?.let {value ->
             require(Regex("[0-9]{1,5}").matches(value) && value.toInt() in 1..65535)
-            val host=java.net.URI(server).host
-            // Process-local network route only; native TLS and hostname validation remain
-            // untouched. Never proxies another destination, including the bad-TLS loopback.
-            java.net.ProxySelector.setDefault(object:java.net.ProxySelector() {
-                override fun select(uri:java.net.URI):List<java.net.Proxy> = listOf(
-                    if(uri.scheme=="https" && uri.host==host && uri.port in listOf(-1,443))
-                        java.net.Proxy(java.net.Proxy.Type.HTTP,java.net.InetSocketAddress("127.0.0.1",value.toInt()))
-                    else java.net.Proxy.NO_PROXY)
-                override fun connectFailed(uri:java.net.URI,sa:java.net.SocketAddress,ioe:java.io.IOException) = Unit
-            })
+            java.net.Proxy(java.net.Proxy.Type.HTTP,java.net.InetSocketAddress("127.0.0.1",value.toInt()))
         }
+        // Android may replace the global ProxySelector during process startup. Scope the
+        // test route per connection instead; no TLS/hostname verifier or response is injected.
+        fun connect(url:java.net.URL):javax.net.ssl.HttpsURLConnection =
+            (if(proxy!=null && url.host==java.net.URI(server).host && url.protocol=="https" && url.port in listOf(-1,443))
+                url.openConnection(proxy) else url.openConnection()) as javax.net.ssl.HttpsURLConnection
+        val native=if(proxy==null) HttpsEnrollmentTransport() else HttpsEnrollmentTransport(::connect)
         fun expect(actual:EnrollmentResult,expected:EnrollmentResult) {
             check(actual==expected) {"Expected $expected; got $actual"}
         }
@@ -379,7 +379,7 @@ class ReaderDeviceQualificationTest {
                 var ready=false
                 while(!ready) {
                     ready=withContext(Dispatchers.IO) {
-                        val connection=java.net.URL(server.substringBeforeLast('/')).openConnection() as javax.net.ssl.HttpsURLConnection
+                        val connection=connect(java.net.URL(server.substringBeforeLast('/')))
                         try {
                             connection.connectTimeout=2500;connection.readTimeout=2500
                             connection.instanceFollowRedirects=false;connection.useCaches=false
@@ -404,7 +404,7 @@ class ReaderDeviceQualificationTest {
         try {
             val identity=s.readerIdentity()
             val target=ReplicaCredentialScope(server,account,identity.first,identity.second)
-            val c=s.replicaEnrollment() // Actual default-trusted native transport, no injection.
+            val c=s.replicaEnrollment(native) // Real sockets and default platform trust.
             if(phase=="https-refusal") {
                 val untrusted=requireNotNull(args.getString("httpsUntrusted"))
                 require(Regex("https://127\\.0\\.0\\.1:[0-9]{1,5}").matches(untrusted))
@@ -413,7 +413,7 @@ class ReaderDeviceQualificationTest {
                 return
             }
             suspend fun capability(auth:String):Int = withContext(Dispatchers.IO) {
-                val connection=java.net.URL(server+"/sync/capabilities").openConnection() as javax.net.ssl.HttpsURLConnection
+                val connection=connect(java.net.URL(server+"/sync/capabilities"))
                 try {
                     connection.connectTimeout=10000;connection.readTimeout=15000
                     connection.instanceFollowRedirects=false;connection.useCaches=false
@@ -450,7 +450,7 @@ class ReaderDeviceQualificationTest {
                 check(checkNotNull(secrets.replicas.read(target)).enrolled)
                 if(phase=="https-revoked") {
                     check(capability("Bearer "+key.token)==401)
-                    expect(HttpsEnrollmentTransport().enroll(target,key.tokenHash,EnrollmentApproval(account,password)),EnrollmentResult.BINDING_CONFLICT)
+                    expect(native.enroll(target,key.tokenHash,EnrollmentApproval(account,password)),EnrollmentResult.BINDING_CONFLICT)
                     check(history(id)==expected.getValue("history").jsonPrimitive.content)
                     s.save(Stroke(points=listOf(StrokePoint(103,104,500,1))))
                     check(s.readerIdentity()==identity)

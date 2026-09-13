@@ -148,6 +148,9 @@ class StorageOwnerQueueTest {
             assertFailsWith<RejectedExecutionException> { store.save(Stroke(points = emptyList())) }
             release.countDown()
             store.shutdown()
+            // Detached completion views may run in either order; shutdown joins the
+            // root cleanup, not every previously registered thenApply callback.
+            close.get(5, TimeUnit.SECONDS)
             assertTrue(close.isDone)
             assertTrue(executor.isShutdown)
             val reopened = repo(file)

@@ -1,6 +1,22 @@
-# Stage 2 shared-library foundation (through D30)
+# Stage 2 shared-library foundation (through D31)
 
 Current status and remaining integration work: [2026-09-12 plan review](../../design-plans/2026-09-12-forestread-progress-review.md).
+
+## D31: known-prior writer upgrade on Android
+
+[D31](../../design-plans/2026-09-12-forestread-android-writer-upgrade.md) wires the known v4 physical
+v19→v20 transition into the preserving Android callback behind an explicit isolated-opener flag.
+The existing Rhizome repair API joins physical DDL and `user_version` publication in one transaction.
+Unknown prior markers or inconsistent/unbound history stop safely. No backfill, enrollment, reader
+transport activation or production callback opt-in is added. The old `.sqm` files are unchanged.
+
+Five new JVM tests and three Android phases cover field-only replay, refusal, rollback, process
+death, retry and no-op reopen, preserving queued notes and foreign versions. The Android fixture
+reconstructs v19 from generated DDL; it is not an installed historical APK or customer backup.
+The shared headless suite passes in `/tmp/forestread-stage-2-RACgYm/report.json`: 186 Kotlin tests,
+61 process scenarios, Go race checks and eight unchanged original books. All 177 source hashes match;
+the five new host-policy tests have separate Android-module JVM evidence, not extra headless cases.
+Next: capability-gated mixed transport under the shared owner and ordinary pull into a selected replica.
 
 ## D30: real tablet HTTPS enrollment
 

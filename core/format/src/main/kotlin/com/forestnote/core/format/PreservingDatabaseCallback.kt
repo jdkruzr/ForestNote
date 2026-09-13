@@ -7,10 +7,15 @@ import app.cash.sqldelight.driver.android.AndroidSqliteDriver
  * That is never automatic recovery for a user's shared library. Preserve the
  * original, fail the open and leave explicit recovery to the host UI/operator.
  */
-internal class PreservingDatabaseCallback : AndroidSqliteDriver.Callback(NotebookDatabase.Schema) {
+internal class PreservingDatabaseCallback(
+    private val qualifyWriterUpgrade:Boolean = false,
+    private val upgradeCheckpoint:()->Unit = {},
+) : AndroidSqliteDriver.Callback(NotebookDatabase.Schema) {
     override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // Android also wraps this callback and user_version in its transaction.
-        LegacySyncHistory.upgrade(SupportSqliteHandle(db), ForestNoteRegistry.registry,
+        if(qualifyWriterUpgrade) KnownWriterUpgrade.upgrade(SupportSqliteHandle(db),oldVersion,newVersion,
+            migrate={super.onUpgrade(db,oldVersion,newVersion)},checkpoint=upgradeCheckpoint)
+        else LegacySyncHistory.upgrade(SupportSqliteHandle(db), ForestNoteRegistry.registry,
             System::currentTimeMillis, oldVersion, newVersion) { from, to -> super.onUpgrade(db, from, to) }
     }
 

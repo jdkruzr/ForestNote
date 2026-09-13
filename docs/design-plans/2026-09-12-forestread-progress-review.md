@@ -174,6 +174,13 @@ the headless result does not activate production integration.
    explicit network lab build gains Internet permission; normal FN and production UB remain untouched.
    Next: known-prior-registry upgrade/mixed transport activation and ordinary pull into the selected
    fresh replica. This does not yet expose production Settings enrollment or shared-storage routing.
+   **D31 known-prior Android upgrade:** [qualified v19→v20 callback](2026-09-12-forestread-android-writer-upgrade.md)
+   records exact-version repair tickets with physical column changes in Android's upgrade transaction.
+   Unknown history refuses migration; killed upgrade rolls back and retries without changing queued
+   edits or foreign provenance. Equal replay restores geometry and brush fields without re-authoring.
+   This explicit lab gate does not activate ordinary production migrations or mixed sync. Next is
+   the shared-owner mixed transport gate and ordinary pull; already-upgraded uncertain files still
+   need explicit policy, not guessed historical repair.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 
