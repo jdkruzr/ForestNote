@@ -78,7 +78,9 @@ class ReaderInkQualificationActivity:Activity() {
                 val native=ReaderPreviewBackend(BackendDetector.detect(this@ReaderInkQualificationActivity).backend);backend=native
                 val inputSurface=if(native.requiresInputSurface()) SurfaceView(this@ReaderInkQualificationActivity).also {canvas.addView(it,FrameLayout.LayoutParams(-1,-1))} else null
                 val view=ReaderInkSurface(this@ReaderInkQualificationActivity,native).also {ink=it;ReaderInkQualificationSession.view=it}
-                view.strokes=loaded.preview().toMutableList();view.params=readerPenParams(BrushKind.BALLPOINT,35)
+                // Ballpoint currently maps to Boox SQUARE_PEN, whose nib-like live preview
+                // obscures continuity judgments. Use the native fountain path for this probe.
+                view.strokes=loaded.preview().toMutableList();view.params=readerPenParams(BrushKind.FOUNTAIN,35)
                 view.eraseEnabled=false
                 view.inputEnabled={resumed && !busy && !terminal && !workerFailed && hasWindowFocus() && (view.inStroke || loaded.state.value.canDraw)}
                 view.admitGesture={
@@ -113,7 +115,7 @@ class ReaderInkQualificationActivity:Activity() {
                             state.terminalCommitted -> "Edit Saved"
                             state.pending>0 -> "Saving In Order · ${state.pending} Queued"
                             state.reserved -> "Writing…"
-                            else -> "Saved In Shared Library · ${state.visibleStrokes} Strokes"
+                            else -> "Saved In Shared Library · ${state.visibleStrokes} ${if(state.visibleStrokes==1) "Stroke" else "Strokes"} · Fountain"
                         }
                         syncInput()
                         if(state.terminalCommitted && !terminal) {

@@ -42,6 +42,10 @@ class ReaderEditQueueQualificationTest {
             activity=ActivityScenario.launch(ReaderInkQualificationActivity::class.java);ready()
             val queue=checkNotNull(ReaderInkQualificationSession.queue)
             val oldView=checkNotNull(ReaderInkQualificationSession.view)
+            instrumentation.runOnMainSync {
+                assertEquals(BrushKind.FOUNTAIN,oldView.params.brushKind)
+                assertEquals(7,oldView.params.wMin);assertEquals(35,oldView.params.wMax)
+            }
             executor.execute {entered.countDown();check(gate.await(30,TimeUnit.SECONDS))}
             assertTrue(entered.await(5,TimeUnit.SECONDS))
             instrumentation.runOnMainSync {

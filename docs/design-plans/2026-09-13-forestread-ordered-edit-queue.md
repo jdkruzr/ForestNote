@@ -84,3 +84,33 @@ No production reader activation, normal-library migration, new sync contract or 
   skips, **61 process scenarios**, Go race/parity checks, 13 HUFF/CDIC oracle vectors and eight
   unchanged original books. All **207/207** recorded source hashes match, including the new
   queue and Android test sources. This does not turn unimplemented acceptance adapters into passes.
+
+## Physical burst follow-up
+
+The user drew five additional strokes and reports **nothing lagged or disappeared**. The closed
+database `/tmp/forestread-d40-burst.db` has six strokes total: the original 851 points followed by
+56, 53, 87, 63 and 33 points. All six are stored as ballpoint at fixed width 35, the original session
+is still open, `integrity_check=ok`, and the outbox grew from four to nine rows / sequence nine.
+Screenshot: `/tmp/forestread-d40-burst.png`. This qualifies physical burst responsiveness, not
+exact fidelity of the firmware's live brush.
+
+The user found that live preview looked calligraphic and made continuity harder to judge.
+The current Boox mapping sends ballpoint/fineliner through `StrokeStyle.SQUARE_PEN`, also used for
+chisel-family previews. Saved canonical strokes remain ballpoint; the mismatch is in the live
+preview path. At the user's suggestion the **qualification probe only** now selects fountain,
+width range 7–35, and names it in the saved-state label. This retains native Boox input and its
+FOUNTAIN firmware style, rather than changing input routes for the queue comparison. Existing
+ink is not converted; shared writer mappings and production defaults are unchanged. The broader
+ballpoint/fineliner firmware mapping deserves separate cross-device qualification.
+
+The Android queue test now asserts the probe's fountain selection and width range before feeding
+its native burst. This small UI/test follow-up postdates the full headless source snapshot above;
+that run remains evidence for the unchanged queue/storage code, not these two revised files.
+
+Fountain follow-up build passes (`/tmp/forestread-d40-fountain-build.log`), and all **25 native
+tests pass again** (`/tmp/forestread-d40-fountain-native.log`). Certificate-matched in-place APKs:
+app `7daf9e337082c24fabc083a4d48f191360016391b157f1fd6e67590803c36479`,
+test `ae311bdbdc3e4df7f537d33836cc0ce48e35a50c360e144ec160279d7a8cb997`;
+installed hashes match. The closed interactive database remains `.dump`-identical to the six-stroke
+burst snapshot (`/tmp/forestread-d40-fountain-preserved.db`). Normal FN's package path/library hash
+remain unchanged. Physical judgment of the new fountain preview is the next handoff.
