@@ -232,6 +232,11 @@ the headless result does not activate production integration.
    re-authoring history. The user's saved stroke now appears under its EPUB anchor; unknown/pending
    projections are not treated as empty ink. Next: ordered session edit queue and native input-slice
    attachment, then contextual controls and cross-backend acceptance. Production remains gated.
+   **D40 ordered native edits:** [owner-retained queue and qualification boundary](2026-09-13-forestread-ordered-edit-queue.md)
+   queues explicit stroke/erase/property/terminal commands with stable retry identities, preserves
+   accepted work across View recreation and drains before owner closure. The separate drawing
+   probe uses this path; pending RAM is not a process-death journal. Contextual in-document input,
+   eraser reservation and compact editing controls remain next; production activation is still off.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

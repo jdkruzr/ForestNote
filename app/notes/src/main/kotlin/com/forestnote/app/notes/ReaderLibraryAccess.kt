@@ -36,6 +36,8 @@ internal class ReaderLibraryAccess(
     private val lifetime=SupervisorJob()
     private val scope=CoroutineScope(lifetime+Dispatchers.Default)
     private val cacheGate=Mutex()
+    private val editGate=Mutex()
+    @Volatile private var editor:ReaderEditQueue?=null
     private val leases=mutableSetOf<PreparedReaderBook>()
     @Volatile var cacheCleanupFailures:Int=0
         private set
@@ -99,6 +101,9 @@ internal class ReaderLibraryAccess(
         check(row.columns["state"]=="open") {"Session is terminal"}
         boundSession(s,id)
     }
+    suspend fun annotationSessionState(id:String):SessionState? = request {s ->
+        s.edits.resumeSession(id)?.columns?.get("state")?.let {value -> SessionState.entries.single {it.wire==value}}
+    }
     suspend fun createAnnotation(command:String,annotation:String,book:String,session:String,
         anchor:VersionedJson,width:Long,height:Long):ReaderAnnotationSession = request {s ->
         check(s.books.open(book)?.deleted==false) {"Book unavailable"}
@@ -124,6 +129,32 @@ internal class ReaderLibraryAccess(
     }
     suspend fun finishAnnotation(command:String,session:ReaderAnnotationSession) = request {s ->owned(session);s.edits.finish(command,session.id)}
     suspend fun cancelAnnotation(command:String,session:ReaderAnnotationSession) = request {s ->owned(session);s.edits.cancel(command,session.id)}
+
+    fun existingEditQueue(session:String):ReaderEditQueue? = editor?.takeIf {it.session.id==session && !it.state.value.sealed}
+    /** One native editor per owner. Reattach to pending/error work instead of loading over it. */
+    suspend fun editQueue(session:ReaderAnnotationSession):ReaderEditQueue = request {s ->
+        owned(session)
+        editGate.withLock {
+            editor?.let {old ->
+                if(old.session.id==session.id && !old.state.value.sealed) return@withLock old
+                check(old.state.value.settled) {"Previous editor still has unsaved work"}
+                old.close()
+            }
+            check(s.edits.resumeSession(session.id)?.columns?.get("state")=="open") {"Session is terminal"}
+            val projection=checkNotNull(s.projections.read(session.annotation))
+            check(projection.status==ProjectionStatus.READY && projection.visible) {"Annotation is not ready for editing"}
+            ReaderEditQueue(session,projection.strokes.map(ReaderInkCodec::decode),{command,edit ->
+                // Captured owner storage remains alive until queue.close drains this stream.
+                // No fresh public NotebookStore request is needed during owner shutdown.
+                when(edit) {
+                    is ReaderQueuedEdit.Append -> s.edits.appendStroke(command,session.id,ReaderInkCodec.encode(edit.stroke))
+                    is ReaderQueuedEdit.Erase -> edit.ids.forEachIndexed {index,id -> s.edits.erase("$command-$index",session.id,id,edit.active)}
+                    is ReaderQueuedEdit.Property -> s.edits.setProperty(command,session.id,edit.property,edit.value)
+                    is ReaderQueuedEdit.End -> if(edit.cancel) s.edits.cancel(command,session.id) else s.edits.finish(command,session.id)
+                }
+            }).also {editor=it}
+        }
+    }
 
     /** Stream off-main and verify the complete cache copy before exposing it.
      * Metadata-only or deleted books never fall back to a lab/file copy.
@@ -171,6 +202,7 @@ internal class ReaderLibraryAccess(
     }
     suspend fun close() {
         closing=true;lifetime.cancelAndJoin()
+        editGate.withLock {editor?.close()}
         withContext(NonCancellable+Dispatchers.IO) {
             cacheGate.withLock {
                 // Derived cache cleanup must not strand the authoritative SQLite owner.

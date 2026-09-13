@@ -76,8 +76,8 @@ keeps the missing-head fixture, covering text continuity, non-highlighted notes 
   “Write here.” Screenshot: `/tmp/forestread-d39-reading.png`. Closed database comparison with
   D38's snapshot is an identical complete SQLite `.dump`, `integrity_check=ok`, one open session,
   and four outbox rows / maximum sequence 4. Readback copy: `/tmp/forestread-d39-readback.db`.
-  The original stroke/session are neither replaced nor finished. Physical-panel confirmation
-  of this newly composed document view remains separate from D38's native-probe confirmation.
+  The original stroke/session are neither replaced nor finished. The user also confirmed the
+  composed document view has **no gaps and no ghosting** on the physical panel.
 - Installed isolated APK SHA-256:
   `72fd54e51fad9489fd7e58775188d07f5f19d4ce7d28e61fba292cd38ab8b04d`;
   test APK `7d45575bd2f152be4503f34e1a598caf21a1dbb91f83158aa9c86050cdf4c50c`.

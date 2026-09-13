@@ -35,6 +35,8 @@ class ReaderInkSurface(context: Context, private val backend: InkBackend,
     var strokeCommitted: ((Stroke) -> Unit)? = null
     var strokesErased: ((Set<String>) -> Unit)? = null
     var inputEnabled: () -> Boolean = { true }
+    /** Atomic host reservation immediately before accepting a new drawing gesture. */
+    var admitGesture: () -> Boolean = { true }
     var eraseEnabled: Boolean = true
     var strokeState: ((Boolean) -> Unit)? = null
     var workStateChanged: (() -> Unit)? = null
@@ -266,6 +268,7 @@ class ReaderInkSurface(context: Context, private val backend: InkBackend,
         if (phase == InkPhase.DOWN) {
             if (workPending || !canvasReady || inStroke || previewClosed) return
             if (sample.vx !in 0..canvasWidth || sample.vy !in 0..(sliceEnd - sliceStart).roundToInt()) return
+            if (!admitGesture()) return
             inStroke = true; strokeState?.invoke(true)
             cancelPreview(); previewFrames = 0; worstPreviewUs = 0
             builder = StrokeBuilder(params.color, params.wMin, params.wMax, params.brushKind)

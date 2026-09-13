@@ -70,6 +70,20 @@ class ReaderInkSurfaceTest {
         }
     }
 
+    @Test fun rejectedReservationNeverStartsOrCommitsAPartialGesture() = instrumentation.runOnMainSync {
+        val backend=BatchBackend();val surface=view(backend)
+        try {
+            var admitted=0;var committed=0;var states=0
+            surface.admitGesture={admitted++;false}
+            surface.strokeCommitted={committed++};surface.strokeState={states++}
+            feed(surface,points(10))
+            assertEquals(1,admitted);assertEquals(0,committed);assertEquals(0,states)
+            assertFalse(surface.inStroke);assertTrue(surface.strokes.isEmpty());assertEquals(0,backend.commits)
+            surface.admitGesture={admitted++;true};feed(surface,points(10))
+            assertEquals(2,admitted);assertEquals(1,committed);assertEquals(2,states)
+        } finally {surface.releasePreview()}
+    }
+
     @Test fun incrementalCommitMatchesFullCanonicalReplayForEveryBrush() = instrumentation.runOnMainSync {
         val view = view()
         for (kind in BrushKind.entries) {

@@ -99,6 +99,66 @@ class ReaderLibraryAccessTest {
         } finally {s.shutdown()}
     }
 
+    @Test fun ownerQueueReattachesAndShutdownDrainsAcceptedWritesInOrder()=runBlocking<Unit> {
+        val file=File(temp.root,"queue-owner.db");val s=open(file)
+        try {
+            val a=s.readerLibraryForQualification(temp.root)
+            val book=a.importBook("book",{bytes().inputStream()}).book.id
+            val session=a.createAnnotation("create","note",book,"edit",anchor,10000,1000)
+            val q=a.editQueue(session)
+            repeat(12) {i ->q.append(checkNotNull(q.reserveGesture()),Stroke(id="ink-$i",points=listOf(StrokePoint(i,i,500,i.toLong()))))}
+            assertSame(q,a.editQueue(session));assertSame(q,a.existingEditQueue(session.id))
+            assertEquals(12,q.preview().size);assertTrue(q.end(false))
+            // The public store closes first; the queue must still finish through its captured owner storage.
+            s.shutdown()
+            assertTrue(q.state.value.terminalCommitted)
+            assertEquals((0..11).map {listOf("ink-$it")},sql(file,"SELECT id FROM reader_stroke ORDER BY paint_order"))
+            assertEquals(listOf(listOf("finished")),sql(file,"SELECT state FROM reader_edit_session WHERE id='edit'"))
+            assertNull(q.reserveGesture())
+        } finally {s.shutdown()}
+    }
+
+    @Test fun queuedCancelMasksOnlyItsContributionsAndSameOwnerDoesNotMeanSameSession()=runBlocking<Unit> {
+        val s=open(File(temp.root,"queue-cancel.db"))
+        try {
+            val a=s.readerLibraryForQualification(temp.root)
+            val book=a.importBook("book",{bytes().inputStream()}).book.id
+            val original=a.createAnnotation("create","note",book,"original",anchor,10000,1000)
+            a.appendAnnotationStroke("old",original,ink("old"));a.finishAnnotation("finish",original)
+            val edit=a.beginAnnotation("edit","note","edit");val q=a.editQueue(edit)
+            assertTrue(q.erase(setOf("old")))
+            q.append(checkNotNull(q.reserveGesture()),Stroke(id="new",points=listOf(StrokePoint(1,2,500,3))))
+            assertTrue(q.property(AnnotationProperty.HEIGHT,VersionedJson("""{"version":1,"height":9000}""")))
+            assertTrue(q.end(true));withTimeout(5000) {q.awaitSettled()}
+            val restored=checkNotNull(a.annotation("note"))
+            assertEquals(listOf("old"),restored.strokes.map {it.id});assertEquals(1000L,restored.effectiveHeight)
+            assertEquals(SessionState.CANCELLED,a.annotationSessionState(edit.id))
+            val next=a.beginAnnotation("next","note","next")
+            assertNotSame(q,a.editQueue(next));assertTrue(q.state.value.sealed)
+            assertNull(a.existingEditQueue(edit.id))
+        } finally {s.shutdown()}
+    }
+
+    @Test fun ambiguousQueueRetryUsesRealCommandReceiptWithoutDuplicateRowsOrOutbox()=runBlocking<Unit> {
+        val file=File(temp.root,"queue-retry.db");val s=open(file);var q:ReaderEditQueue?=null
+        try {
+            val a=s.readerLibraryForQualification(temp.root)
+            val book=a.importBook("book",{bytes().inputStream()}).book.id
+            val session=a.createAnnotation("create","note",book,"edit",anchor,10000,1000)
+            var first=true
+            q=ReaderEditQueue(session,emptyList(),{command,edit ->
+                a.appendAnnotationStroke(command,session,ReaderInkCodec.encode((edit as ReaderQueuedEdit.Append).stroke))
+                if(first) {first=false;error("Simulated lost local completion after committed receipt")}
+            })
+            q.append(checkNotNull(q.reserveGesture()),Stroke(id="one",points=listOf(StrokePoint(1,2,500,3))))
+            withTimeout(5000) {q.awaitSettled()};assertNotNull(q.state.value.failedCommand)
+            val before=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            assertTrue(q.retry());withTimeout(5000) {q.awaitSettled()}
+            assertEquals(before,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            assertEquals(listOf("one"),a.annotation("note")!!.strokes.map {it.id})
+        } finally {q?.close();s.shutdown()}
+    }
+
     @Test fun boundedPagesAndLeasesCannotDeleteAnotherOwnersCache()=runBlocking<Unit> {
         val s=open(File(temp.root,"pages.db"));val other=open(File(temp.root,"other.db"))
         try {

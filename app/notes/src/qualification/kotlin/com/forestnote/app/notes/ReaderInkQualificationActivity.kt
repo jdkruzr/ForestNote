@@ -8,6 +8,7 @@ import android.widget.*
 import com.forestnote.core.ink.*
 import com.forestnote.core.reader.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collect
 import java.io.ByteArrayOutputStream
 import java.util.UUID
 import java.util.zip.ZipEntry
@@ -19,7 +20,10 @@ class ReaderInkQualificationActivity:Activity() {
     private var resumed=false
     private var busy=true
     private var terminal=false
-    private var retry:(suspend ()->Unit)?=null
+    private var queue:ReaderEditQueue?=null
+    private var gesture:ReaderEditQueue.Gesture?=null
+    private var admitting=false
+    private var workerFailed=false
     private var ink:ReaderInkSurface?=null
     private var backend:ReaderPreviewBackend?=null
     private var library:ReaderLibraryAccess?=null
@@ -46,44 +50,53 @@ class ReaderInkQualificationActivity:Activity() {
             bar.addView(this,LinearLayout.LayoutParams((48*density).toInt(),(32*density).toInt()).apply {marginEnd=(4*density).toInt()})
         }
         button("✓","Finish Ink Check") {end(false)};button("×","Cancel Ink Check") {end(true)}
-        button("↻","Retry Save") {retry?.let {save(it)}}
+        button("↻","Retry Save") {queue?.retry()}
         status=TextView(this).apply {text="Opening Shared Ink Session…";setTextColor(Color.BLACK)}
         root.addView(bar);root.addView(status)
         val canvas=FrameLayout(this);root.addView(canvas,LinearLayout.LayoutParams(-1,0,1f));setContentView(root)
         ui.launch {
             try {
-                val owner=checkNotNull(SetupQualificationSession.host).readerStore();store=owner
+                val owner=ReaderInkQualificationSession.store ?: checkNotNull(SetupQualificationSession.host).readerStore();store=owner
                 val access=withContext(Dispatchers.IO) {owner.readerLibraryForQualification(cacheDir)};library=access
                 val loaded=withContext(Dispatchers.IO) {
                     preferences=getSharedPreferences("reader_ink_probe",MODE_PRIVATE)
                     preferenceKey=owner.readerIdentity().first
-                    val previous=preferences.getString(preferenceKey,null)
-                    val current=if(previous!=null) access.resumeAnnotation(previous) else {
+                    val previous=preferences.getString(preferenceKey,null)?.takeIf {
+                        val retained=access.existingEditQueue(it)
+                        if(retained!=null) !retained.state.value.terminalCommitted else access.annotationSessionState(it)==SessionState.OPEN
+                    }
+                    val current=if(previous!=null) access.existingEditQueue(previous)?.session ?: access.resumeAnnotation(previous) else {
                         val book=access.importBook("shared-ink-probe-book-v1",{fixture().inputStream()}).book.id
                         val id=UUID.randomUUID().toString()
                         access.createAnnotation("create-$id",id,book,"session-$id",
                             VersionedJson("""{"version":1,"section":0,"start":0,"end":11,"quote":"Write here.","prefix":"","suffix":""}"""),10000,20000)
                             .also {check(preferences.edit().putString(preferenceKey,it.id).commit())}
                     }
-                    current to checkNotNull(access.annotation(current.annotation)).strokes.map(ReaderInkCodec::decode)
+                    access.editQueue(current)
                 }
-                session=loaded.first
+                queue=loaded;session=loaded.session;ReaderInkQualificationSession.queue=loaded
                 val native=ReaderPreviewBackend(BackendDetector.detect(this@ReaderInkQualificationActivity).backend);backend=native
                 val inputSurface=if(native.requiresInputSurface()) SurfaceView(this@ReaderInkQualificationActivity).also {canvas.addView(it,FrameLayout.LayoutParams(-1,-1))} else null
-                val view=ReaderInkSurface(this@ReaderInkQualificationActivity,native).also {ink=it}
-                view.strokes=loaded.second.toMutableList();view.params=readerPenParams(BrushKind.BALLPOINT,35)
+                val view=ReaderInkSurface(this@ReaderInkQualificationActivity,native).also {ink=it;ReaderInkQualificationSession.view=it}
+                view.strokes=loaded.preview().toMutableList();view.params=readerPenParams(BrushKind.BALLPOINT,35)
                 view.eraseEnabled=false
-                view.inputEnabled={resumed && !busy && !terminal && retry==null && hasWindowFocus()}
+                view.inputEnabled={resumed && !busy && !terminal && !workerFailed && hasWindowFocus() && (view.inStroke || loaded.state.value.canDraw)}
+                view.admitGesture={
+                    admitting=true
+                    try {gesture=loaded.reserveGesture();gesture!=null} finally {admitting=false}
+                }
                 view.canPresent={resumed && !isDestroyed && hasWindowFocus()}
                 view.strokeCommitted={stroke ->
-                    val command="stroke-${stroke.id}"
-                    save {access.appendAnnotationStroke(command,loaded.first,ReaderInkCodec.encode(stroke))}
+                    val reserved=checkNotNull(gesture)
+                    loaded.append(reserved,stroke);gesture=null
                 }
-                // This first physical probe is drawing-only. Full eraser/session batching is
-                // qualified separately before the contextual editor exposes it.
-                view.workerError={status.text=it;busy=true;syncInput()}
+                // This physical probe remains drawing-only; contextual eraser controls come next.
+                view.workerError={status.text=it;workerFailed=true;syncInput()}
                 view.workStateChanged={syncInput()}
-                view.strokeState={syncInput()}
+                view.strokeState={active ->
+                    if(!active) {gesture?.let(loaded::abandonGesture);gesture=null}
+                    syncInput()
+                }
                 canvas.addView(view,FrameLayout.LayoutParams(-1,-1))
                 view.addOnLayoutChangeListener {_,_,_,_,_,_,_,_,_ ->
                     if(view.width>0) {
@@ -92,7 +105,26 @@ class ReaderInkQualificationActivity:Activity() {
                         native.updatePen(view.params);native.setActiveTool(Tool.Pen);syncInput();view.reconcile()
                     }
                 }
-                busy=false;status.text="Ready · ${loaded.second.size} Saved Strokes · Draw One Continuous Squiggle"
+                busy=false
+                ui.launch {
+                    loaded.state.collect {state ->
+                        if(!workerFailed) status.text=when {
+                            state.failedCommand!=null -> "Not Saved Yet · Tap Retry · ${state.pending} Queued"
+                            state.terminalCommitted -> "Edit Saved"
+                            state.pending>0 -> "Saving In Order · ${state.pending} Queued"
+                            state.reserved -> "Writing…"
+                            else -> "Saved In Shared Library · ${state.visibleStrokes} Strokes"
+                        }
+                        syncInput()
+                        if(state.terminalCommitted && !terminal) {
+                            terminal=true;busy=true
+                            // This is only a resume hint. If cleanup fails, the next open checks
+                            // the authoritative session state and refuses the stale terminal ID.
+                            withContext(Dispatchers.IO+NonCancellable) {preferences.edit().remove(preferenceKey).commit()}
+                            if(!isDestroyed) finish()
+                        }
+                    }
+                }
                 if(resumed) owner.resumeReaderWork() else owner.pauseReaderWork()
                 syncInput()
             } catch(e:CancellationException) {throw e}
@@ -101,45 +133,27 @@ class ReaderInkQualificationActivity:Activity() {
     }
     private fun syncInput() {
         val view=ink ?: return
-        backend?.setInputSuspended(!resumed || busy || terminal || retry!=null || !hasWindowFocus() || view.workPending || !view.canvasReady)
-    }
-    /** One at a time for this probe: explicit Saving status, no unbounded gesture queue. */
-    private fun save(action:suspend ()->Unit) {
-        if(busy) return
-        busy=true;retry=null;status.text="Saving To Shared Library…";syncInput()
-        // A view teardown cannot cancel an already accepted storage operation.
-        CoroutineScope(Dispatchers.Default).launch {
-            val result=runCatching {action()}
-            withContext(Dispatchers.Main) {
-                busy=false
-                if(!isDestroyed) {
-                    if(result.isSuccess) status.text="Saved In Shared Library · ${ink?.strokes?.size ?: 0} Strokes"
-                    else {retry=action;status.text="Not Saved Yet · Keep This Screen Open And Tap Retry"}
-                    syncInput()
-                }
-            }
-        }
+        // Never cancel the current reserved gesture because a previous write failed or hit capacity.
+        if((view.inStroke || admitting) && resumed && hasWindowFocus() && !workerFailed) return
+        backend?.setInputSuspended(!resumed || busy || terminal || workerFailed || queue?.state?.value?.canDraw!=true || !hasWindowFocus() || view.workPending || !view.canvasReady)
     }
     private fun end(cancel:Boolean) {
-        val current=session ?: return
-        if(busy || retry!=null || ink?.inStroke==true || ink?.workPending==true || terminal) return
-        val command=UUID.randomUUID().toString()
-        save {
-            val access=checkNotNull(library)
-            if(cancel) access.cancelAnnotation(command,current) else access.finishAnnotation(command,current)
-            check(preferences.edit().remove(preferenceKey).commit())
-            withContext(Dispatchers.Main) {terminal=true;if(!isDestroyed) finish()}
-        }
+        if(busy || ink?.inStroke==true || ink?.workPending==true || terminal) return
+        queue?.end(cancel)
     }
     @Deprecated("Qualification guards pending writes before leaving")
     override fun onBackPressed() {
-        if(busy || retry!=null || ink?.inStroke==true || ink?.workPending==true) {status.text="Wait For The Ink Save Before Leaving";return}
+        if(busy || workerFailed || queue?.state?.value?.settled!=true || ink?.inStroke==true || ink?.workPending==true) {status.text="Wait For The Ink Save Before Leaving";return}
         super.onBackPressed() // Leave the session open for explicit recovery on reopening.
     }
     override fun onResume() {super.onResume();resumed=true;store?.resumeReaderWork();backend?.onResumeReacquire();syncInput()}
     override fun onPause() {resumed=false;backend?.setInputSuspended(true);ink?.cancel();store?.pauseReaderWork();super.onPause()}
-    override fun onWindowFocusChanged(focus:Boolean) {super.onWindowFocusChanged(focus);syncInput()}
-    override fun onDestroy() {ui.cancel();ink?.releasePreview();backend?.release();super.onDestroy()}
+    override fun onWindowFocusChanged(focus:Boolean) {super.onWindowFocusChanged(focus);if(!focus) ink?.cancel();syncInput()}
+    override fun onDestroy() {
+        ui.cancel();ink?.releasePreview();backend?.release()
+        if(ReaderInkQualificationSession.view===ink) {ReaderInkQualificationSession.view=null;ReaderInkQualificationSession.queue=null}
+        super.onDestroy()
+    }
     private fun fixture():ByteArray=ByteArrayOutputStream().also {out ->ZipOutputStream(out).use {zip ->
         for((name,text) in linkedMapOf(
             "mimetype" to "application/epub+zip",
@@ -149,4 +163,11 @@ class ReaderInkQualificationActivity:Activity() {
             zip.putNextEntry(ZipEntry(name).apply {time=0});zip.write(text.toByteArray());zip.closeEntry()
         }
     }}.toByteArray()
+}
+
+/** Qualification-only injection; never selects or replaces the interactive owner's database. */
+internal object ReaderInkQualificationSession {
+    @Volatile var store:NotebookStore?=null
+    @Volatile var view:ReaderInkSurface?=null
+    @Volatile var queue:ReaderEditQueue?=null
 }
