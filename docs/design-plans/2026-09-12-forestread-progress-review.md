@@ -225,8 +225,13 @@ the headless result does not activate production integration.
    moves the tested native surface/preview code into `core/ink`, adds exact gesture-delta callbacks
    and a gated drawing-only session probe. A real 851-point stroke survives isolated-process restart
    and unfinished-session reopening with identical database contents and no duplicate edits.
-   Physical-panel confirmation and subsequent document-slice/Penu attachment remain explicit next
-   steps; this is not the completed contextual editor.
+   The user confirms no gaps or ghosting on the reopened native probe. Subsequent document-slice/
+   Penu attachment remains explicit work; this is not the completed contextual editor.
+   **D39 shared annotation readback:** [bounded metadata and canonical visible tiles](2026-09-13-forestread-annotation-readback.md)
+   compose reducer-backed annotations into the actual reader using native off-main pixels, without
+   re-authoring history. The user's saved stroke now appears under its EPUB anchor; unknown/pending
+   projections are not treated as empty ink. Next: ordered session edit queue and native input-slice
+   attachment, then contextual controls and cross-backend acceptance. Production remains gated.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

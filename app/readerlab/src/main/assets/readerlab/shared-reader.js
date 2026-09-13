@@ -1,12 +1,27 @@
 import { Reader } from './reader.js';
 import { createPopupHost } from './popups.js';
 import { setupImageZoom } from './image-zoom.js';
+import { loadAnnotations, createInkSlices } from './shared-annotations.js';
 const $ = id => document.getElementById(id);
 const reader = new Reader($('reader'));
 const defaults = { ...reader.prefs };
 const pending = new Map(); let sequence = 0, current, opening = false;
 const report = message => { $('status').textContent = message; };
 const run = fn => async () => { try { await fn(); } catch (error) { report(error.message); } };
+const inkSlices = createInkSlices(reader, rpc, () => current, report);
+let resizePending = false, resizeTimer, viewportSize = `${$('reader').clientWidth}:${$('reader').clientHeight}`;
+function reflowAfterResize() {
+  if (!resizePending || opening || reader.opening || reader.busy || reader.navigationLocked || reader.turning || !reader.doc) return;
+  resizePending = false; reader.reflow().catch(error => report(error.message));
+}
+new ResizeObserver(() => {
+  const size = `${$('reader').clientWidth}:${$('reader').clientHeight}`;
+  if (size === viewportSize) return;
+  viewportSize = size; resizePending = true;
+  clearTimeout(resizeTimer); resizeTimer = setTimeout(reflowAfterResize, 150);
+}).observe($('reader'));
+reader.addEventListener('rects', ({ detail }) => { inkSlices.update(detail); reflowAfterResize(); });
+reader.addEventListener('navigationlock', reflowAfterResize);
 function rpc(action, args = {}) {
   if (!window.ForestRead) return Promise.reject(new Error('Shared Library Bridge Unavailable'));
   if (pending.size >= 16) return Promise.reject(new Error('Reader Is Busy'));
@@ -23,7 +38,7 @@ if (window.ForestRead) ForestRead.onmessage = ({ data }) => {
   clearTimeout(request.timer); pending.delete(message.id);
   message.error ? request.reject(new Error(message.error)) : request.resolve(message.result);
 };
-const popups = createPopupHost({ onChange: () => { reader.highlightMenuOpen = !!document.querySelector('dialog[open]'); } });
+const popups = createPopupHost({ onChange: () => { reader.highlightMenuOpen = !!document.querySelector('dialog[open]'); reflowAfterResize(); } });
 for (const [dialog, closeButton] of [['shelves', 'closeShelves'], ['chapters', 'closeChapters'], ['settings', 'closeSettings']]) popups.register($(dialog), { closeButton: $(closeButton) });
 setupImageZoom(reader, { native: () => rpc('refresh').catch(() => {}), syncMenuInput: () => {} });
 const text = (tag, value) => { const element = document.createElement(tag); element.textContent = value; return element; };
@@ -43,16 +58,18 @@ async function open(book) {
   opening = true; let prepared;
   try {
     prepared = await rpc('open', { book });
+    const saved = await loadAnnotations(rpc, prepared.token);
     const response = await fetch(prepared.url); if (!response.ok) throw new Error('Book Content Unavailable');
     const file = new File([await response.blob()], prepared.title, { type: prepared.mediaType });
     popups.close($('shelves')); reader.highlightMenuOpen = false;
-    await reader.open(file, { prefs: { ...defaults, ...prepared.preferences } }, { hash: book });
+    await reader.open(file, { annotations: saved.annotations, prefs: { ...defaults, ...prepared.preferences } }, { hash: book });
     const old = current; current = prepared; prepared = null;
     $('title').textContent = current.title;
     if (old) await rpc('release', { token: old.token });
-    report('Shared Library · Reading Only For This Checkpoint');
+    report(saved.unavailable ? `${saved.unavailable} Annotations Pending Or Unsupported · Stored Data Preserved` : 'Shared Library · Saved Annotations Loaded');
+    reader.reportRects();
     await rpc('rendered', { book });
-  } finally { opening = false; if (prepared) await rpc('release', { token: prepared.token }); }
+  } finally { opening = false; if (prepared) await rpc('release', { token: prepared.token }); reflowAfterResize(); }
 }
 $('library').onclick = run(async () => { await shelves(); popups.open($('shelves'), { anchor: $('library') }); });
 $('import').onclick = run(async () => { await rpc('import'); });
@@ -62,6 +79,7 @@ reader.addEventListener('page', ({ detail }) => { $('page').textContent = `${det
 reader.addEventListener('error', ({ detail }) => report(detail.message));
 // Until explicit edit-session persistence is attached, selections cannot become orphan edits.
 reader.addEventListener('selection', () => { reader._selection = null; reader.setSelecting(false); reader.doc?.getSelection()?.removeAllRanges(); report('Annotation Editing Is Not Connected Yet'); });
+for (const event of ['edit', 'highlightmenu']) reader.addEventListener(event, () => report('Saved Annotation · Editing Is Not Connected Yet'));
 $('contents').onclick = run(async () => {
   if (!reader.book || opening) return;
   $('chapterRows').replaceChildren();
@@ -90,6 +108,6 @@ $('apply').onclick = run(async () => {
 });
 $('refresh').onclick = run(async () => { popups.close($('settings')); await rpc('refresh'); });
 // Deliberate, read-only diagnostics for the isolated host's instrumentation.
-window.forestReadState = () => ({ book: reader.bookHash ?? null, text: reader.doc?.body?.textContent?.slice(0, 1000), index: reader.index, opening, prefs: reader.prefs, frameScripts: reader.doc?.defaultView?.frameElement?.getAttribute('sandbox') });
+window.forestReadState = () => ({ book: reader.bookHash ?? null, text: reader.doc?.body?.textContent?.slice(0, 1000), index: reader.index, opening, prefs: reader.prefs, annotations: reader.annotations.map(a => ({ id: a.id, inputHash: a.inputHash, width: a.width, height: a.height, anchor: reader.anchorState(a).status })), inkTiles: reader.doc?.querySelectorAll('[data-shared-ink]').length ?? 0, frameScripts: reader.doc?.defaultView?.frameElement?.getAttribute('sandbox') });
 window.forestReadOpen = open;
 await shelves(); popups.open($('shelves'), { anchor: $('library') }); report('Shared Library Ready');

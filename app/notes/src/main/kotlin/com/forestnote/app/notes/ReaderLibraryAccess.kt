@@ -78,6 +78,12 @@ internal class ReaderLibraryAccess(
         page(s.projections.list(book,after,limit+1),limit)
     }
     suspend fun annotation(id:String):AnnotationProjection? = request {it.projections.read(id)}
+    /** Book-scoped read for a renderer lease. A foreign annotation ID grants no access. */
+    suspend fun annotationForBook(book:String,id:String):AnnotationProjection? = request {s ->
+        check(s.books.open(book)?.deleted==false) {"Book unavailable"}
+        require(s.projections.book(id)==book) {"Annotation belongs to another book"}
+        s.projections.read(id)
+    }
     suspend fun openAnnotationSessions(annotation:String,after:String="",limit:Int=32):ReaderIdPage = request {s ->
         require(limit in 1..64)
         page(s.edits.openSessions(annotation,after,limit+1),limit)

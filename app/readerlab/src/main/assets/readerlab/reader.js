@@ -415,15 +415,25 @@ export class Reader extends EventTarget {
     try {
       doc.body.replaceChildren(...[...this.pristine.get(doc).childNodes].map(node => node.cloneNode(true)));
       fitBookImages(doc);
+      // Minimal imported XHTML can omit <head>. Foliate then has no style-map
+      // entry; keep an app-owned fallback instead of silently losing all layout.
+      let fallback = doc.querySelector('style[data-lab-generated="styles"]');
+      if (!doc.head) {
+        const head = doc.createElementNS('http://www.w3.org/1999/xhtml', 'head');
+        doc.documentElement.insertBefore(head, doc.body);
+        fallback = doc.createElementNS('http://www.w3.org/1999/xhtml', 'style');
+        fallback.dataset.labGenerated = 'styles'; head.append(fallback);
+      }
+      const setStyles = styles => { this.renderer.setStyles(styles); if (fallback) fallback.textContent = styles; };
       const { fontSize, lineHeight, letterSpacing, wordSpacing, paragraphSpacing } = this.prefs;
-      this.renderer.setStyles(`html,body{font-size:${fontSize}px!important;line-height:${lineHeight}!important;letter-spacing:${letterSpacing}px!important;word-spacing:${wordSpacing}px!important}p{margin-block:0 ${paragraphSpacing}em!important;orphans:1!important;widows:1!important}mark[data-lab-highlight]{background:#ddd;color:inherit} [data-lab-generated]{font-style:normal!important;font-weight:normal!important;letter-spacing:0!important;word-spacing:0!important;text-indent:0!important;line-height:0!important} [data-lab-generated="note"]{display:block!important;margin:0!important;padding:0!important;border:0!important} [data-lab-generated="slice"]{display:block!important;box-sizing:border-box!important;margin:0!important;padding:0!important;overflow:hidden!important;break-inside:avoid!important;position:relative!important;background:#fafafa!important;outline:1px solid #aaa;outline-offset:-1px;cursor:crosshair} [data-lab-generated="slice"] img{display:block!important;position:absolute!important;max-width:none!important;max-height:none!important;margin:0!important;padding:0!important;pointer-events:none} [data-lab-generated="break"]{font-size:0!important}`);
+      setStyles(`html,body{font-size:${fontSize}px!important;line-height:${lineHeight}!important;letter-spacing:${letterSpacing}px!important;word-spacing:${wordSpacing}px!important}p{margin-block:0 ${paragraphSpacing}em!important;orphans:1!important;widows:1!important}mark[data-lab-highlight]{background:#ddd;color:inherit} [data-lab-generated]{font-style:normal!important;font-weight:normal!important;letter-spacing:0!important;word-spacing:0!important;text-indent:0!important;line-height:0!important} [data-lab-generated="note"]{display:block!important;margin:0!important;padding:0!important;border:0!important} [data-lab-generated="slice"]{display:block!important;box-sizing:border-box!important;margin:0!important;padding:0!important;overflow:hidden!important;break-inside:avoid!important;position:relative!important;background:#fafafa!important;outline:1px solid #aaa;outline-offset:-1px;cursor:crosshair} [data-lab-generated="slice"] img{display:block!important;position:absolute!important;max-width:none!important;max-height:none!important;margin:0!important;padding:0!important;pointer-events:none} [data-lab-generated="break"]{font-size:0!important}`);
       const annotations = this.annotations.filter(a => a.anchor?.section === this.index).sort((a, b) => a.anchor.start - b.anchor.start || a.id.localeCompare(b.id));
       const source = new TextIndex(doc);
       for (const annotation of annotations) {
         const state = this.resolveAnnotation(annotation, source);
         if (state.status !== 'resolved') continue;
         const { start, end } = state.bounds;
-        highlight(doc, start, end, annotation.id, source);
+        if (annotation.highlightPresent !== false) highlight(doc, start, end, annotation.id, source);
         if (annotation.height <= 0) continue;
         const marker = generated(doc, 'break');
         source.insert(start, marker);

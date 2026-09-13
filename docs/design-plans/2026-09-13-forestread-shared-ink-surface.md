@@ -87,6 +87,6 @@ before production activation. Main-FN Penu cleanup and production rollout remain
   `47664e05a99b7ad9574c9645e7b388cf1579848cca9a5885f0158e7b44c0c76f`
   and dynamics SHA-256 `d91c66ae336da9e9bc05770eb802c406cfe144b3cf5162ef10b2f51cfbae97a4`.
 - The probe has been reopened again with the original stroke visible; neither Finish nor Cancel
-  was tapped. Persistence/reopen is verified, but physical-panel appearance still needs the user's
-  confirmation. Screenshots do not establish absence of e-ink ghosting. This is saved-stroke
+  was tapped. The user confirmed the reopened line is unchanged, with **no gaps and no ghosting**
+  on the physical panel. This is saved-stroke
   recovery, not a kill-during-write or sustained-input qualification.

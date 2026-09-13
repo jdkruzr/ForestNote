@@ -77,6 +77,28 @@ class ReaderLibraryAccessTest {
         } finally {s.shutdown()}
     }
 
+    @Test fun rendererAnnotationReadsAreBookScopedAndNeverAuthorHistory()=runBlocking<Unit> {
+        val file=File(temp.root,"readback.db");val s=open(file)
+        try {
+            val a=s.readerLibraryForQualification(temp.root)
+            val book=a.importBook("one",{bytes().inputStream()}).book.id
+            val other=a.importBook("two",{bytes("Other").inputStream()}).book.id
+            val session=a.createAnnotation("create","note",book,"session",anchor,10000,1000)
+            a.appendAnnotationStroke("stroke",session,ink("ink"))
+            val history=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            val metadata=sql(file,"SELECT * FROM rhizome_row_meta ORDER BY tbl,pk")
+            repeat(2) {
+                assertEquals("ink",a.annotationForBook(book,"note")!!.strokes.single().id)
+                assertFails {a.annotationForBook(other,"note")}
+                assertFails {a.annotationForBook(book,"missing")}
+            }
+            assertEquals(history,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            assertEquals(metadata,sql(file,"SELECT * FROM rhizome_row_meta ORDER BY tbl,pk"))
+            a.setDeleted("trash",book,true)
+            assertFails {a.annotationForBook(book,"note")}
+        } finally {s.shutdown()}
+    }
+
     @Test fun boundedPagesAndLeasesCannotDeleteAnotherOwnersCache()=runBlocking<Unit> {
         val s=open(File(temp.root,"pages.db"));val other=open(File(temp.root,"other.db"))
         try {

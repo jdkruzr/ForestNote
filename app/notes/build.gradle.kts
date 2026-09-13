@@ -58,7 +58,7 @@ val prepareSharedReaderAssets by tasks.registering(Sync::class) {
     dependsOn(":app:readerlab:prepareReaderAssets")
     into(layout.buildDirectory.dir("generated/sharedReaderAssets"))
     from("../readerlab/src/main/assets") {
-        include("readerlab/shared-reader.*","readerlab/reader.js","readerlab/anchors.js","readerlab/image-zoom.js",
+        include("readerlab/shared-reader.*","readerlab/shared-annotations.js","readerlab/reader.js","readerlab/anchors.js","readerlab/image-zoom.js",
             "readerlab/book-images.js","readerlab/book-runtime.js","readerlab/decompression.js","readerlab/popups.js",
             "readerlab/menu-tokens.css","readerlab/lab.css")
     }

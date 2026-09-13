@@ -6,7 +6,7 @@ import java.net.URI
 internal object ReaderResourcePolicy {
     const val ORIGIN="https://appassets.androidplatform.net"
     const val ENTRY="$ORIGIN/assets/readerlab/shared-reader.html"
-    private val files=setOf("shared-reader.html","shared-reader.js","reader.js","anchors.js","image-zoom.js",
+    private val files=setOf("shared-reader.html","shared-reader.js","shared-annotations.js","reader.js","anchors.js","image-zoom.js",
         "book-images.js","book-runtime.js","decompression.js","popups.js","menu-tokens.css","lab.css")+
         setOf("vendor/fflate.js")+setOf("view.js","paginator.js","epub.js","epubcfi.js","mobi.js","progress.js",
             "overlayer.js","text-walker.js","uri-template.js","vendor/zip.js","vendor/fflate.js").map {"vendor/foliate/$it"}

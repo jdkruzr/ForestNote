@@ -12,6 +12,7 @@ import kotlinx.serialization.json.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -90,6 +91,29 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
                 JSONObject.NULL
             }
             "preferences" -> {library.applyPreferences(request.getString("book"),VersionedJson(request.getJSONObject("value").toString()));JSONObject.NULL}
+            "annotations" -> {
+                val book=checkNotNull(books[request.getString("token")]).snapshot.book.id
+                val page=library.annotations(book,request.optString("after"),limit=8)
+                val rows=JSONArray()
+                for(id in page.ids) {
+                    val projection=library.annotationForBook(book,id) ?: continue
+                    rows.put(JSONObject(ReaderAnnotationPresentation.metadata(projection).toString()))
+                }
+                JSONObject().put("annotations",rows).put("next",page.next ?: JSONObject.NULL)
+            }
+            "inkSlice" -> {
+                val book=checkNotNull(books[request.getString("token")]).snapshot.book.id
+                val projection=checkNotNull(library.annotationForBook(book,request.getString("annotation")))
+                val geometry=ReaderAnnotationPresentation.geometry(projection,request.getString("inputHash"),
+                    request.getDouble("start"),request.getDouble("end"),request.getInt("pixels"))
+                val bitmap=geometry.render(projection.strokes.map(ReaderInkCodec::decode))
+                val output=ByteArrayOutputStream()
+                try {check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,output))}
+                finally {bitmap.recycle()}
+                check(output.size()<=4*1024*1024) {"Ink preview exceeds bridge budget"}
+                JSONObject().put("width",geometry.width).put("height",geometry.height)
+                    .put("image","data:image/png;base64,"+android.util.Base64.encodeToString(output.toByteArray(),android.util.Base64.NO_WRAP))
+            }
             "import" -> {withContext(Dispatchers.Main) {if(!disposed) importBook()};JSONObject.NULL}
             "rendered" -> {val book=request.getString("book");withContext(Dispatchers.Main) {if(!disposed) rendered(book)};JSONObject.NULL}
             "refresh" -> {withContext(Dispatchers.Main) {scheduleRefresh()};JSONObject.NULL}

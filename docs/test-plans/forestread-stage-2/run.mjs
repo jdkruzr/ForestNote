@@ -142,6 +142,9 @@ try {
       'app/notes/src/main/kotlin/com/forestnote/app/notes/ReaderHostView.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/ReaderResourcePolicy.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/ReaderInkCodec.kt',
+      'app/notes/src/main/kotlin/com/forestnote/app/notes/ReaderAnnotationPresentation.kt',
+      'app/notes/src/test/kotlin/com/forestnote/app/notes/ReaderAnnotationPresentationTest.kt',
+      'app/notes/src/qualificationTest/kotlin/com/forestnote/app/notes/ReaderAnnotationRenderingTest.kt',
       'app/notes/src/qualification/kotlin/com/forestnote/app/notes/ReaderInkQualificationActivity.kt',
       ...['ReaderInkSurface','ReaderPreviewBackend','ReaderPenParams','ReaderInkJson','InkWorkerGeometry']
         .map(name=>`core/ink/src/main/kotlin/com/forestnote/core/ink/${name}.kt`),
@@ -150,6 +153,7 @@ try {
       'app/notes/src/test/kotlin/com/forestnote/app/notes/ReaderResourcePolicyTest.kt',
       'app/readerlab/src/main/assets/readerlab/shared-reader.html',
       'app/readerlab/src/main/assets/readerlab/shared-reader.js',
+      'app/readerlab/src/main/assets/readerlab/shared-annotations.js',
       'app/readerlab/tests/shared-reader.spec.js',
       'app/notes/src/test/kotlin/com/forestnote/app/notes/ForegroundSyncDriverTest.kt',
       'core/format/src/test/kotlin/com/forestnote/core/format/LocalCommitNotificationTest.kt',
