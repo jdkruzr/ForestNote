@@ -85,6 +85,18 @@ respect idle deadlines/backoff, pause/resume and shutdown without competing loop
 Then connect reader UI/import/status to the shared repositories. Production enrollment, uncertain
 historical migrations, rollout and cross-device pen/rendering acceptance remain separate gates.
 
+The foreground slice should retain these constraints:
+
+- One lifecycle driver per storage owner, not a coroutine/timer per edit or a second sync engine.
+- Coalesced post-commit edit/import signals. A signal arriving during a request must survive until
+  the next turn, without repeatedly forcing rows ahead of every asset chunk.
+- Pause cancels and joins active work off-main; restart uses the durable queue. An idle driver
+  sleeps until a scheduler deadline or a real wake-up, rather than polling SQLite/network tightly.
+- Reconnect and manual retry preserve backoff/auth/schema distinctions. They never enroll a
+  device, change its bound target or discard invalid/partial book bytes implicitly.
+- Qualify rapid pause/resume, signals during blocked I/O, shutdown with accepted ink queued,
+  idle/no-network behavior and fair rows/chunks before attaching the reader UI.
+
 ## Checkpoint evidence and device handoff
 
 - Go 6 II Android 11 real-book run: **4/4**, `/tmp/forestread-https-5WVfIG/report.json`.
@@ -107,10 +119,44 @@ ADB reverse mappings. Normal FN's package path and main-library hash remain unch
 `e9d4b69ed4a378730ef6d84431db48408da13a1cf49acbc54624a095bd29c549` (main file only, not a
 standalone live-WAL snapshot). No uninstall, data clear or production deployment occurred.
 
-**Remaining at handoff to Go 10.3 II:** install the matching latest isolated APK pair and rerun
+**At the original handoff to Go 10.3 II:** install the matching latest isolated APK pair and rerun
 the asset, metadata-only and enrollment-only HTTPS suites. The last test-only refinement invokes
 `step()` directly in the revoked-asset phase instead of `exchange()`; it compiles but was not
 installed on the released 6 II. Consequently the earlier device report's instrumentation hash
 and one recorded source hash describe the pre-refinement test, not the final test artifact.
 This checkpoint is not a claim that the remaining device regression or foreground lifecycle gate
 has completed.
+
+### Go 10.3 II continuation
+
+ADB serial `dfef8c1`, model `Go103_2Lumi`. The device reports Android 15/API 35; its vendor
+fingerprint still contains `TabBoox:13` and is retained verbatim in the reports. The two isolated
+packages were not previously installed. Only these packages were added; normal `com.forestnote`
+and its existing 111,411,200-byte library were not replaced or granted new permissions.
+
+- Final asset suite: **4/4**, `/tmp/forestread-https-eHBlsj/report.json`. All **19** source hashes
+  match; this includes the final `step()` revocation refinement. Each of the five chunks uploads
+  and downloads exactly once, with chunk 0 retained across restart. The original SHA-256 matches;
+  53 asset requests and 20 bounded row POSTs were observed. The final capability call returns 401.
+- Metadata-only suite: **4/4**, `/tmp/forestread-https-WT19Mm/report.json`.
+- Enrollment-only HTTPS suite: **5/5**, `/tmp/forestread-https-rpXvNK/report.json`.
+- Awake-only device regression: **21/21**, `/tmp/forestread-device-kZ5K33/report.json`.
+  The standard run stopped at the secure-keyguard guard (`/tmp/forestread-device-dlUixW/report.json`);
+  sleep/wake is explicitly deferred, not passed. Eleven host tests now also verify this reporting
+  and that the default 22-phase suite retains its sleep/wake test.
+- Installed app SHA-256: `5fa41cd8115664818095c51b5f1194fd11a89f966f8c2910b36c2d1af7b5cc21`.
+- Installed instrumentation SHA-256: `a1b8dd5c28e14610f053e583cc48707e8566f93c6309620e7ed14e6613ff4dcf`.
+
+An initial tunnel readiness attempt failed before enrollment or any device test
+(`/tmp/forestread-https-cBzKie/report.json`). A host lookup returned `ENOTFOUND`; a subsequent
+fresh tunnel succeeded. This remains evidence for the explicit ADB-carried HTTPS route, not
+a claim that new tunnel DNS is immediately reliable. No trust or machine-wide DNS changes were made.
+
+Final normal FN package path matches its pre-install path. Its 111,411,200-byte main library still
+hashes to `23c9904722e978eaac813ebef53f3a65f7e59785a53b73c9c7d4fa45a63bc691` (main file only).
+No ADB reverse mappings remain; the isolated setup activity is left ready for inspection.
+
+**D33 original-byte transport qualification is complete.** The separate secure-keyguard sleep/wake
+check awaits user-coordinated unlocking, and foreground scheduler lifecycle/UI integration is not
+implemented by this checkpoint. The existing Go 6 II sleep/wake evidence does not substitute for
+that pending test on this tablet.

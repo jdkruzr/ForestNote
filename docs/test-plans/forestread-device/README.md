@@ -453,3 +453,32 @@ The Go 6 II is released at the user's request. Its installed app/test hashes for
 The final test-only change to call the scheduler directly after revocation is built but awaits
 installation and HTTPS regression on the Go 10.3 II. Do not claim these older results test that
 new instrumentation artifact. Normal FN/library remain unchanged; no reverse mappings remain.
+
+### Go 10.3 II handoff verification
+
+The new tablet is ADB `dfef8c1` (`Go103_2Lumi`), reporting Android 15/API 35. Its vendor fingerprint
+contains Android 13; reports preserve that string rather than using it to override the API values.
+The latest isolated app/test pair was installed alongside normal FN, without replacing it.
+
+- Real EPUB/scheduler: **4/4**, `/tmp/forestread-https-eHBlsj/report.json`, 19 matching source hashes.
+  This tests the final direct scheduler revocation check. Five chunks travel exactly once in each
+  direction; the receiver retains chunk 0 over restart and verifies the original EPUB hash.
+- Mixed metadata: **4/4**, `/tmp/forestread-https-WT19Mm/report.json`, 15 matching source hashes.
+- Enrollment HTTPS: **5/5**, `/tmp/forestread-https-rpXvNK/report.json`, nine matching source hashes.
+  The untrusted TLS endpoint receives no HTTP requests.
+- App/test SHA-256: `5fa41cd8115664818095c51b5f1194fd11a89f966f8c2910b36c2d1af7b5cc21` /
+  `a1b8dd5c28e14610f053e583cc48707e8566f93c6309620e7ed14e6613ff4dcf`.
+
+The first standard run (`/tmp/forestread-device-dlUixW/report.json`) passes smoke but refuses
+automated sleep/wake because this tablet has a secure keyguard. That is a coordination guard,
+not a passing sleep test. Do not disable or bypass the screen lock to make this suite green.
+Use `--phase-set awake` to run the other 21 phases: its report explicitly records
+`phaseSet: "awake"` and `deferred: ["sleep-wake"]`. Sleep/wake remains a separate manual-coordination
+test until exercised. The host tests pin this distinction; the default 22-phase suite is unchanged.
+
+The awake-only run passes **21/21**, `/tmp/forestread-device-kZ5K33/report.json`; eleven host tests
+pass. All three HTTPS runs use the same final installed APK pair. Normal FN's package path is
+unchanged and its main library SHA-256 remains
+`23c9904722e978eaac813ebef53f3a65f7e59785a53b73c9c7d4fa45a63bc691` (111,411,200 bytes; not a
+standalone live-WAL snapshot). No reverse mappings remain. D33 transfer qualification is complete;
+the secure-keyguard sleep/wake case remains deferred pending a manual unlock.

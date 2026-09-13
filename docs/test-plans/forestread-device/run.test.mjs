@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseOptions,deviceCommand,passed,target} from './run.mjs';
+import {parseOptions,deviceCommand,passed,target,phaseSelection} from './run.mjs';
 
 test('requires an explicit single transport and safe run identity',()=>{
     for(const args of [[],['--serial','a','--ssh','b'],['--ssh','-oProxyCommand=bad'],
@@ -20,6 +20,15 @@ test('upgrade verification is an explicit restricted phase set',()=>{
     assert.equal(parseOptions(['--serial','USB','--phase-set','upgrade'])['--phase-set'],'upgrade');
     assert.equal(parseOptions(['--serial','USB','--phase-set','standard'])['--phase-set'],'standard');
     assert.throws(()=>parseOptions(['--serial','USB','--phase-set','reset']));
+});
+test('awake-only mode records sleep/wake as deferred, never silently passed',()=>{
+    assert.equal(parseOptions(['--serial','USB','--phase-set','awake'])['--phase-set'],'awake');
+    const all=phaseSelection(),awake=phaseSelection('awake');
+    assert.equal(all.phases.length,22);assert.equal(awake.phases.length,21);
+    assert.deepEqual(all.deferred,[]);assert.deepEqual(awake.deferred,['sleep-wake']);
+    assert.deepEqual(awake.phases,all.phases.filter(x=>x!=='sleep-wake'));
+    assert.deepEqual(phaseSelection('upgrade'),{phases:['upgrade-verify'],deferred:[]});
+    assert.throws(()=>phaseSelection('arbitrary'));
 });
 test('requires one actual passing test, not a shell exit or an expected crash alone',()=>{
     assert.equal(passed({code:0,output:'OK (1 test)\nINSTRUMENTATION_CODE: -1'}),true);

@@ -23,7 +23,7 @@ export function parseOptions(args) {
     for (let i=0; i<args.length; i+=2) {
         const key=args[i]; const value=args[i+1];
         if (!['--serial','--ssh','--port','--run-id','--phase-set'].includes(key) || !value || key in options)
-            throw new Error('Use --serial SERIAL or --ssh USER@HOST [--port 8022], optional --run-id ID and --phase-set standard|upgrade');
+            throw new Error('Use --serial SERIAL or --ssh USER@HOST [--port 8022], optional --run-id ID and --phase-set standard|awake|upgrade');
         options[key]=value;
     }
     if (Boolean(options['--serial']) === Boolean(options['--ssh'])) throw new Error('Select exactly one device transport');
@@ -32,8 +32,18 @@ export function parseOptions(args) {
         throw new Error('Invalid SSH port');
     options['--run-id'] ??= `device_${Date.now()}`;
     if (!/^[A-Za-z0-9_-]{1,40}$/.test(options['--run-id'])) throw new Error('Invalid run ID');
-    if(options['--phase-set'] && !['standard','upgrade'].includes(options['--phase-set'])) throw new Error('Invalid phase set');
+    if(options['--phase-set'] && !['standard','awake','upgrade'].includes(options['--phase-set'])) throw new Error('Invalid phase set');
     return options;
+}
+
+export function phaseSelection(set='standard') {
+    if(set==='upgrade') return {phases:['upgrade-verify'],deferred:[]};
+    if(!['standard','awake'].includes(set)) throw new Error('Invalid phase set');
+    const phases=['smoke','sleep-wake','handoff','enrollment-seed','enrollment-verify','columns-seed','columns-kill','columns-verify',
+        'recovery','recovery-kill-snapshot','recovery-verify-snapshot','recovery-kill-fresh','recovery-verify-fresh',
+        'setup-ui','selection-kill-before','selection-verify-before','selection-kill-after','selection-verify-after',
+        'seed','verify','crash-install','verify-crash'];
+    return set==='awake'?{phases:phases.filter(x=>x!=='sleep-wake'),deferred:['sleep-wake']}:{phases,deferred:[]};
 }
 
 export function deviceCommand(options,args) {
@@ -64,7 +74,10 @@ function execute(command,args) {
 
 export async function run(options) {
     const dir=await mkdtemp(join(tmpdir(),'forestread-device-'));
-    const report={version:1,target,runId:options['--run-id'],invocation:randomUUID(),status:'running',phases:[],started:new Date().toISOString()};
+    const phaseSet=options['--phase-set']??'standard';
+    const selected=phaseSelection(phaseSet);
+    const report={version:1,target,runId:options['--run-id'],invocation:randomUUID(),status:'running',phaseSet,
+        deferred:selected.deferred,phases:[],started:new Date().toISOString()};
     const call=async args=>execute(...deviceCommand(options,args));
     try {
         for(const name of [target,`${target}.test`]) {
@@ -72,12 +85,7 @@ export async function run(options) {
             if(installed.code!==0 || !/^package:/m.test(installed.output)) throw new Error(`Install ${name} first; runner never installs or replaces applications`);
         }
         report.fingerprint=(await call(['getprop','ro.build.fingerprint'])).output.trim();
-        const phases=options['--phase-set']==='upgrade' ? ['upgrade-verify'] :
-            ['smoke','sleep-wake','handoff','enrollment-seed','enrollment-verify','columns-seed','columns-kill','columns-verify',
-                'recovery','recovery-kill-snapshot','recovery-verify-snapshot','recovery-kill-fresh','recovery-verify-fresh',
-                'setup-ui','selection-kill-before','selection-verify-before','selection-kill-after','selection-verify-after',
-                'seed','verify','crash-install','verify-crash'];
-        for(const phase of phases) {
+        for(const phase of selected.phases) {
             const stopped=await call(['am','force-stop',target]);
             if(stopped.code!==0 || stopped.timedOut) throw new Error('Could not stop the isolated test process');
             console.log(`Device qualification: ${phase}`);
