@@ -1,4 +1,4 @@
-# D23–D27: disposable Android storage qualification
+# D23–D30: disposable Android storage and HTTPS qualification
 
 Returns to [D22's hardware handoff](../../design-plans/2026-09-12-forestread-android-foundation.md)
 and [the larger plan, item 3](../../design-plans/2026-09-12-forestread-progress-review.md#recommended-next-order).
@@ -8,7 +8,8 @@ and [the larger plan, item 3](../../design-plans/2026-09-12-forestread-progress-
 The `qualification` build is a **separate application**, `com.forestnote.qualification`, plus
 `com.forestnote.qualification.test`. It is debug-signed and installs beside the real ForestNote.
 Its editor/deep-link Activity is disabled, backup is disabled, and network/external-storage
-permissions are removed. No all-files-access grant is needed. Instrumentation is selected only
+permissions are removed by default. D30's explicit network opt-in adds only Internet; external
+storage stays unavailable. No all-files-access grant is needed. Instrumentation is selected only
 with `-PreaderQualification=true`; it refuses any other target package at runtime.
 
 `NotebookRepository.openIsolatedQualification` also requires that exact debuggable package,
@@ -16,7 +17,8 @@ accepts only a restricted run ID (not a path), and bypasses `StorageLocation` co
 Files live in that package's private databases directory as `reader-qualification-RUN.db`.
 The production helper, migration callback, SQLDelight driver and Rhizome SQLite handle are shared,
 not reimplemented by a test-only database adapter. Secrets use the production encrypted-prefs
-backend under the isolated package's own UID/Keystore. Nothing contacts UB.
+backend under the isolated package's own UID/Keystore. The standard runner contacts no UB;
+D30's separate HTTPS runner contacts only its new disposable fixture, never production UB.
 
 No automatic reset, uninstall, data clear or deletion of old evidence. Use a new run ID for each
 complete run. Never install an ordinary debug `com.forestnote` APK over the user's installed app
@@ -57,6 +59,9 @@ SSH uses existing key/host-key configuration and `su -c` for Android commands. I
 SELinux or device security settings. Every force-stop targets only the isolated package.
 
 ## What runs
+
+The list below is the standard offline suite. See [D30](#d30-real-tablet-https-enrollment) for the
+separately opted-in HTTPS suite.
 
 1. `smoke`: real Android shared-owner writes, contiguous offline sequence, received foreign
    provenance/shared clock, resume-before-open, pause/resume, legacy-sync refusal and reopen.
@@ -268,3 +273,71 @@ Final installed APK hashes match the local tested pair:
 
 Same debug certificate; normal `com.forestnote` package path and main library-file hash unchanged.
 No private-data clear, uninstall, device trust-store change, production UB activation or release.
+
+## D30: real tablet HTTPS enrollment
+
+See [the D30 design and boundaries](../../design-plans/2026-09-12-forestread-android-https.md).
+Prerequisites: Node 22, Go, SQLite CLI, OpenSSL, cloudflared and the explicitly selected ADB device.
+UB must be a local source checkout; the runner builds its loopback `assetlab`, never starts the
+production service and never accepts an existing database or real administrator password.
+
+```sh
+./gradlew -PreaderQualification=true -PreaderQualificationNetwork=true :app:notes:assembleQualification :app:notes:assembleQualificationAndroidTest
+node --test docs/test-plans/forestread-device/run.test.mjs docs/test-plans/forestread-device/https-proxy.test.mjs
+```
+
+Verify package IDs, certificates and permissions, then install the lab APK pair in place using
+the instructions above. The additional build property grants Internet only to the lab variant;
+omitting it restores the offline manifest. Both variants disallow cleartext HTTP. The runner
+checks installed APK hashes against the local artifacts before it starts any fixture or tunnel.
+
+```sh
+node docs/test-plans/forestread-device/https-run.mjs --serial SERIAL --ub-repo /path/to/ultrabridge
+```
+
+Default routing uses the tablet's own network/DNS. For a router that cannot resolve newly created
+tunnel names, explicitly add `--route adb-proxy`. That uses a host-restricted CONNECT carrier over
+ADB; it does not terminate TLS or weaken Android's default certificate/hostname validation.
+No tablet-wide network or DNS settings change. This is **not** proof of direct Wi-Fi reliability.
+
+Five separate instrumentation invocations prove untrusted TLS refusal, actual committed enrollment
+with suppressed success, client/server restart and same-key retry, durable confirmation, device-
+token admission and revocation without losing local ink. The first committed success is replaced
+with 503, not a literal socket drop. Direct loopback registry reads prove the host binding survived
+restart. Basic/hash credentials fail actual UB capability admission. No raw key enters portable
+SQLite snapshots or host reports. The setup launcher itself still performs no enrollment.
+
+Evidence on Go 6 II (`6D02351A`, Android 11), 2026-09-12 local time:
+
+- Initial direct-network run: **5/5**, `/tmp/forestread-https-zx6rnz/report.json`.
+- Repeats `63dN5x`, `jVZnJB`, `UNIKKi` stopped before server enrollment. Added diagnostics showed
+  `UnknownHostException`; the router returned NXDOMAIN while the laptop resolved the same host.
+- Initial ADB-carrier attempts `7wMlyK` and `3Fc5Sg` exposed ADB 36's fatal reverse-connect allowlist
+  rejection with two `tcp:0` mappings. The server restarted; cleanup errors were retained, not
+  counted as success. Explicit `--no-rebind` ports resolve that harness issue without disabling
+  the guard. No device reboot, uninstall, data reset, DNS change or trust-store alteration.
+- Final ADB-carried HTTPS run: **5/5**, `/tmp/forestread-https-l8N4tD/report.json`; all nine recorded
+  source hashes match. Actual server responses are 204, 204, 409 for the same actor/key hash;
+  zero HTTP requests reached the untrusted-TLS fixture. Both reverse mappings and child servers/
+  tunnel closed; the host ADB server survived. This report includes installed/local APK hash checks.
+- Eight host tests pass. Normal debug plus offline/network lab builds pass. Existing **397 app +
+  287 format JVM tests** remain green (unchanged production sources; Gradle reused up-to-date
+  results). All 175 source hashes in the prior D29 headless report still match; that unchanged
+  headless suite was not rerun for these qualification-only changes.
+- Final standard regression suite: **19/19**, `/tmp/forestread-device-3IObrX/report.json`, using the
+  same final installed APK pair as the successful ADB-carried HTTPS run. Earlier standard run
+  `/tmp/forestread-device-j6WeH8/report.json` also passed, before the added readiness/carrier checks.
+
+Final installed/local APK SHA-256:
+
+- Network qualification app: `a61b0886b68d1d63dd263fd7179a48a003237c67a7a9fb538826e8a4828ffcbf`
+- Instrumentation: `782a453c3dc0467a41af25ac6ef152e77c4a163a0eb50a826e2769092308766a`
+
+Both retain the prior debug signing certificate
+`e91d14f5065a1eb6cfbd42aee993b51c6cb16f7cc21d4879b0b4db1e136f9680`.
+
+The normal package path and `/sdcard/ForestNote/default.forestnote` main-file SHA-256 remain
+unchanged: `e9d4b69ed4a378730ef6d84431db48408da13a1cf49acbc54624a095bd29c549`.
+This is not an independent snapshot of a live WAL. Production UB and Rhizome checkouts are
+unchanged. The network-enabled lab remains installed for the next qualification gate, with no
+live test endpoint. Next: known-prior-registry/mixed transport activation and ordinary pull.

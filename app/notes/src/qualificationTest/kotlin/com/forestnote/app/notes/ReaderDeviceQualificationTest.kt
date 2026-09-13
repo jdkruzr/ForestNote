@@ -29,7 +29,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Run only in the separate qualification package. No network or external files.
+/** Run only in the separate qualification package. No external files.
+ * Network phases additionally require the explicit network build and disposable TLS runner.
  * Seed/verify are separate instrumentation invocations; crash-install deliberately
  * kills this disposable process inside the real SQLite installation transaction.
  */
@@ -79,6 +80,8 @@ class ReaderDeviceQualificationTest {
                 "handoff" -> closeHandoff()
                 "enrollment-seed" -> enrollmentSeed()
                 "enrollment-verify" -> enrollmentVerify()
+                "https-refusal", "https-seed", "https-verify", "https-confirmed", "https-revoked" ->
+                    httpsEnrollment(phase)
                 "recovery" -> recovery()
                 "recovery-kill-snapshot" -> recoveryKill("snapshot")
                 "recovery-verify-snapshot" -> recoveryVerify("snapshot")
@@ -344,6 +347,125 @@ class ReaderDeviceQualificationTest {
         check(prepared.identity.libraryId!=evidence.getValue("library").jsonPrimitive.content && prepared.identity.actor!=evidence.getValue("replica").jsonPrimitive.content)
         check(RecoveryFiles.digest(database(id))==evidence.getValue("source").jsonPrimitive.content)
         for((name,hash) in evidence.getValue("stages").jsonObject) check(RecoveryFiles.digest(File(dir,name))==hash.jsonPrimitive.content)
+    }
+
+    private suspend fun httpsEnrollment(phase:String) {
+        check(context.checkSelfPermission(android.Manifest.permission.INTERNET)==android.content.pm.PackageManager.PERMISSION_GRANTED)
+        val server=requireNotNull(args.getString("httpsServer"))
+        // This runner never accepts an arbitrary production address or administrator.
+        require(Regex("https://[a-z0-9-]+\\.trycloudflare\\.com/[0-9a-f]{64}").matches(server))
+        val password=requireNotNull(args.getString("httpsPassword"))
+        require(Regex("[0-9a-f]{64}").matches(password))
+        args.getString("httpsProxyPort")?.let {value ->
+            require(Regex("[0-9]{1,5}").matches(value) && value.toInt() in 1..65535)
+            val host=java.net.URI(server).host
+            // Process-local network route only; native TLS and hostname validation remain
+            // untouched. Never proxies another destination, including the bad-TLS loopback.
+            java.net.ProxySelector.setDefault(object:java.net.ProxySelector() {
+                override fun select(uri:java.net.URI):List<java.net.Proxy> = listOf(
+                    if(uri.scheme=="https" && uri.host==host && uri.port in listOf(-1,443))
+                        java.net.Proxy(java.net.Proxy.Type.HTTP,java.net.InetSocketAddress("127.0.0.1",value.toInt()))
+                    else java.net.Proxy.NO_PROXY)
+                override fun connectFailed(uri:java.net.URI,sa:java.net.SocketAddress,ioe:java.io.IOException) = Unit
+            })
+        }
+        fun expect(actual:EnrollmentResult,expected:EnrollmentResult) {
+            check(actual==expected) {"Expected $expected; got $actual"}
+        }
+        if(phase=="https-refusal") {
+            // The laptop's resolver/edge readiness does not prove Android's route is ready.
+            // Poll an authority-free denied root before creating any enrollment state.
+            withTimeout(30000) {
+                var ready=false
+                while(!ready) {
+                    ready=withContext(Dispatchers.IO) {
+                        val connection=java.net.URL(server.substringBeforeLast('/')).openConnection() as javax.net.ssl.HttpsURLConnection
+                        try {
+                            connection.connectTimeout=2500;connection.readTimeout=2500
+                            connection.instanceFollowRedirects=false;connection.useCaches=false
+                            val code=connection.responseCode
+                            check(code==404 || code in 500..599) {"Unexpected authority-free readiness status: $code"}
+                            code==404 && connection.getHeaderField("X-ForestRead-Qualification")=="enrollment-only"
+                        } catch(e:javax.net.ssl.SSLException) {throw e}
+                        catch(e:java.io.IOException) {
+                            instrumentation.sendStatus(0,Bundle().apply {
+                                putString("stream","HTTPS readiness: ${e.javaClass.simpleName}\n")
+                            })
+                            false
+                        } finally {connection.disconnect()}
+                    }
+                    if(!ready) delay(1000)
+                }
+            }
+        }
+        val account="forestread-disposable"
+        val id="${runId}_tls${if(phase=="https-refusal") "_untrusted" else ""}"
+        val secrets=credentials();val s=store(id,secrets)
+        try {
+            val identity=s.readerIdentity()
+            val target=ReplicaCredentialScope(server,account,identity.first,identity.second)
+            val c=s.replicaEnrollment() // Actual default-trusted native transport, no injection.
+            if(phase=="https-refusal") {
+                val untrusted=requireNotNull(args.getString("httpsUntrusted"))
+                require(Regex("https://127\\.0\\.0\\.1:[0-9]{1,5}").matches(untrusted))
+                expect(c.approve(untrusted,EnrollmentApproval(account,password)),EnrollmentResult.SECURE_CONNECTION_REQUIRED)
+                check(c.inspect(untrusted,account)==EnrollmentResult.PREPARED)
+                return
+            }
+            suspend fun capability(auth:String):Int = withContext(Dispatchers.IO) {
+                val connection=java.net.URL(server+"/sync/capabilities").openConnection() as javax.net.ssl.HttpsURLConnection
+                try {
+                    connection.connectTimeout=10000;connection.readTimeout=15000
+                    connection.instanceFollowRedirects=false;connection.useCaches=false
+                    connection.setRequestProperty("Authorization",auth)
+                    connection.responseCode
+                } finally {connection.disconnect()}
+            }
+            if(phase=="https-seed") {
+                check(c.inspect(server,account)==EnrollmentResult.LOCAL_ONLY)
+                expect(c.approve(server,EnrollmentApproval(account,"incorrect-synthetic-password")),EnrollmentResult.ADMIN_REJECTED)
+                check(c.inspect(server,account)==EnrollmentResult.PREPARED)
+                val pending=checkNotNull(secrets.replicas.read(target))
+                expect(c.approve(server,EnrollmentApproval(account,password)),EnrollmentResult.RETRYABLE)
+                check(!checkNotNull(secrets.replicas.read(target)).enrolled)
+                // Committed enrollment did not monopolize or rewrite our local writer.
+                s.save(Stroke(points=listOf(StrokePoint(101,102,500,0))))
+                check(s.readerIdentity()==identity)
+                saveEvidence(id,buildJsonObject {
+                    put("library",identity.first);put("replica",identity.second);put("tokenHash",pending.tokenHash)
+                    put("history",history(id));put("invocation",invocation);put("process",processNonce)
+                })
+            } else {
+                val expected=loadEvidence(id)
+                check(expected.getValue("invocation").jsonPrimitive.content==invocation)
+                check(expected.getValue("process").jsonPrimitive.content!=processNonce)
+                check(identity==expected.getValue("library").jsonPrimitive.content to expected.getValue("replica").jsonPrimitive.content)
+                val key=checkNotNull(secrets.replicas.read(target))
+                check(key.tokenHash==expected.getValue("tokenHash").jsonPrimitive.content)
+                check(history(id)==expected.getValue("history").jsonPrimitive.content)
+                if(phase=="https-verify") {
+                    check(!key.enrolled && c.inspect(server,account)==EnrollmentResult.PREPARED)
+                    expect(c.approve(server,EnrollmentApproval(account,password)),EnrollmentResult.CONFIRMED)
+                } else check(c.inspect(server,account)==EnrollmentResult.CONFIRMED)
+                check(checkNotNull(secrets.replicas.read(target)).enrolled)
+                if(phase=="https-revoked") {
+                    check(capability("Bearer "+key.token)==401)
+                    expect(HttpsEnrollmentTransport().enroll(target,key.tokenHash,EnrollmentApproval(account,password)),EnrollmentResult.BINDING_CONFLICT)
+                    check(history(id)==expected.getValue("history").jsonPrimitive.content)
+                    s.save(Stroke(points=listOf(StrokePoint(103,104,500,1))))
+                    check(s.readerIdentity()==identity)
+                    check(rows(id,"SELECT COUNT(*) FROM stroke").single().single()=="2")
+                } else {
+                    check(capability("Bearer "+key.token)==200)
+                    check(capability("Bearer "+key.tokenHash)==401)
+                    check(capability("Basic "+java.util.Base64.getEncoder().encodeToString("$account:$password".toByteArray()))==401)
+                }
+                // Raw authority is not part of the portable database, including its WAL snapshot.
+                val snapshot=File(context.cacheDir,"$id-$phase-snapshot.db")
+                s.writeDatabaseSnapshot(snapshot)
+                check(!snapshot.readBytes().toString(Charsets.ISO_8859_1).contains(key.token))
+            }
+        } finally {s.shutdown()}
     }
 
     private suspend fun enrollmentSeed() {

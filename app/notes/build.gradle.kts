@@ -12,6 +12,11 @@ android {
             matchingFallbacks += "debug"
         }
     }
+    // Manifest merger directives cannot contain placeholders. Keep the small network
+    // overlay separately; a host test checks it differs only by Internet permission.
+    if (providers.gradleProperty("readerQualificationNetwork").orNull == "true") {
+        sourceSets.getByName("qualification").manifest.srcFile("src/qualificationNetwork/AndroidManifest.xml")
+    }
     // Opt in only when building the isolated on-device instrumentation pair.
     if (providers.gradleProperty("readerQualification").orNull == "true") {
         testBuildType = "qualification"

@@ -167,6 +167,13 @@ the headless result does not activate production integration.
    or automatic recovery. Nineteen Go phases pass, including UI recreation and both sides of
    selection publication. Shipping shared-storage routing and enrollment UI remain gated; next is
    actual tablet TLS enrollment against a disposable host, then mixed activation and ordinary pull.
+   **D30 tablet HTTPS:** [real HTTPS enrollment qualification](2026-09-12-forestread-android-https.md)
+   exercises the unchanged native transport and encrypted private record on the Go against an empty
+   disposable UB fixture. Default trust rejects a self-signed endpoint; committed-response suppression,
+   client/server restart, same-key retry, durable confirmation and revocation all pass. Only the
+   explicit network lab build gains Internet permission; normal FN and production UB remain untouched.
+   Next: known-prior-registry upgrade/mixed transport activation and ordinary pull into the selected
+   fresh replica. This does not yet expose production Settings enrollment or shared-storage routing.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

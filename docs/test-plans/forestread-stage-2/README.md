@@ -1,6 +1,28 @@
-# Stage 2 shared-library foundation (through D29)
+# Stage 2 shared-library foundation (through D30)
 
 Current status and remaining integration work: [2026-09-12 plan review](../../design-plans/2026-09-12-forestread-progress-review.md).
+
+## D30: real tablet HTTPS enrollment
+
+[D30](../../design-plans/2026-09-12-forestread-android-https.md) adds a separate opt-in Internet lab
+build and a restricted ephemeral HTTPS fixture runner. The Go uses the unchanged production native
+transport and Keystore-backed private record, not injected transport results or a permissive trust
+manager. Five phases cover bad TLS, committed-but-undelivered success, client/server restart with
+same-key retry, durable confirmation, actual Bearer admission and revocation with local ink intact.
+The edge suppresses the first committed success with 503; this is not a literal socket-drop test.
+
+The narrow tunnel exposes only enrollment and capabilities against a new empty UB DB; no real
+library, administrator password, production server, device trust store or normal FN installation
+is changed. See the [device evidence and invocation](../forestread-device/README.md#d30-real-tablet-https-enrollment).
+Ordinary lab builds still lack Internet permission. No production code or UB/Rhizome changes were
+needed for this gate. Next: known-prior-registry upgrade and mixed transport/ordinary pull.
+
+Final Go evidence: five ADB-carried HTTPS phases in `/tmp/forestread-https-l8N4tD/report.json` and
+19 standard phases in `/tmp/forestread-device-3IObrX/report.json`; eight host tests pass. The initial
+direct HTTPS run passed too, but later repeats exposed router NXDOMAIN. The optional ADB carrier
+and explicit non-rebinding ports handle the qualified test route without changing system DNS,
+weakening TLS or disabling ADB's reverse-connection guard. Direct Wi-Fi reliability remains a
+separate network-environment concern; failed runs are retained in the device log.
 
 ## D29: isolated setup UI and selected-library routing
 

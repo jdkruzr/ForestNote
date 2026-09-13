@@ -82,6 +82,10 @@ and ordinary pull into a selected fresh replica. Bring setup controls into the r
 those gates. No production UB deployment, automatic uncertain-edit reconciliation, public signed
 upgrade, literal disk-full or physical-power-loss proof is implied by these process tests.
 
+D30 follow-up: [tablet HTTPS enrollment](2026-09-12-forestread-android-https.md) is now qualified
+with a separate opt-in network lab build. The ordinary lab remains offline; setup still does not
+enroll automatically. Known-prior-registry/mixed activation and ordinary pull are the next gate.
+
 ## Verified checkpoint
 
 - **397 app + 287 format JVM tests**, zero failures/errors/skips; four host-runner tests; normal
