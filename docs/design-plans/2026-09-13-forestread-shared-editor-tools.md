@@ -56,8 +56,9 @@ does not delete another session's writing.
   The actual WebView/native-view case selects Calligraphy/70, closes and resumes input, clamps
   a resize without replacing its session, erases a complete earlier stroke, recreates the View,
   and verifies Cancel restores earlier ink. Finish/Cancel still each publish one settled refresh.
-  These automated rendering tests use the generic backend; they do not replace physical Boox
-  or Viwoods pen acceptance. The first run's thickness assertion failed because its scripted
+  The Activity uses its detected device backend; the separate pixel-comparison case uses a
+  generic surface. Automated input does not replace physical Boox or Viwoods pen acceptance.
+  The first run's thickness assertion failed because its scripted
   numeric CSS selector was invalid, so no preset click occurred; the corrected test passes.
 - **12/12 host-runner tests** pass (`/tmp/forestread-d43-host-tests.log`).
 - Full headless report:
