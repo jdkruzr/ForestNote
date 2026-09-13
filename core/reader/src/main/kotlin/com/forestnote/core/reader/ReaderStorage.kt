@@ -27,6 +27,12 @@ class ReaderStorage private constructor(
     val incoming = ReaderIngress(this)
     val requiredAssets: AssetReferenceProvider = SqliteAssetReferences(db, dispatcher, "reader_required_assets")
 
+    /** Local-only durable progress, scoped by the host's non-secret endpoint/account/library key.
+     * Shares this library's guarded handle and writer; never creates a second owner or outbox.
+     */
+    suspend fun transferQueue(scope: String): TransferQueue =
+        SqliteTransferQueue(db,dispatcher,scope).also {it.createSchema()}
+
     companion object {
         suspend fun openExperimental(db: SqliteHandle, writer: CoroutineDispatcher, actor: String,
             existingRegistry: Registry = Registry(emptyList()), clock: () -> Long = System::currentTimeMillis): ReaderStorage {

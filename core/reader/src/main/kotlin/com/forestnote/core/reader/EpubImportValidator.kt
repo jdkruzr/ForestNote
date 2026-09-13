@@ -4,6 +4,10 @@ import kotlinx.serialization.json.*
 import org.xml.sax.Attributes
 import org.xml.sax.InputSource
 import org.xml.sax.helpers.DefaultHandler
+import org.xml.sax.ext.DefaultHandler2
+import org.xml.sax.XMLReader
+import org.xml.sax.SAXNotRecognizedException
+import org.xml.sax.SAXNotSupportedException
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -182,15 +186,24 @@ internal object EpubImportValidator {
         return bytes
     }
 
-    private fun parse(bytes: ByteArray, handler: DefaultHandler) {
-        val factory = SAXParserFactory.newInstance()
-        factory.isNamespaceAware = true
-        factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
-        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-        factory.setFeature("http://xml.org/sax/features/external-general-entities", false)
-        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
-        val reader = factory.newSAXParser().xmlReader
+    internal fun parse(bytes: ByteArray, handler: DefaultHandler, reader: XMLReader =
+        SAXParserFactory.newInstance().apply { isNamespaceAware = true }.newSAXParser().xmlReader) {
+        // Android Expat lacks the JAXP/Apache flags. These are extra hardening, not our
+        // security boundary: mandatory lexical DTD refusal prevents even internal expansion,
+        // mandatory entity flags/resolver prevent external access, and budgets below bound work.
+        fun extraFeature(name:String,value:Boolean) {
+            try {reader.setFeature(name,value)}
+            catch(_:SAXNotRecognizedException) {}
+            catch(_:SAXNotSupportedException) {}
+        }
+        extraFeature(XMLConstants.FEATURE_SECURE_PROCESSING,true)
+        extraFeature("http://apache.org/xml/features/disallow-doctype-decl",true)
+        extraFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd",false)
+        reader.setFeature("http://xml.org/sax/features/external-general-entities",false)
+        reader.setFeature("http://xml.org/sax/features/external-parameter-entities",false)
+        reader.setProperty("http://xml.org/sax/properties/lexical-handler",object:DefaultHandler2() {
+            override fun startDTD(name:String?,publicId:String?,systemId:String?) {error("EPUB XML DTDs forbidden")}
+        }) // No fallback if the parser cannot install this protection.
         reader.contentHandler = object : DefaultHandler() {
             var depth = 0
             override fun startElement(uri: String, local: String, q: String, a: Attributes) {

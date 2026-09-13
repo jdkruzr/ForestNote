@@ -188,6 +188,13 @@ the headless result does not activate production integration.
    pull into a selected fresh replica, provenance-preserving reopen, and revoked-token refusal while
    local ink still saves. Production activation remains off. Next: the shared row/asset scheduler,
    original-byte transfer/resume and honest content readiness, then reader UI integration.
+   **D33 Android asset checkpoint:** [shared scheduler and real-book qualification](2026-09-13-forestread-android-asset-scheduler.md)
+   attaches the existing Rhizome scheduler to the same owner/credential/writer scope. A real EPUB
+   uploads and downloads byte-identically on the Go 6 II, retaining its first chunk across Android
+   and disposable-UB restarts; partial content stays unavailable and ink still saves. Android XML
+   portability is fixed without permitting DTDs. The user reclaimed the 6 II after 22/22 standard
+   checks; final HTTPS regressions and a test-only revocation refinement move to the Go 10.3 II.
+   Foreground lifecycle driving and reader UI attachment remain next, with production gates off.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

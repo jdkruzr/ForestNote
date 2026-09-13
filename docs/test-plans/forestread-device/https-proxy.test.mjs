@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
+import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {options} from './https-run.mjs';
 import {createConnectProxy} from './https-connect.mjs';
@@ -9,6 +10,38 @@ import {createEnrollmentProxy,fixtureAdmin,labAccount,listen,close} from './http
 const prefix='/'+ 'a'.repeat(64),password='b'.repeat(64);
 const auth='Basic '+Buffer.from(`${labAccount}:${password}`).toString('base64');
 const enrollment={site_id:'0'.repeat(25)+'1',token_hash:'c'.repeat(64),adopt_legacy:false};
+
+test('asset opt-in preserves binary bytes and digest; rejects admin, oversized and non-allowlisted requests',async()=>{
+    const bytes=Buffer.from(Array.from({length:262144},(_,i)=>i%256));
+    const digest=createHash('sha256').update(bytes).digest('hex');const calls=[];
+    const upstream=http.createServer(async(req,res)=>{
+        const parts=[];for await(const part of req) parts.push(part);
+        calls.push({method:req.method,body:Buffer.concat(parts),auth:req.headers.authorization});
+        if(req.method==='PUT') {assert.equal(req.headers['x-rhizome-chunk-sha256'],digest);res.writeHead(204);res.end();}
+        else {res.writeHead(200,{'X-Rhizome-Chunk-SHA256':digest});res.end(bytes);}
+    });
+    const port=await listen(upstream);
+    const p=createEnrollmentProxy({prefix,password,upstream:()=>`http://127.0.0.1:${port}`,mixed:true,assets:true});
+    const base=`http://127.0.0.1:${await listen(p.server)}${prefix}/sync/assets/v1/${digest}`;
+    const token='Bearer fn-device-v1_'+'d'.repeat(64);
+    try {
+        for(const authorization of [auth,fixtureAdmin,'Bearer '+'c'.repeat(64)])
+            assert.equal((await fetch(base+'/chunks/0',{headers:{Authorization:authorization}})).status,401);
+        for(const suffix of ['/reset-invalid','/chunks?start=0&limit=257','/chunks/-1','/chunks/0?extra=1'])
+            assert.equal((await fetch(base+suffix,{headers:{Authorization:token}})).status,404);
+        assert.equal((await fetch(base,{method:'DELETE',headers:{Authorization:token}})).status,404);
+        const headers={Authorization:token,'X-Rhizome-Chunk-SHA256':digest};
+        assert.equal((await fetch(base+'/chunks/0',{method:'PUT',headers,body:Buffer.alloc(262145)})).status,413);
+        assert.equal(calls.length,0);
+        assert.equal((await fetch(base+'/chunks/0',{method:'PUT',headers,body:bytes})).status,204);
+        const response=await fetch(base+'/chunks/0',{headers});
+        assert.equal(response.headers.get('content-length'),'262144');
+        assert.equal(response.headers.get('x-rhizome-chunk-sha256'),digest);
+        assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes);
+        assert.deepEqual(calls[0].body,bytes);assert.ok(calls.every(x=>x.auth===token));
+        assert.ok(!JSON.stringify(p.evidence).includes(token));
+    } finally {await close(p.server);await close(upstream);}
+});
 
 test('mixed route is opt-in, bounded and device-token-only; capabilities and rows retain real bodies',async()=>{
     const calls=[];

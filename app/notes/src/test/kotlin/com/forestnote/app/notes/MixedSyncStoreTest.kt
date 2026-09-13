@@ -41,6 +41,17 @@ class MixedSyncStoreTest {
         assertEquals(EnrollmentResult.CONFIRMED,s.replicaEnrollment(EnrollmentTransport {_,_,_->EnrollmentResult.CONFIRMED})
             .approve(server,EnrollmentApproval("author","test")))
     }
+    private suspend fun publish(s:NotebookStore,bytes:ByteArray):BookRecord = s.withReader {r ->
+        val d=AssetDescriptor(assetDigest(bytes),bytes.size.toLong());r.assets.stage(d)
+        for(i in 0 until d.chunkCount) {
+            val chunk=bytes.copyOfRange((i*ASSET_CHUNK_BYTES).toInt(),minOf(bytes.size,((i+1)*ASSET_CHUNK_BYTES).toInt()))
+            r.assets.writeChunk(d.id,i,chunk,assetDigest(chunk))
+        }
+        r.assets.complete(d.id)
+        BookRecord(d.id,d.byteLength,"application/epub+zip",VersionedJson("""{"version":1,"title":"Asset fixture"}""")).also {
+            r.books.publishVerified("publish",it)
+        }
+    }
     private inner class Transport:BoundedRowTransport {
         var discovery:CapabilityOutcome=CapabilityOutcome.Available(SyncCapabilities(1,setOf("bounded-rows-v1","assets-v1"),
             setOf(hash),RowLimits(),AssetLimits(ASSET_CHUNK_BYTES,ASSET_PAGE_ENTRIES)))
@@ -131,5 +142,88 @@ class MixedSyncStoreTest {
             assertTrue(sql(file,"SELECT * FROM rhizome_outbox").isEmpty())
             assertEquals(listOf(listOf("4000000000000")),sql(file,"SELECT modified_at FROM notebook"))
         } finally {s.shutdown()}
+    }
+
+    @Test fun assetUploadYieldsToRowsAndBlockedChunkDoesNotHoldInkWriter()=runBlocking<Unit> {
+        val file=File(temp.root,"upload.db");val s=open(file);val remote=open(File(temp.root,"remote.db"));val t=Transport()
+        val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>()
+        try {
+            val book=publish(s,ByteArray(ASSET_CHUNK_BYTES*2+7) {it.toByte()});enroll(s)
+            val access=remote.withReader {it.assets}
+            val delayed=object:AssetAccess by access {
+                override suspend fun writeChunk(id:String,index:Long,bytes:ByteArray,digest:String) {
+                    if(index==0L) {entered.complete(Unit);release.await()}
+                    access.writeChunk(id,index,bytes,digest)
+                }
+            }
+            val c=s.mixedSyncForQualification({_,_->t},assetTransport={_,_->delayed},policy=TransferPolicy(pollMillis=10))
+            val request=async {
+                while(true) {
+                    val next=assertIs<MixedSyncOutcome.Scheduled>(c.step(server,"author")).step
+                    if(next is LibraryStep.Asset) return@async next
+                }
+                error("unreachable")
+            }
+            withTimeout(5000) {entered.await()}
+            val ink=Stroke(points=listOf(StrokePoint(9,10,500,0)))
+            s.save(ink);withTimeout(2000) {s.readerIdentity()}
+            release.complete(Unit)
+            assertEquals(ASSET_CHUNK_BYTES.toLong(),request.await().job.verifiedBytes)
+            assertEquals(LibraryStep.Rows::class,assertIs<MixedSyncOutcome.Scheduled>(c.step(server,"author")).step::class)
+            assertTrue(t.requests.last().ops.any {it.pk==ink.id})
+            withTimeout(5000) {
+                while(access.describe(book.id).state!=AssetState.READY) {
+                    val step=assertIs<MixedSyncOutcome.Scheduled>(c.step(server,"author")).step
+                    assertFalse(step is LibraryStep.Paused,"$step")
+                    if(step is LibraryStep.Asset) assertNull(step.job.error,"$step")
+                    delay(10)
+                }
+            }
+            assertEquals(AssetState.READY,access.describe(book.id).state)
+            assertTrue(sql(file,"SELECT tbl FROM rhizome_outbox WHERE tbl LIKE 'rhizome_transfer_%'").isEmpty())
+        } finally {release.complete(Unit);s.shutdown();remote.shutdown()}
+    }
+
+    @Test fun assetDownloadResumesDurableChunksAndDoesNotClaimReadinessForCorruption()=runBlocking<Unit> {
+        val remote=open(File(temp.root,"download-source.db"));val file=File(temp.root,"download.db")
+        var s=open(file);val t=Transport()
+        try {
+            val book=publish(remote,ByteArray(ASSET_CHUNK_BYTES*2+7) {(it%251).toByte()})
+            val access=remote.withReader {it.assets}
+            t.incoming=listOf(Op("reader_book",book.id,"01ARZ3NDEKTSV4RRFFQ69G5FAV",1,1000,
+                kotlinx.serialization.json.buildJsonObject {
+                    put("asset_id",kotlinx.serialization.json.JsonPrimitive(book.id));put("byte_length",kotlinx.serialization.json.JsonPrimitive(book.byteLength))
+                    put("media_type",kotlinx.serialization.json.JsonPrimitive(book.mediaType));put("metadata_json",kotlinx.serialization.json.JsonPrimitive(book.metadata.raw))
+                }).toWire())
+            enroll(s);s.resumeReaderWork()
+            fun coordinator(store:NotebookStore,asset:AssetAccess)=store.mixedSyncForQualification({_,_->t},assetTransport={_,_->asset},policy=TransferPolicy(pollMillis=1,retryBaseMillis=1))
+            val c=coordinator(s,access)
+            withTimeout(5000) {
+                while(true) {
+                    val step=assertIs<MixedSyncOutcome.Scheduled>(c.step(server,"author")).step
+                    if(step is LibraryStep.Asset && step.job.nextIndex==1L) break
+                    delay(10)
+                }
+            }
+            assertFalse(s.withReader {it.books.open(book.id)!!.contentReady})
+            s.shutdown();s=open(file)
+            assertEquals(1,s.withReader {it.assets.listChunks(book.id,0,10).entries.count {e->e.sha256!=null}})
+            val corrupt=object:AssetAccess by access {
+                override suspend fun readChunk(id:String,index:Long):AssetChunk {
+                    val chunk=access.readChunk(id,index)
+                    return AssetChunk(chunk.bytes.copyOf().also {it[0]=(it[0].toInt() xor 1).toByte()},chunk.sha256)
+                }
+            }
+            val resumed=coordinator(s,corrupt)
+            withTimeout(5000) {
+                while(true) {
+                    val step=assertIs<MixedSyncOutcome.Scheduled>(resumed.step(server,"author")).step
+                    if(step is LibraryStep.Asset && step.job.phase==TransferPhase.FAILED) break
+                    delay(10)
+                }
+            }
+            assertFalse(s.withReader {it.books.open(book.id)!!.contentReady})
+            assertEquals(1,s.withReader {it.assets.listChunks(book.id,0,10).entries.count {e->e.sha256!=null}})
+        } finally {s.shutdown();remote.shutdown()}
     }
 }

@@ -12,15 +12,20 @@ import com.forestnote.core.ink.StrokePoint
 import com.forestnote.core.reader.*
 import io.rhizome.core.*
 import io.rhizome.http.HttpUrlTransport
+import io.rhizome.http.HttpAssetTransport
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import java.io.File
+import java.io.OutputStream
+import java.security.MessageDigest
+import java.util.zip.ZipOutputStream
+import java.util.zip.ZipEntry
 import java.net.*
 import java.util.concurrent.Executors
 import javax.net.ssl.HttpsURLConnection
 
 /** Real bounded HTTPS against a disposable UB, with two private replicas of one author's library.
- * This metadata fixture is deliberately not a rendering or asset-download qualification.
+ * The optional real-book mode also qualifies bytes; neither mode qualifies rendering.
  */
 internal class MixedTransportQualification(private val context:Context,private val args:Bundle,
     private val run:String,private val invocation:String,private val process:String) {
@@ -61,7 +66,32 @@ internal class MixedTransportQualification(private val context:Context,private v
     private fun save(value:JsonObject) {check(evidence.edit().putString(id,value.toString()).commit())}
     private fun sync(s:NotebookStore)=s.mixedSyncForQualification({target,token ->
         HttpUrlTransport(target.server+"/sync/v1","Bearer $token",openConnection=::connect)
-    },RowLimits(maxOps=2,targetPageBytes=2048))
+    },RowLimits(maxOps=2,targetPageBytes=2048),assetTransport={target,token ->
+        HttpAssetTransport(target.server+"/sync/assets/v1","Bearer $token",openConnection=::connect)
+    },policy=TransferPolicy(pollMillis=100))
+    private suspend fun step(s:NotebookStore):LibraryStep {
+        val result=sync(s).step(server,account)
+        check(result is MixedSyncOutcome.Scheduled) {"Scheduler refused: $result"}
+        check(result.step !is LibraryStep.Paused) {"Scheduler paused: ${result.step}"}
+        if(result.step is LibraryStep.Asset) check(result.step.job.error==null) {"Asset failed: ${result.step}"}
+        return result.step
+    }
+    private suspend fun ink(s:NotebookStore) {
+        withTimeout(2000) {s.save(Stroke(points=listOf(StrokePoint(51,52,500,0))));s.readerIdentity()}
+    }
+    private suspend fun download(s:NotebookStore,book:String,partial:Boolean) {
+        withTimeout(120_000) {
+            while(!s.withReader {it.books.open(book)!!.contentReady}) {
+                val result=step(s)
+                if(result is LibraryStep.Asset && result.job.verifiedBytes==ASSET_CHUNK_BYTES.toLong() && partial) {
+                    check(!s.withReader {it.books.open(book)!!.contentReady})
+                    ink(s);return@withTimeout
+                }
+                delay(20)
+            }
+            check(!partial) {"Expected a partial download"}
+        }
+    }
     private suspend fun enroll(s:NotebookStore) {
         check(s.replicaEnrollment(HttpsEnrollmentTransport(::connect)).approve(server,EnrollmentApproval(account,password))==EnrollmentResult.CONFIRMED)
     }
@@ -76,13 +106,35 @@ internal class MixedTransportQualification(private val context:Context,private v
         }
         error("Mixed fixture did not converge")
     }
-    suspend fun seed() {
+    suspend fun seed(assets:Boolean=false) {
         check(!file(id+"_a").exists())
         val s=open(id+"_a")
         try {
             val identity=s.readerIdentity()
             s.save(Stroke(points=listOf(StrokePoint(21,22,500,0))))
-            val book=s.withReader {r ->
+            val book=if(assets) s.withReader {r ->
+                // Actual Android parser must reject DTDs, not merely tolerate unavailable flags.
+                for((index,charset) in listOf(Charsets.UTF_8,Charsets.UTF_16).withIndex()) {
+                    val probe=File(context.cacheDir,"xml-$run-$index.epub")
+                    try {
+                        ZipOutputStream(probe.outputStream()).use {zip ->
+                            zip.putNextEntry(ZipEntry("mimetype"));zip.write("application/epub+zip".toByteArray());zip.closeEntry()
+                            zip.putNextEntry(ZipEntry("META-INF/container.xml"))
+                            zip.write(("<!DOCTYPE container [<!ENTITY x SYSTEM 'file:///must-not-read'>]>"+
+                                "<container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">&x;</container>").toByteArray(charset))
+                            zip.closeEntry()
+                        }
+                        val error=try {r.imports.importBook("xml-guard-$index",context.cacheDir,{probe.inputStream()});null}
+                            catch(e:IllegalStateException) {e}
+                        check(error?.message=="EPUB XML DTDs forbidden") {"Android XML guard did not refuse the DTD"}
+                        check(r.books.list().isEmpty());r.imports.abort("xml-guard-$index")
+                    } finally {check(probe.delete())}
+                }
+                val source=File(context.cacheDir,"asset-$run.epub")
+                r.imports.importBook("real-book",context.cacheDir,{source.inputStream()}).also {
+                    check(it.id==args.getString("bookHash") && it.byteLength>2L*ASSET_CHUNK_BYTES)
+                }
+            } else s.withReader {r ->
                 val bytes="Fruit stand metadata fixture; no pancakes.".toByteArray()
                 val descriptor=AssetDescriptor(assetDigest(bytes),bytes.size.toLong())
                 r.assets.stage(descriptor);r.assets.writeChunk(descriptor.id,0,bytes,assetDigest(bytes));r.assets.complete(descriptor.id)
@@ -94,6 +146,23 @@ internal class MixedTransportQualification(private val context:Context,private v
             check(sync(s).exchange(server,account) is MixedSyncOutcome.NotReady)
             check(history(file(id+"_a"))==before)
             enroll(s);exchange(s)
+            if(assets) {
+                val remote=HttpAssetTransport(server+"/sync/assets/v1","Bearer "+checkNotNull(secrets.replicas.read(
+                    ReplicaCredentialScope(server,account,identity.first,identity.second))).token,openConnection=::connect)
+                withTimeout(120_000) {
+                    var wrote=false
+                    while(true) {
+                        val result=step(s)
+                        if(result is LibraryStep.Asset && result.job.verifiedBytes>=ASSET_CHUNK_BYTES) {
+                            if(!wrote) {ink(s);wrote=true}
+                            if(remote.describe(book.id).state==AssetState.READY) break
+                        }
+                        delay(20)
+                    }
+                    check(wrote)
+                }
+                exchange(s)
+            }
             check(rows(file(id+"_a"),"SELECT COUNT(*) FROM rhizome_outbox").single().single()=="0")
             save(buildJsonObject {
                 put("invocation",invocation);put("process",process);put("sourceActor",identity.second);put("book",book.id)
@@ -101,7 +170,7 @@ internal class MixedTransportQualification(private val context:Context,private v
             })
         } finally {s.shutdown()}
     }
-    suspend fun pull() {
+    suspend fun pull(assets:Boolean=false) {
         val expected=read();check(!file(id+"_old").exists())
         val old=open(id+"_old");old.save(Stroke(points=listOf(StrokePoint(31,32,500,0))));old.readerIdentity();old.shutdown()
         val prepared=recovery.prepare(file(id+"_old"),id,LibraryRecoveryPolicy.Reason.COPY)
@@ -112,30 +181,46 @@ internal class MixedTransportQualification(private val context:Context,private v
             enroll(s);exchange(s);s.resumeReaderWork()
             withTimeout(8000) {while(s.withReader {it.books.list()}.isEmpty()) delay(20)}
             val f=selectedFile()
-            check(rows(f,"SELECT COUNT(*) FROM stroke").single().single()=="1")
+            check(rows(f,"SELECT COUNT(*) FROM stroke").single().single()==if(assets) "2" else "1")
             check(rows(f,"SELECT COUNT(*) FROM rhizome_outbox").single().single()=="0")
             check(rows(f,"SELECT tbl,pk,site_id,op_seq,op_ts FROM rhizome_row_meta ORDER BY tbl,pk").toString()==expected.getValue("versions").jsonPrimitive.content)
             check(s.withReader {it.books.list()}.single().book.id==expected.getValue("book").jsonPrimitive.content)
             check(!s.withReader {it.books.list()}.single().contentReady)
             check(s.remoteApplied.value==0L) // No reader navigation/reflow notification.
+            if(assets) download(s,expected.getValue("book").jsonPrimitive.content,true)
             save(JsonObject(expected+mapOf("replica" to JsonPrimitive(s.readerIdentity().second),"process" to JsonPrimitive(process),
                 "sourceHash" to JsonPrimitive(original),"archiveHash" to JsonPrimitive(archive))))
         } finally {s.shutdown()}
         check(RecoveryFiles.digest(file(id+"_old"))==original && RecoveryFiles.digest(prepared.archive.file)==archive)
     }
-    suspend fun reopen(revoked:Boolean) {
+    suspend fun reopen(revoked:Boolean,assets:Boolean=false) {
         val expected=read();val f=selectedFile();val before=history(f)
         val s=selected()
         try {
             check(s.readerIdentity().second==expected.getValue("replica").jsonPrimitive.content)
             val cursor=rows(f,"SELECT cursor FROM rhizome_sync_state")
             if(revoked) {
-                val outcome=sync(s).exchange(server,account)
+                val outcome=if(assets) sync(s).step(server,account) else sync(s).exchange(server,account)
                 check(outcome is MixedSyncOutcome.Exchanged && outcome.page==RowExchange.Stopped(SyncResult.AuthRequired))
                 check(history(f)==before && rows(f,"SELECT cursor FROM rhizome_sync_state")==cursor)
             } else {
-                exchange(s);check(history(f)==before)
-                check(rows(f,"SELECT tbl,pk,site_id,op_seq,op_ts FROM rhizome_row_meta ORDER BY tbl,pk").toString()==expected.getValue("versions").jsonPrimitive.content)
+                if(assets) {
+                    val book=expected.getValue("book").jsonPrimitive.content
+                    check(!s.withReader {it.books.open(book)!!.contentReady})
+                    check(s.withReader {it.assets.listChunks(book,0,256)}.entries.count {it.sha256!=null}==1)
+                    download(s,book,false)
+                } else {
+                    exchange(s);check(history(f)==before)
+                    check(rows(f,"SELECT tbl,pk,site_id,op_seq,op_ts FROM rhizome_row_meta ORDER BY tbl,pk").toString()==expected.getValue("versions").jsonPrimitive.content)
+                }
+            }
+            if(assets) {
+                val digest=MessageDigest.getInstance("SHA-256")
+                s.withReader {it.books.streamOriginal(expected.getValue("book").jsonPrimitive.content,object:OutputStream() {
+                    override fun write(b:Int) {digest.update(b.toByte())}
+                    override fun write(b:ByteArray,off:Int,len:Int) {digest.update(b,off,len)}
+                })}
+                check(digest.digest().joinToString("") {"%02x".format(it)}==args.getString("bookHash"))
             }
             s.save(Stroke(points=listOf(StrokePoint(41,42,500,0))));s.readerIdentity()
             check(rows(f,"SELECT COUNT(*) FROM rhizome_outbox").single().single()==if(revoked) "2" else "1")

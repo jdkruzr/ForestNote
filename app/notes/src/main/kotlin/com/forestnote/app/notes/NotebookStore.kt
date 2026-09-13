@@ -222,6 +222,9 @@ class NotebookStore(
         transport: (com.forestnote.app.notes.caldav.ReplicaCredentialScope,String)->io.rhizome.core.BoundedRowTransport = { target,token ->
             io.rhizome.http.HttpUrlTransport(target.server.trimEnd('/')+"/sync/v1","Bearer $token")
         }, limits:io.rhizome.core.RowLimits=io.rhizome.core.RowLimits(),
+        assetTransport: (com.forestnote.app.notes.caldav.ReplicaCredentialScope,String)->io.rhizome.core.AssetAccess = { target,token ->
+            io.rhizome.http.HttpAssetTransport(target.server.trimEnd('/')+"/sync/assets/v1","Bearer $token")
+        }, policy:io.rhizome.core.TransferPolicy=io.rhizome.core.TransferPolicy(),
     ):MixedSyncCoordinator = synchronized(lifecycleLock) {
         check(qualifyReaderStorage && !closing) {"Mixed transport is gated off"}
         mixedSync ?: run {
@@ -245,7 +248,8 @@ class NotebookStore(
             }
             MixedSyncCoordinator({readerIdentity()},requireNotNull(secureCredentials).replicas,local,
                 {actor -> val request=currentCoroutineContext();onDb {request.ensureActive();it.prepareMixedSync(actor,hash)}},hash,
-                {val request=currentCoroutineContext();onDb {request.ensureActive();it.finishMixedJoin()}},transport,limits).also {mixedSync=it}
+                {val request=currentCoroutineContext();onDb {request.ensureActive();it.finishMixedJoin()}},
+                {withReader {it}},transport,limits,assetTransport,policy).also {mixedSync=it}
         }
     }
 

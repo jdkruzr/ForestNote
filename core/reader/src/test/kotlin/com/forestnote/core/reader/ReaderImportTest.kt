@@ -19,6 +19,31 @@ class ReaderImportTest {
     private val container = """<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"""
     private val opf = """<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>No Pancakes: The Illustrated Edition</dc:title><dc:creator>Fixture Goblin</dc:creator></metadata><manifest><item id="text" href="text.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="text"/></spine></package>"""
 
+    @Test fun portableXmlGuardRejectsDtdsWithoutVendorSecurityFlags() {
+        fun reader()=object:org.xml.sax.helpers.XMLFilterImpl(javax.xml.parsers.SAXParserFactory.newInstance()
+            .apply {isNamespaceAware=true}.newSAXParser().xmlReader) {
+            override fun setFeature(name:String,value:Boolean) {
+                if(name.startsWith("http://apache.org/") || name==javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING)
+                    throw org.xml.sax.SAXNotRecognizedException(name)
+                super.setFeature(name,value)
+            }
+        }
+        EpubImportValidator.parse("<root>Ordinary &amp; safe</root>".toByteArray(),org.xml.sax.helpers.DefaultHandler(),reader())
+        for(charset in listOf(Charsets.UTF_8,Charsets.UTF_16)) for(dtd in listOf(
+            "<!DOCTYPE root>","<!DOCTYPE root SYSTEM 'file:///must-not-read'>",
+            "<!DOCTYPE root [<!ENTITY x 'expanded'>]>",
+            "<!DOCTYPE root [<!ENTITY % x SYSTEM 'https://must-not-fetch.invalid/a'>%x;]>")) {
+            val error=assertFails {EpubImportValidator.parse((dtd+"<root/>").toByteArray(charset),org.xml.sax.helpers.DefaultHandler(),reader())}
+            assertEquals("EPUB XML DTDs forbidden",error.message)
+        }
+        val unsupported=object:org.xml.sax.helpers.XMLFilterImpl(reader()) {
+            override fun setProperty(name:String,value:Any?) {throw org.xml.sax.SAXNotRecognizedException(name)}
+        }
+        assertFailsWith<org.xml.sax.SAXNotRecognizedException> {
+            EpubImportValidator.parse("<root/>".toByteArray(),org.xml.sax.helpers.DefaultHandler(),unsupported)
+        }
+    }
+
     /** A streamed STORED payload makes file size real, without allocating it or relying on a
      * compressible ZIP bomb. This is a container stress fixture, not an image-rendering fixture. */
     private fun epub(name: String = "fixture.epub", payload: Long = 2L * ASSET_CHUNK_BYTES + 17,

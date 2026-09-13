@@ -62,6 +62,8 @@ nor recovery of uncertain archived edits. Two replicas represent one author, not
 
 ## Next
 
+Implementation/checkpoint: [D33 shared Android asset scheduler](2026-09-13-forestread-android-asset-scheduler.md).
+
 Attach Rhizome's shared row/asset scheduler to this same owner and credential scope. Qualify original
 book upload/download, interrupted transfer/resume, fair scheduling alongside ink, and honest content
 readiness before connecting the Reader Lab UI to the main app. Normal FN/UB rollout and uncertain

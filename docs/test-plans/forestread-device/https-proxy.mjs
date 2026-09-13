@@ -1,22 +1,24 @@
 // Narrow disposable-fixture boundary. Never expose assetlab's public admin directly.
 import http from 'node:http';
 import {timingSafeEqual} from 'node:crypto';
+import {forwardAsset} from './https-assets.mjs';
 
 export const fixtureAdmin='Basic '+Buffer.from('assetlab:assetlab').toString('base64');
 export const labAccount='forestread-disposable';
 const equal=(a,b)=>typeof a==='string' && Buffer.byteLength(a)===Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a),Buffer.from(b));
 
-export function createEnrollmentProxy({prefix,password,upstream,suppressFirst=true,mixed=false}) {
+export function createEnrollmentProxy({prefix,password,upstream,suppressFirst=true,mixed=false,assets=false}) {
     if(!/^\/[a-f0-9]{64}$/.test(prefix) || !/^[a-f0-9]{64}$/.test(password)) throw Error('Random test authority required');
     const approval='Basic '+Buffer.from(`${labAccount}:${password}`).toString('base64');
-    const evidence={enrollments:[],capabilities:[],rows:[],suppressed:0,rejected:0};
+    const evidence={enrollments:[],capabilities:[],rows:[],assets:[],suppressed:0,rejected:0};
     let requests=0;
     const server=http.createServer({maxHeaderSize:8192,requestTimeout:5000,headersTimeout:5000},async(req,res)=>{
         res.setHeader('Cache-Control','no-store');
         res.setHeader('X-ForestRead-Qualification','enrollment-only');
         const end=code=>{res.writeHead(code);res.end();};
         try {
-            if(++requests>100) return end(429);
+            if(++requests>(assets?2000:100)) return end(429);
+            if(assets && await forwardAsset(req,res,{prefix,upstream,evidence:evidence.assets})) return;
             const enroll=req.method==='POST' && req.url===prefix+'/sync/devices/v1/enroll';
             const caps=req.method==='GET' && req.url===prefix+'/sync/capabilities';
             const rows=mixed && req.method==='POST' && req.url===prefix+'/sync/v1';

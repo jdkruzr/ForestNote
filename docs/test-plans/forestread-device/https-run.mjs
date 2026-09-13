@@ -13,6 +13,8 @@ import {setTimeout as pause} from 'node:timers/promises';
 import {createEnrollmentProxy,fixtureAdmin,listen,close} from './https-proxy.mjs';
 import {passed,target} from './run.mjs';
 import {createConnectProxy} from './https-connect.mjs';
+import {createReadStream} from 'node:fs';
+import {pipeline} from 'node:stream/promises';
 
 export function options(args) {
     assert.ok(args.length===4 || args.length===6,'Use --serial SERIAL --ub-repo /path/to/ultrabridge [--route direct|adb-proxy]');
@@ -22,7 +24,8 @@ export function options(args) {
     return {serial:args[1],ub:resolve(args[3]),route:args[5]??'direct'};
 }
 
-export async function run({serial,ub,route='direct',mixed=false}) {
+export async function run({serial,ub,route='direct',mixed=false,book=null}) {
+    assert.ok(!book || mixed,'Assets require explicit mixed mode');
     const dir=await mkdtemp(join(tmpdir(),'forestread-https-'));
     const abort=new AbortController();const children=new Set();const servers=[];const cleanups=[];
     const interrupt=()=>abort.abort();
@@ -30,7 +33,7 @@ export async function run({serial,ub,route='direct',mixed=false}) {
     const watchdog=setTimeout(interrupt,10*60_000);
     const report={version:1,status:'running',runId:`tls_${Date.now()}`,invocation:randomUUID(),phases:[],
         tls:'Android default trust to Cloudflare edge; encrypted tunnel; narrow loopback proxy to disposable UB',
-        route,mixed,productionActivated:false,started:new Date().toISOString()};
+        route,mixed,assets:!!book,productionActivated:false,started:new Date().toISOString()};
     const reversePorts=[];
     const redactions=[];
     const command=async(cmd,args,cwd,timeout=60_000)=>{
@@ -43,7 +46,7 @@ export async function run({serial,ub,route='direct',mixed=false}) {
             throw Error(`${cmd} failed (${e.code??'interrupted'}); see ${file}`); // Never echo secret-bearing argv.
         }
     };
-    const adb=args=>command('adb',['-s',serial,...args]);
+    const adb=args=>command('adb',['-s',serial,...args],undefined,book?240_000:60_000);
     const start=(cmd,args,cwd,env=process.env)=>{
         const child=spawn(cmd,args,{cwd,env,stdio:['pipe','pipe','pipe']});children.add(child);
         let output='';let ended=false;
@@ -81,6 +84,26 @@ export async function run({serial,ub,route='direct',mixed=false}) {
         assert.match(permissions,/android.permission.INTERNET: granted=true/,'Install the opt-in network lab APK first');
         assert.doesNotMatch(permissions,/android.permission.(?:MANAGE|READ|WRITE)_EXTERNAL_STORAGE: granted=true/);
         report.device=(await adb(['shell','getprop','ro.build.fingerprint'])).trim();
+        if(book) {
+            const fingerprint=async()=>{
+                const digest=createHash('sha256');let bytes=0;
+                for await(const chunk of createReadStream(book)) {digest.update(chunk);bytes+=chunk.length;}
+                return {sha256:digest.digest('hex'),bytes};
+            };
+            report.book=await fingerprint();
+            assert.ok(report.book.bytes>2*262144 && report.book.bytes<=16*1024*1024,'Use a 3+ chunk EPUB, at most 16 MiB');
+            const destination=`cache/asset-${report.runId}.epub`;
+            cleanups.push(()=>adb(['shell','run-as',target,'rm',destination]));
+            // Shell v2 without a PTY preserves bytes and waits for the remote exit status.
+            const copy=spawn('adb',['-s',serial,'shell','-T','run-as',target,'dd',`of=${destination}`],{stdio:['pipe','ignore','pipe']});
+            copy.stderr.resume();children.add(copy);
+            const completed=new Promise((resolve,reject)=>{copy.on('error',reject);copy.on('close',code=>{
+                children.delete(copy);code===0?resolve():reject(Error('Lab book copy failed'));
+            });});
+            await Promise.all([pipeline(createReadStream(book),copy.stdin),completed]);
+            assert.deepEqual(await fingerprint(),report.book,'Source changed during copy');
+            assert.equal((await adb(['shell','run-as',target,'sha256sum',destination])).split(/\s+/)[0],report.book.sha256);
+        }
         report.ubRevision=(await command('git',['rev-parse','HEAD'],ub)).trim();
         report.fnRevision=(await command('git',['rev-parse','HEAD'],root)).trim();
         report.sources={};
@@ -93,6 +116,9 @@ export async function run({serial,ub,route='direct',mixed=false}) {
             'app/notes/src/qualificationTest/kotlin/com/forestnote/app/notes/ReaderDeviceQualificationTest.kt',
             'app/notes/src/main/kotlin/com/forestnote/app/notes/enrollment/HttpsEnrollmentTransport.kt',
             'app/notes/src/main/kotlin/com/forestnote/app/notes/enrollment/ReplicaEnrollmentCoordinator.kt',
+            ...(book?['docs/test-plans/forestread-device/https-assets.mjs','docs/test-plans/forestread-device/assets-run.mjs',
+                'core/reader/src/main/kotlin/com/forestnote/core/reader/ReaderStorage.kt',
+                'core/reader/src/main/kotlin/com/forestnote/core/reader/EpubImportValidator.kt']:[]),
             'docs/test-plans/forestread-device/https-proxy.mjs','docs/test-plans/forestread-device/https-connect.mjs','docs/test-plans/forestread-device/https-run.mjs'])
             report.sources[file]=createHash('sha256').update(await readFile(join(root,file))).digest('hex');
         console.log('Building disposable UB fixture');
@@ -106,7 +132,7 @@ export async function run({serial,ub,route='direct',mixed=false}) {
         let host=await fixture();
         const prefix='/'+randomBytes(32).toString('hex');const password=randomBytes(32).toString('hex');
         redactions.push(prefix,password);
-        const proxy=createEnrollmentProxy({prefix,password,upstream:()=>origin,mixed,suppressFirst:!mixed});
+        const proxy=createEnrollmentProxy({prefix,password,upstream:()=>origin,mixed,assets:!!book,suppressFirst:!mixed});
         const proxyPort=await listen(proxy.server);servers.push(proxy.server);report.proxy=proxy.evidence;
         // A valid-for-IP but untrusted one-day certificate; never installed in Android's trust store.
         await command('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=ForestRead Disposable',
@@ -148,15 +174,15 @@ export async function run({serial,ub,route='direct',mixed=false}) {
         }
         const registry=async()=>JSON.parse(await command('sqlite3',['-readonly','-json',db,
             'SELECT site_id,token_hash,revoked FROM sync_device_identity ORDER BY site_id']));
-        for(const phase of (mixed?['mixed-seed','mixed-pull','mixed-reopen','mixed-revoked']:
+        for(const phase of (book?['assets-seed','assets-pull','assets-reopen','assets-revoked']:mixed?['mixed-seed','mixed-pull','mixed-reopen','mixed-revoked']:
             ['https-refusal','https-seed','https-verify','https-confirmed','https-revoked'])) {
             abort.signal.throwIfAborted();
-            if(phase==='https-verify' || phase==='mixed-pull') {
-                report.committedBeforeRetry=await registry();assert.equal(report.committedBeforeRetry.length,1);
+            if(phase==='https-verify' || phase==='mixed-pull' || phase==='assets-pull' || phase==='assets-reopen') {
+                report.committedBeforeRetry=await registry();assert.equal(report.committedBeforeRetry.length,phase==='assets-reopen'?2:1);
                 await host.stop();host=await fixture();assert.deepEqual(await registry(),report.committedBeforeRetry);
                 report.serverRestartPreservedBinding=true;
             }
-            if(phase==='https-revoked' || phase==='mixed-revoked') {
+            if(phase==='https-revoked' || phase==='mixed-revoked' || phase==='assets-revoked') {
                 const rows=await registry();assert.equal(rows.length,mixed?2:1);
                 const revokedSite=mixed?proxy.evidence.enrollments.at(-1).site:rows[0].site_id;
                 const r=await fetch(origin+'/sync/devices/v1/revoke',{method:'POST',signal:AbortSignal.timeout(5000),
@@ -168,15 +194,28 @@ export async function run({serial,ub,route='direct',mixed=false}) {
             const output=await adb(['shell','am','instrument','-w','-r','-e','class','com.forestnote.app.notes.ReaderDeviceQualificationTest',
                 '-e','runId',report.runId,'-e','invocation',report.invocation,'-e','phase',phase,
                 '-e','httpsServer',publicUrl+prefix,'-e','httpsPassword',password,
+                ...(book?['-e','bookHash',report.book.sha256]:[]),
                 ...(proxyPortArg?['-e','httpsProxyPort',proxyPortArg]:[]),
                 '-e','httpsUntrusted',`https://127.0.0.1:${reversePort}`,target+'.test/androidx.test.runner.AndroidJUnitRunner']);
             await writeFile(join(dir,phase+'.log'),output.replaceAll(password,'<redacted>').replaceAll(prefix,'/<redacted>'),{flag:'wx',mode:0o600});
             const status=passed({code:0,output})?'passed':'failed';report.phases.push({phase,status});
             assert.equal(status,'passed',`${phase} failed; see local evidence`);
+            if(book) {
+                const chunks=proxy.evidence.assets.filter(x=>x.kind==='chunk');
+                report.phases.at(-1).uploads=chunks.filter(x=>x.method==='PUT' && x.status===204).map(x=>x.index);
+                report.phases.at(-1).downloads=chunks.filter(x=>x.method==='GET' && x.status===200).map(x=>x.index);
+                if(phase==='assets-pull') assert.deepEqual(report.phases.at(-1).downloads,[0]);
+                if(phase==='assets-revoked') assert.deepEqual(report.phases.at(-1).downloads,report.phases.at(-2).downloads);
+            }
         }
         assert.equal(untrustedHttpRequests,0,'Untrusted endpoint received HTTP authority');
         report.untrustedHttpRequests=untrustedHttpRequests;
         if(mixed) {
+            if(book) {
+                const expected=Array.from({length:Math.ceil(report.book.bytes/262144)},(_,i)=>i);
+                assert.deepEqual(report.phases.at(-1).uploads,expected);
+                assert.deepEqual(report.phases.at(-1).downloads,expected);
+            }
             assert.equal(proxy.evidence.suppressed,0);
             assert.deepEqual(proxy.evidence.enrollments.map(x=>x.status),[204,204]);
             assert.equal(new Set(proxy.evidence.enrollments.map(x=>x.site)).size,2);

@@ -432,3 +432,24 @@ also hash-checked before/after mixed sync.
 The source book contains tiny synthetic metadata-fixture bytes, not a valid rendering EPUB.
 The receiver honestly reports `contentReady=false`. Original-byte transfer, fair asset scheduling,
 foreground network lifecycle and reader UI integration are the next gates, not claims of this run.
+
+## D33: real book bytes through the shared Android owner
+
+See the [D33 implementation and handoff](../../design-plans/2026-09-13-forestread-android-asset-scheduler.md).
+The explicit `assets-run.mjs` mode takes the mixed runner's arguments followed by
+`--book '/absolute/path/to/book.epub'`. It preserves the original, streams only a private cache
+copy, and exposes a binary-safe bounded device-token asset route only for this disposable run.
+
+Go 6 II evidence: `/tmp/forestread-https-5WVfIG/report.json` **4/4** real-book phases;
+`/tmp/forestread-device-46B2m7/report.json` **22/22** standard phases. The real EPUB's five chunks
+travel exactly once each way; the first downloaded chunk survives a between-chunk process/server
+restart. SHA-256 verifies the original after download and after revocation. Actual Android parser
+tests reject UTF-8 and UTF-16 DTDs before a book is published. JVM blocked-transfer/corruption tests,
+403 app + 292 format tests, ten host tests and the 189-test headless regression also pass.
+
+The Go 6 II is released at the user's request. Its installed app/test hashes for these results are
+`5fa41cd8115664818095c51b5f1194fd11a89f966f8c2910b36c2d1af7b5cc21` /
+`5659a35c4bc6cc141b330b7e26a1502531f507640f9c075d3cd7a7c573483e4f`.
+The final test-only change to call the scheduler directly after revocation is built but awaits
+installation and HTTPS regression on the Go 10.3 II. Do not claim these older results test that
+new instrumentation artifact. Normal FN/library remain unchanged; no reverse mappings remain.
