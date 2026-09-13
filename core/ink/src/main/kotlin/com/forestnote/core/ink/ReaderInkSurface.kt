@@ -37,6 +37,7 @@ class ReaderInkSurface(context: Context, private val backend: InkBackend,
     var inputEnabled: () -> Boolean = { true }
     /** Atomic host reservation immediately before accepting a new drawing gesture. */
     var admitGesture: () -> Boolean = { true }
+    var admitEraseGesture: () -> Boolean = { true }
     var eraseEnabled: Boolean = true
     var strokeState: ((Boolean) -> Unit)? = null
     var workStateChanged: (() -> Unit)? = null
@@ -328,6 +329,7 @@ class ReaderInkSurface(context: Context, private val backend: InkBackend,
         if (eraseSession && eraseInputSession != session) return
         if (!eraseSession) {
             if (workPending || !canvasReady) return
+            if (!admitEraseGesture()) { eraseGesture = false; hardwareEraseGesture = false; return }
             eraseInputSession = session; eraseSession = true; inStroke = true; strokeState?.invoke(true)
         }
         queuedErase.add(InkErasePath(path.toList(), transform.toVirtualSize(18f).coerceAtLeast(1)))

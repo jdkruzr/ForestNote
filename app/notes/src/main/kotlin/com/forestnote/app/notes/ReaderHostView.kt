@@ -32,6 +32,7 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
     @Volatile private var editingToken:String?=null
     private var resumed=false
     private var editorFrameReady=false
+    private var menuGeneration=0L
     val editing get()=documentInk!=null || library.documentEdit!=null
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
     private data class Message(val data:String,val reply:JavaScriptReplyProxy)
@@ -160,6 +161,56 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
                 }
                 JSONObject().put("session",edit.queue.session.id)
             }
+            "editTools" -> {
+                val token=request.getString("token");check(token==editingToken)
+                val pen=request.getString("pen");com.forestnote.core.ink.BrushKind.valueOf(pen)
+                val width=request.getInt("width");require(width in 7..250)
+                val tools=ReaderEditorTools(pen,width,request.getBoolean("erasing"))
+                withContext(Dispatchers.Main) {
+                    val view=checkNotNull(documentInk)
+                    if(!view.setTools(tools)) afterEditorFrame(view) {it.closeMenu()}
+                }
+                library.editorTools=tools;library.editorWidths[pen]=width
+                JSONObject.NULL
+            }
+            "editToolsState" -> {
+                checkNotNull(books[request.getString("token")])
+                val tools=library.editorTools
+                JSONObject().put("pen",tools.pen).put("width",tools.width).put("erasing",tools.erasing)
+                    .put("widths",JSONObject(library.editorWidths.toMap()))
+            }
+            "editMenuPrepare" -> {
+                check(request.getString("token")==editingToken)
+                val view=withContext(Dispatchers.Main) {checkNotNull(documentInk).also {it.prepareMenu();menuGeneration++}}
+                val p=view.placement
+                val bitmap=com.forestnote.core.ink.InkWorkerGeometry(p.width,p.height,p.canvasWidth,p.start,p.end).render(view.edit.queue.preview())
+                val out=ByteArrayOutputStream()
+                try {check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out))} finally {bitmap.recycle()}
+                check(out.size()<=4*1024*1024)
+                val cssWidth=request.getDouble("viewportWidth");require(cssWidth.isFinite() && cssWidth>0)
+                val scale=p.viewportWidth/cssWidth
+                JSONObject().put("image","data:image/png;base64,"+android.util.Base64.encodeToString(out.toByteArray(),android.util.Base64.NO_WRAP))
+                    .put("x",p.x/scale).put("y",p.y/scale).put("width",p.width/scale).put("height",p.height/scale)
+            }
+            "editMenuShow", "editMenuClose" -> {
+                check(request.getString("token")==editingToken)
+                val show=request.getString("action")=="editMenuShow"
+                withContext(Dispatchers.Main) {
+                    afterEditorFrame(checkNotNull(documentInk)) {if(show) it.showMenu() else it.closeMenu()}
+                }
+                JSONObject.NULL
+            }
+            "editResize" -> {
+                val token=request.getString("token")
+                check(books[token]?.snapshot?.book?.id==library.documentEdit?.queue?.session?.book)
+                withContext(Dispatchers.Main) {documentInk?.prepareMenu()}
+                val metadata=library.resizeDocumentEdit(request.getString("command"),request.getLong("height"))
+                withContext(Dispatchers.Main) {
+                    menuGeneration++;editorFrameReady=false
+                    documentInk?.release();documentInk?.let(::removeView);documentInk=null;editingToken=null
+                }
+                JSONObject(metadata)
+            }
             "editEnd" -> {
                 checkNotNull(books[request.getString("token")])
                 val edit=library.documentEdit ?: return JSONObject.NULL
@@ -172,7 +223,11 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
                 val state=edit.queue.awaitSettled();check(state.terminalCommitted && state.failedCommand==null)
                 JSONObject.NULL
             }
-            "editRetry" -> {check(request.getString("token")==editingToken);checkNotNull(library.documentEdit).queue.retry();JSONObject.NULL}
+            "editRetry" -> {
+                val edit=checkNotNull(library.documentEdit)
+                check(books[request.getString("token")]?.snapshot?.book?.id==edit.queue.session.book)
+                edit.queue.retry();JSONObject.NULL
+            }
             "editFreeze" -> {
                 val token=request.getString("token");val edit=checkNotNull(library.documentEdit)
                 check(books[token]?.snapshot?.book?.id==edit.queue.session.book && edit.queue.state.value.terminalCommitted)
@@ -218,6 +273,18 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
     private fun title(book:com.forestnote.core.reader.BookSnapshot):String = (book.displayTitle ?:
         runCatching {Json.parseToJsonElement(book.book.metadata.raw).jsonObject["title"]?.jsonPrimitive?.content}.getOrNull()
         ?: "Untitled Book").take(4096)
+    private suspend fun afterEditorFrame(view:ReaderDocumentInkView,action:(ReaderDocumentInkView)->Unit) {
+        val ready=CompletableDeferred<Unit>();val generation=++menuGeneration
+        web.postVisualStateCallback(generation,object:WebView.VisualStateCallback() {
+            override fun onComplete(requestId:Long) {web.postOnAnimation {
+                try {
+                    if(!disposed && documentInk===view && menuGeneration==generation) action(view)
+                    ready.complete(Unit)
+                } catch(e:Exception) {ready.completeExceptionally(e)}
+            }}
+        })
+        ready.await()
+    }
     private fun scheduleRefresh() {
         if(documentInk!=null) return
         val generation=++refreshGeneration

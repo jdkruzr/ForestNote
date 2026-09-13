@@ -137,6 +137,19 @@ class ReaderAnnotationRenderingTest {
             js("document.querySelector('foliate-paginator').getContents()[0].doc.querySelector('[data-shared-ink]').parentElement.click(); true")
             waitFor("forestReadState().editAttached");nativeReady()
             val edit=checkNotNull(access.documentEdit);assertNotEquals(old.id,edit.queue.session.id)
+            js("document.getElementById('draw').click(); true")
+            waitFor("document.getElementById('penOptions').open && !document.getElementById('draw').disabled")
+            instrumentation.runOnMainSync {
+                val view=ReaderHostQualificationSession.view!!.documentInk!!
+                assertEquals(android.view.View.INVISIBLE,view.visibility);assertFalse(view.ink.inputEnabled())
+            }
+            js("document.querySelector('#penGroups [data-pen=CALLIGRAPHY]').click(); true")
+            waitFor("!document.getElementById('width').disabled")
+            js("document.querySelector('#widthPresets [data-width=\"70\"]').click(); true")
+            waitFor("!document.getElementById('width').disabled")
+            js("document.getElementById('closePenOptions').click(); true");nativeReady()
+            assertEquals(ReaderEditorTools("CALLIGRAPHY",70,false),access.editorTools)
+            instrumentation.runOnMainSync {assertEquals(BrushKind.CALLIGRAPHY,ReaderHostQualificationSession.view!!.documentInk!!.ink.params.brushKind)}
             val initialLocation=js("document.getElementById('page').textContent")
             js("document.getElementById('next').click(); document.getElementById('prev').click(); true")
             assertEquals(initialLocation,js("document.getElementById('page').textContent"))
@@ -150,11 +163,30 @@ class ReaderAnnotationRenderingTest {
             }
             withTimeout(15000) {edit.queue.awaitSettled()}
             val saved=edit.queue.preview();assertEquals(2,saved.size);assertTrue(saved.last().points.first().y>1000)
+            js("document.getElementById('spaceMenu').click(); true")
+            waitFor("document.getElementById('spaceOptions').open && !document.getElementById('height').disabled")
+            js("document.getElementById('height').value='200';document.getElementById('applySpace').click(); true")
+            waitFor("!document.getElementById('spaceOptions').open && forestReadState().editAttached && !document.getElementById('spaceMenu').disabled")
+            nativeReady();assertSame(edit,access.documentEdit)
+            assertTrue(access.annotation("note")!!.effectiveHeight!!>200)
+            assertEquals(saved,edit.queue.preview())
+            js("document.getElementById('erase').click(); true")
+            waitFor("!document.getElementById('erase').disabled");nativeReady()
+            instrumentation.runOnMainSync {
+                val surface=ReaderHostQualificationSession.view!!.documentInk!!.ink
+                assertEquals(Tool.StrokeEraser,surface.tool)
+                surface.erase(listOf(InkSample(1000,1000,500,0)),Tool.StrokeEraser)
+            }
+            nativeReady();withTimeout(15000) {edit.queue.awaitSettled()}
+            assertEquals(listOf(saved.last().id),edit.queue.preview().map {it.id})
+            js("document.getElementById('draw').click(); true")
+            waitFor("!document.getElementById('draw').disabled");nativeReady()
+            val afterErase=edit.queue.preview()
             activity.recreate()
             withTimeout(15000) {while(ReaderHostQualificationSession.view==null) delay(50)}
             waitFor("typeof forestReadState==='function' && forestReadState().editAttached");nativeReady()
             assertSame(edit,access.documentEdit)
-            instrumentation.runOnMainSync {assertEquals(saved,ReaderHostQualificationSession.view!!.documentInk!!.ink.strokes)}
+            instrumentation.runOnMainSync {assertEquals(afterErase,ReaderHostQualificationSession.view!!.documentInk!!.ink.strokes)}
             val beforeCancelRefresh=ReaderHostQualificationSession.refreshes
             js("document.getElementById('cancelInk').click(); true")
             waitFor("!forestReadState().editing && forestReadState().inkTiles>0")

@@ -130,6 +130,24 @@ class LabInkWorkerTest {
         } finally { main { view.releasePreview() }; executor.shutdown() }
     }
 
+    @Test fun refusedEraserDownCannotStartHalfwayThroughTheGesture() {
+        val executor = GateExecutor(); val backend = Backend(); lateinit var view: ReaderInkSurface
+        try {
+            main {
+                view = view(backend, executor); view.strokes = mutableListOf(stroke("keep", 700)); view.repaint()
+                view.admitEraseGesture = { false }
+                view.acceptHardwareEraser(InkSample(4000, 700, 500, 0), InkPhase.DOWN)
+                assertFalse(view.inStroke); assertFalse(view.hardwareEraseGesture)
+                view.admitEraseGesture = { true }
+                view.acceptHardwareEraser(InkSample(4000, 700, 500, 1), InkPhase.MOVE)
+                view.acceptHardwareEraser(InkSample(4000, 700, 500, 2), InkPhase.UP)
+                assertFalse(view.workPending); assertFalse(view.inStroke)
+                assertEquals(listOf("keep"), view.strokes.map { it.id })
+                assertEquals(1L, executor.entered.count)
+            }
+        } finally { main { view.releasePreview() }; executor.shutdown() }
+    }
+
     @Test fun staleEraseCannotRemoveStrokesFromReplacementSession() {
         val executor = GateExecutor(); val backend = Backend(); lateinit var view: ReaderInkSurface
         try {

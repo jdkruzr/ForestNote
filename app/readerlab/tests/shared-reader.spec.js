@@ -12,6 +12,7 @@ test('saved shared annotations compose into the book with native tiles and width
   await page.route('**/shared-ink.epub', route => route.fulfill({ contentType: 'application/epub+zip', body: bytes }));
   await page.addInitScript(() => {
     window.calls = [];
+    window.toolState = { pen: 'FOUNTAIN', width: 35, erasing: false, widths: {} }; window.noteHeight = 6000;
     window.ForestRead = { postMessage(data) {
       const r = JSON.parse(data); calls.push(r); let result = null;
       if(r.action==='editFreeze' && window.failNextReadback) window.failAnnotations=true;
@@ -21,7 +22,28 @@ test('saved shared annotations compose into the book with native tiles and width
       }
       if (r.action === 'list') result = { books: [{ id: 'a'.repeat(64), title: 'Shared Ink', ready: true }], next: null };
       if (r.action === 'open') result = { book: r.book, title: 'Shared Ink', token: 'lease', url: '/shared-ink.epub', mediaType: 'application/epub+zip' };
-      if (r.action === 'annotations') result = { annotations: [{ id: 'note', status: 'READY', width: 10000, height: 6000, highlightPresent: false, hasInk: true, inputHash: 'canonical', anchor: { version: 1, section: 0, start: 0, end: 11, quote: 'Write here.' } }], next: null };
+      const metadata = () => ({ id: 'note', status: 'READY', width: 10000, height: noteHeight, highlightPresent: false, hasInk: true, inputHash: 'canonical', anchor: { version: 1, section: 0, start: 0, end: 11, quote: 'Write here.' } });
+      if (r.action === 'annotations') result = { annotations: [metadata()], next: null };
+      if (r.action === 'editToolsState') result = toolState;
+      if (r.action === 'editTools') toolState = { pen: r.pen, width: r.width, erasing: r.erasing, widths: { ...toolState.widths, [r.pen]: r.width } };
+      if (r.action === 'editResize') {
+        noteHeight = Math.max(3000, r.height); result = metadata();
+        if (window.failResizeReply) {
+          window.failResizeReply = false;
+          queueMicrotask(() => ForestRead.onmessage({ data: JSON.stringify({ id: r.id, error: 'Lost Resize Reply' }) })); return;
+        }
+      }
+      if (r.action === 'editMenuPrepare') {
+        if (window.failMenuReply) {
+          window.failMenuReply = false;
+          queueMicrotask(() => ForestRead.onmessage({ data: JSON.stringify({ id: r.id, error: 'Lost Menu Reply' }) })); return;
+        }
+        const canvas = document.createElement('canvas'); canvas.width = 300; canvas.height = 100;
+        const ctx = canvas.getContext('2d'); ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 300, 100);
+        const doc = document.querySelector('foliate-paginator').getContents()[0].doc;
+        const box = doc.querySelector('[data-annotation]').getBoundingClientRect(), frame = doc.defaultView.frameElement.getBoundingClientRect();
+        result = { image: canvas.toDataURL(), x: frame.x + box.x, y: frame.y + box.y, width: box.width, height: box.height };
+      }
       if (r.action === 'inkSlice') {
         const canvas = document.createElement('canvas'); canvas.width = r.pixels; canvas.height = Math.ceil((r.end - r.start) * r.pixels / 10000);
         const ctx = canvas.getContext('2d'); ctx.fillStyle = 'white'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = 'black'; ctx.fillRect(10, 10, 40, 5);
@@ -68,6 +90,34 @@ test('saved shared annotations compose into the book with native tiles and width
   const index=await page.evaluate(()=>forestReadState().index);
   await page.keyboard.press('ArrowRight');expect(await page.evaluate(()=>forestReadState().index)).toBe(index);
   expect(await page.evaluate(()=>forestReadState().navigationLocked)).toBe(true);
+  await page.evaluate(()=>window.failMenuReply=true); await page.locator('#draw').click();
+  await expect(page.locator('#status')).toHaveText('Lost Menu Reply');
+  await expect(page.locator('#penOptions')).toBeHidden(); await expect(page.locator('#draw')).toBeEnabled();
+  expect(await page.evaluate(()=>calls.at(-1).action)).toBe('editMenuClose');
+  await page.locator('#draw').click(); await expect(page.locator('#penOptions')).toBeVisible();
+  await expect(page.locator('#editBackdrop')).toBeVisible();
+  expect(await page.locator('#reader').boundingBox()).toEqual(beforeEdit);
+  await expect(page.locator('#penGroups h3')).toHaveText(['Pens','Pencils','Markers','Calligraphy']);
+  await page.locator('#penGroups [data-pen=CALLIGRAPHY]').click();
+  await page.locator('#widthPresets [data-width="70"]').click();
+  await page.locator('#width').fill('83'); await page.locator('#width').press('Tab');
+  await expect(page.locator('#closePenOptions')).toBeEnabled(); await page.locator('#closePenOptions').click();
+  await expect(page.locator('#editBackdrop')).toBeHidden();
+  await page.locator('#erase').click(); await expect(page.locator('#erase')).toHaveAttribute('aria-pressed','true');
+  await page.locator('#draw').click(); await expect(page.locator('#penOptions')).toBeHidden();
+  await page.locator('#draw').click(); await expect(page.locator('#penOptions')).toBeVisible();
+  await expect(page.locator('#width')).toHaveValue('83'); await page.locator('#closePenOptions').click();
+  await page.locator('#spaceMenu').click(); await expect(page.locator('#spaceOptions')).toBeVisible();
+  await page.locator('#height').fill('200');
+  expect(await page.evaluate(()=>forestReadState().annotations[0].height)).toBe(6000);
+  await page.evaluate(()=>window.failResizeReply=true); await page.locator('#applySpace').click();
+  await expect(page.locator('#status')).toContainText('Lost Resize Reply');
+  await page.locator('#applySpace').click();
+  await expect(page.locator('#spaceOptions')).toBeHidden(); await expect(page.locator('#spaceMenu')).toBeEnabled();
+  expect(await page.evaluate(()=>forestReadState().annotations[0].height)).toBe(3000);
+  const resizeCommands=await page.evaluate(()=>calls.filter(c=>c.action==='editResize').map(c=>c.command));
+  expect(resizeCommands).toHaveLength(2);expect(new Set(resizeCommands).size).toBe(1);
+  expect(await page.locator('#reader').boundingBox()).toEqual(beforeEdit);
   await page.evaluate(()=>window.failNextReadback=true);
   await page.getByRole('button',{name:'Cancel Edit',exact:true}).click();
   await expect(page.locator('#status')).toHaveText('Simulated Readback Failure');

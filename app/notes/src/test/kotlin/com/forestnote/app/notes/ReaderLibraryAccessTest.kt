@@ -182,6 +182,28 @@ class ReaderLibraryAccessTest {
         } finally {s.shutdown()}
     }
 
+    @Test fun resizingRetainsSessionClampsToInkAndRetriesWithoutReauthoring()=runBlocking<Unit> {
+        val file=File(temp.root,"resize.db");val s=open(file)
+        try {
+            val a=s.readerLibraryForQualification(temp.root)
+            val book=a.importBook("import",{bytes().inputStream()}).book.id
+            val old=a.createAnnotation("create","note",book,"old",anchor,10000,1000)
+            a.appendAnnotationStroke("old-ink",old,ink("ink",5000));a.finishAnnotation("accept",old)
+            val edit=a.beginDocumentEdit(book,"note",a.annotation("note")!!.inputHash!!,"edit",0.0)
+            a.resizeDocumentEdit("grow",10000);assertEquals(10000L,a.annotation("note")!!.effectiveHeight)
+            assertSame(edit,a.documentEdit)
+            val shrunk=a.resizeDocumentEdit("shrink",200)
+            assertEquals(5003L,a.annotation("note")!!.effectiveHeight)
+            val history=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            assertEquals(shrunk,a.resizeDocumentEdit("shrink",200))
+            assertEquals(history,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            assertFails {a.resizeDocumentEdit("shrink",9000)}
+            assertTrue(edit.queue.end(true));edit.queue.awaitSettled();a.acknowledgeDocumentEdit(edit)
+            assertEquals(5003L,a.annotation("note")!!.effectiveHeight)
+            assertEquals(listOf("ink"),a.annotation("note")!!.strokes.map {it.id})
+        } finally {s.shutdown()}
+    }
+
     @Test fun selectionIntentsRetryWithoutReauthoringAndCancelTheRightContribution()=runBlocking<Unit> {
         val file=File(temp.root,"selections.db");val s=open(file)
         try {

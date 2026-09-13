@@ -8,7 +8,7 @@ class ReaderResourcePolicyTest {
         val root=ReaderResourcePolicy.ORIGIN
         assertNotNull(ReaderResourcePolicy.path(ReaderResourcePolicy.ENTRY,mainFrame=true))
         assertNotNull(ReaderResourcePolicy.path("$root/assets/readerlab/vendor/foliate/paginator.js"))
-        for(name in listOf("shared-selection.js","selection-ui.js","selection-handles.css","icons.js"))
+        for(name in listOf("shared-selection.js","selection-ui.js","selection-handles.css","icons.js","penu.js","shared-tools.js"))
             assertNotNull(ReaderResourcePolicy.path("$root/assets/readerlab/$name"))
         val book="$root/book/12345678-1234-1234-1234-123456789abc"
         assertNotNull(ReaderResourcePolicy.path(book));assertNull(ReaderResourcePolicy.path(book,mainFrame=true))

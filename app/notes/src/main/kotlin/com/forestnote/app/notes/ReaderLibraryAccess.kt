@@ -19,7 +19,9 @@ internal class ReaderAnnotationSession internal constructor(
     internal val owner:ReaderLibraryAccess,val id:String,val annotation:String,val book:String,
 )
 
-internal data class ReaderDocumentEdit(val queue:ReaderEditQueue,val metadata:String,val canvasY:Double)
+internal data class ReaderDocumentEdit(val queue:ReaderEditQueue,@Volatile var metadata:String,@Volatile var canvasY:Double)
+
+internal data class ReaderEditorTools(val pen:String="FOUNTAIN",val width:Int=35,val erasing:Boolean=false)
 
 /** Disposable renderer input, never a new source of library truth. Release after closing
  * the renderer; a second lease allows navigation to prepare without deleting the old frame.
@@ -43,6 +45,26 @@ internal class ReaderLibraryAccess(
     @Volatile private var editor:ReaderEditQueue?=null
     @Volatile var documentEdit:ReaderDocumentEdit?=null
         private set
+    @Volatile var editorTools=ReaderEditorTools()
+    /** Per-brush UI choices survive editor/View changes within this library owner. */
+    val editorWidths=java.util.concurrent.ConcurrentHashMap<String,Int>()
+
+    suspend fun resizeDocumentEdit(command:String,height:Long):String = request {s -> editGate.withLock {
+        require(command.matches(Regex("[a-zA-Z0-9-]{1,80}")) && height in 200..60000)
+        val edit=checkNotNull(documentEdit)
+        val state=edit.queue.awaitSettled()
+        check(state.settled && !state.terminalRequested) {"Save pending ink before resizing"}
+        // Input is suspended by the host before entering this owner operation. Joining the
+        // queue orders the height after all accepted strokes/erase claims; the stable receipt
+        // makes a lost resize reply retryable without another contribution.
+        s.edits.setProperty("document-height-$command",edit.queue.session.id,AnnotationProperty.HEIGHT,
+            VersionedJson("""{"version":1,"height":$height}"""))
+        val projection=checkNotNull(s.projections.read(edit.queue.session.annotation))
+        val updated=ReaderAnnotationPresentation.metadata(projection)
+        val frozen=Json.parseToJsonElement(edit.metadata).jsonObject.toMutableMap()
+        for(key in listOf("height","inputHash")) frozen[key]=updated.getValue(key)
+        JsonObject(frozen).toString().also {edit.metadata=it;edit.canvasY=0.0}
+    }}
     private val leases=mutableSetOf<PreparedReaderBook>()
     @Volatile var cacheCleanupFailures:Int=0
         private set

@@ -39,9 +39,9 @@ footer{display:flex;align-items:center;gap:12px;height:22px;flex-shrink:0;white-
 .settingsGrid label{display:flex;justify-content:space-between;gap:12px;min-height:42px;padding:3px 8px}
 .settingsGrid input,.settingsGrid select{flex-shrink:0;max-width:150px}
 .menuItems>button.actionButton{border:var(--menu-border-strong);border-radius:var(--menu-control-radius);text-align:center;font-weight:600;margin:8px 2px 2px;min-height:var(--menu-action-min-height)}
-#editing svg{width:var(--menu-icon-size);height:var(--menu-icon-size);vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+#editing svg,#editControls svg{width:var(--menu-icon-size);height:var(--menu-icon-size);vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .iconButton .moreIcon,#editing .moreIcon,.annotationActions .moreIcon{display:block;width:var(--menu-icon-size);height:var(--menu-icon-size);fill:currentColor;stroke:none;pointer-events:none}
-#editing [aria-pressed=true]{background:var(--menu-ink);color:var(--menu-surface);border:var(--menu-border-strong)}
+#editing [aria-pressed=true],#editControls [aria-pressed=true]{background:var(--menu-ink);color:var(--menu-surface);border:var(--menu-border-strong)}
 body.editingInk .menuLabel{display:none}body.editingInk #menu{width:var(--menu-icon-target)}
 body.editingInk header{gap:var(--menu-gap)}
 .penuPopup .menuHeading{padding:0 var(--menu-heading-inset);gap:var(--menu-gap)}.penuPopup .menuHeading strong{flex:1}
@@ -117,3 +117,5 @@ body[data-shared-selection][data-native-edit] #editControls { visibility: visibl
 body[data-native-edit] header { position: relative; }
 body[data-native-edit] header > :not(#editControls) { visibility: hidden; }
 #editControls:not([hidden]) { position: absolute; inset: 0 auto 0 4px; display: flex; align-items: center; gap: 4px; background: white; }
+#editBackdrop { position: fixed; z-index: 2; pointer-events: none; object-fit: contain; }
+#applySpace { border: var(--menu-border-strong); font-weight: 600; }

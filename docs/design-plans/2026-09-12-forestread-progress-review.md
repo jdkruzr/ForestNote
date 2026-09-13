@@ -245,7 +245,11 @@ the headless result does not activate production integration.
    **D42 selected-text creation:** [shared highlights and new writing regions](2026-09-13-forestread-shared-selection.md)
    now use the same repositories/queue and compact, portable selection UI. Accepted highlights
    reopen for writing; Cancel distinguishes new-box creation from editing an earlier highlight.
-   Penu/eraser/grow, saved-boundary adjustment and annotation browsing/search UI remain next.
+   The user confirms the shared finger-selection path is working nicely.
+   **D43 editor tools:** [shared Penu, erase and writing space](2026-09-13-forestread-shared-editor-tools.md)
+   attaches compact brush/thickness controls, ordered whole-stroke erasing and explicit-Apply
+   grow/shrink to the same native contribution session. Saved-boundary adjustment, annotation
+   browsing/search UI and integrated Viwoods acceptance remain next; production stays gated.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

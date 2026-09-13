@@ -163,6 +163,8 @@ try {
       'app/readerlab/src/main/assets/readerlab/shared-reader.js',
       'app/readerlab/src/main/assets/readerlab/shared-annotations.js',
       'app/readerlab/src/main/assets/readerlab/shared-selection.js',
+      'app/readerlab/src/main/assets/readerlab/shared-tools.js',
+      'app/readerlab/src/main/assets/readerlab/penu.js',
       'app/readerlab/src/main/assets/readerlab/selection-ui.js',
       'app/readerlab/src/main/assets/readerlab/selection-handles.css',
       'app/readerlab/src/main/assets/readerlab/icons.js',

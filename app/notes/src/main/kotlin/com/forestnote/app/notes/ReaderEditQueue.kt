@@ -85,6 +85,15 @@ internal class ReaderEditQueue(
         if(active) hidden.addAll(frozen) else hidden.removeAll(frozen.toSet())
         enqueue(ReaderQueuedEdit.Erase(frozen,active));true
     }
+    /** Erase worker batches from an already admitted gesture cannot be rejected after an
+     * earlier save fails. Each distinct hit is queued before its visible removal is published.
+     * Keep the reservation until UP and all worker batches settle; End cannot overtake them. */
+    fun eraseReserved(ticket:Gesture,ids:Set<String>) = synchronized(lock) {
+        require(ticket.owner===this && gesture===ticket && !closed)
+        require(ids.isNotEmpty() && ids.all {it in strokes && it !in hidden})
+        val frozen=Collections.unmodifiableList(ids.sorted())
+        hidden.addAll(frozen);enqueue(ReaderQueuedEdit.Erase(frozen,true))
+    }
     fun property(property:AnnotationProperty,value:VersionedJson):Boolean = synchronized(lock) {
         if(!admitted()) return false
         require(value.raw.length<=16384)

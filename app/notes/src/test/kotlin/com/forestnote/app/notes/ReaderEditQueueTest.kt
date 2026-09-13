@@ -56,6 +56,23 @@ class ReaderEditQueueTest {
         fail=false;q.retry();withTimeout(5000) {q.awaitSettled()};q.close()
     }
 
+    @Test fun eraseReservationKeepsWorkerBatchesOrderedAfterFailureAndBeforeFinish()=runBlocking<Unit> {
+        val gate=CompletableDeferred<Unit>();var fail=true
+        val calls=Collections.synchronizedList(mutableListOf<Pair<String,ReaderQueuedEdit>>())
+        val q=ReaderEditQueue(session(),listOf(stroke("a"),stroke("b")),{id,op ->calls+=id to op;gate.await();if(fail) error("offline write")},maxOperations=1)
+        val ticket=checkNotNull(q.reserveGesture())
+        q.eraseReserved(ticket,setOf("a"));gate.complete(Unit)
+        withTimeout(5000) {q.state.first {it.failedCommand!=null}}
+        q.eraseReserved(ticket,setOf("b"))
+        assertTrue(q.preview().isEmpty());assertFalse(q.end(false))
+        assertFails {q.eraseReserved(ticket,setOf("b"))}
+        q.abandonGesture(ticket);assertTrue(q.end(false))
+        fail=false;q.retry();withTimeout(5000) {q.awaitSettled()}
+        assertEquals(calls[0].first,calls[1].first)
+        assertEquals(listOf(setOf("a"),setOf("b")),calls.drop(1).mapNotNull {(it.second as? ReaderQueuedEdit.Erase)?.ids?.toSet()})
+        assertTrue(calls.last().second is ReaderQueuedEdit.End);q.close()
+    }
+
     @Test fun capacityIncludesReservationButNeverSplitsAnAdmittedGesture()=runBlocking<Unit> {
         val gate=CompletableDeferred<Unit>()
         val q=ReaderEditQueue(session(),emptyList(),{_,_ ->gate.await()},maxOperations=2,pointWatermark=4)

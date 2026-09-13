@@ -118,3 +118,6 @@ test `09185da532da8662d51663ccd747c5ea5e9942d2ceb63b9e0c24b36f73a85b20`.
 Both are certificate-matched in-place qualification upgrades. The stopped interactive database
 remains `.dump`-identical (`/tmp/forestread-finger-before.db` and
 `/tmp/forestread-finger-preserved.db`); the normal FN main library hash is unchanged.
+
+Physical follow-up: the user confirms the shared finger-selection path is "working very nicely."
+Continue with [D43 shared editor tools](2026-09-13-forestread-shared-editor-tools.md).

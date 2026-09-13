@@ -4,12 +4,13 @@ import { setupImageZoom } from './image-zoom.js';
 import { loadAnnotations, createInkSlices } from './shared-annotations.js';
 import { setupSharedSelection } from './shared-selection.js';
 import { moreIcon } from './icons.js';
+import { setupEditorTools } from './shared-tools.js';
 const $ = id => document.getElementById(id);
 const reader = new Reader($('reader'));
 for (const button of document.querySelectorAll('[data-icon="more"]')) button.append(moreIcon());
 const defaults = { ...reader.prefs };
 const pending = new Map(); let sequence = 0, current, opening = false;
-let editing = null;
+let editing = null, toolsUI;
 const report = message => { $('status').textContent = message; };
 const run = fn => async () => { try { await fn(); } catch (error) { report(error.message); } };
 // During terminal readback the native surface remains visible. Intermediate page/tile
@@ -45,7 +46,7 @@ if (window.ForestRead) ForestRead.onmessage = ({ data }) => {
   clearTimeout(request.timer); pending.delete(message.id);
   message.error ? request.reject(new Error(message.error)) : request.resolve(message.result);
 };
-const popups = createPopupHost({ onChange: () => { reader.highlightMenuOpen = !!document.querySelector('dialog[open]'); reflowAfterResize(); } });
+const popups = createPopupHost({ onChange: () => { reader.highlightMenuOpen = !!document.querySelector('dialog[open]'); reflowAfterResize(); void toolsUI?.popupChanged(); } });
 for (const [dialog, closeButton] of [['shelves', 'closeShelves'], ['chapters', 'closeChapters'], ['settings', 'closeSettings']]) popups.register($(dialog), { closeButton: $(closeButton) });
 setupImageZoom(reader, { native: () => rpc('refresh').catch(() => {}), syncMenuInput: () => {} });
 const text = (tag, value) => { const element = document.createElement(tag); element.textContent = value; return element; };
@@ -98,6 +99,7 @@ $('prev').onclick = run(() => reader.turn(-1)); $('next').onclick = run(() => re
 reader.addEventListener('page', ({ detail }) => { $('page').textContent = `${detail.index + 1} · ${Math.round((detail.fraction ?? 0) * 100)}%`; refreshReading().catch(() => {}); });
 reader.addEventListener('error', ({ detail }) => report(detail.message));
 const selectionUI = setupSharedSelection(reader, $, { rpc, current: () => current, editing: () => editing, beginEdit, report, popups });
+toolsUI = setupEditorTools(reader, $, { rpc, current: () => current, getEdit: () => editing, attachEdit, report, popups });
 reader.addEventListener('edit', ({detail}) => { void beginEdit(detail).catch(error => report(error.message)); });
 function editChrome(active) {
   document.body.toggleAttribute('data-native-edit', active); $('editControls').hidden = !active;
@@ -119,16 +121,17 @@ async function beginEdit({annotation,slot}) {
 async function attachEdit() {
   const edit=editing; if(!edit) return;
   report('Opening Writing Region…');
+  await toolsUI.load();
   edit.slot=visibleSlot(edit.annotation) ?? edit.slot;
   await rpc('editBegin',{token:current.token,annotation:edit.annotation.id,inputHash:edit.annotation.inputHash,
     command:edit.command,slot:edit.slot,viewportWidth:innerWidth,viewportHeight:innerHeight});
   if(editing!==edit) return;
-  edit.attached=true;report('Writing · Fountain · Saves After Each Stroke');
+  edit.attached=true;report(`Writing · ${toolsUI.label()} · Saves After Each Stroke`);
 }
 window.forestReadEditStatus = state => {
   if(!editing || state.token!==current?.token || state.annotation!==editing.annotation.id) return;
   $('retryInk').hidden=!state.failed;
-  report(state.failed ? 'Ink Not Saved Yet · Retry' : editing.warning ?? (state.pending ? `Saving In Order · ${state.pending} Queued` : 'Ink Saved In Shared Library · Fountain'));
+  report(state.failed ? 'Ink Not Saved Yet · Retry' : editing.warning ?? (state.pending ? `Saving In Order · ${state.pending} Queued` : `Ink Saved In Shared Library · ${toolsUI.label()}`));
 };
 window.forestReadEditUnavailable = message => { if(editing) {editing.warning=message;report(message);} };
 window.forestReadEditViewportChanged = () => window.forestReadEditUnavailable('Screen Size Changed · Finish Or Cancel Before Continuing');
@@ -146,7 +149,7 @@ async function finishEdit(cancel) {
     resizePending=false;reader.setEditing(null);await reader.reflow(location);
     await inkSlices.settled();
     if(!editing.detached) {await rpc('editDetach',{token:current.token});editing.detached=true;}
-    editing=null;editChrome(false);reader.reportRects();reflowAfterResize();
+    editing=null;toolsUI.reset();editChrome(false);reader.reportRects();reflowAfterResize();
     report(cancel ? 'Edit Cancelled · Earlier Ink Preserved' : 'Writing Saved'); await rpc('refresh');
   } catch(error) { if(editing) reader.setEditing(editing.annotation.id);$('retryInk').hidden=false;report(error.message); }
 }
@@ -154,6 +157,8 @@ $('finishInk').onclick=run(()=>finishEdit(false));$('cancelInk').onclick=run(()=
 $('retryInk').onclick=run(async()=>{
   if(!editing) return;
   if(editing.committed) return finishEdit(editing.ending);
+  if(editing.ending!=null) {await rpc('editRetry',{token:current.token});return finishEdit(editing.ending);}
+  if(await toolsUI.retryLayout()) return;
   if(!editing.attached && editing.ending==null) return attachEdit();
   await rpc('editRetry',{token:current.token});
   if(editing.ending!=null) await finishEdit(editing.ending);
