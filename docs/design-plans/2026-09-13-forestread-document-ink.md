@@ -31,8 +31,10 @@ reattaches to the same pending/error queue. Another book cannot replace that act
 This descriptor is not a process-death journal: after process loss, committed ink is read back,
 but automatic recovery of the exact former editor/position and unsaved RAM is not promised.
 
-Finish/Cancel join the ordered queue. The native surface is detached **before** projections are
-reloaded and the document reflows. Failed readback stays locked and Retry does not repeat the
+Finish/Cancel join the ordered queue. Native **input** is detached first, but the last ink pixels
+remain visible while projections reload and the document reflows behind them. After visible ink
+tiles finish decoding, the native pixel View is removed and one clean refresh is requested.
+Failed readback stays locked and Retry does not repeat the
 terminal command or infer whole-snapshot edits. Repeated attachment/detachment acknowledgments
 are safe on the same book lease. A transient native redraw failure explicitly disables drawing
 and offers Finish/Cancel instead of leaving an apparently usable empty surface.
@@ -84,3 +86,35 @@ are not claimed. The normal installed FN library and production UB remain outsid
   originals. **211/212** recorded sources match: only `ReaderHostView.kt` changed afterward to
   wait for the visual frame before enabling native input. The final installed native tests above
   cover that refinement. No unimplemented catalog adapters are counted as passing cases.
+
+## Physical acceptance and redundant-refresh correction
+
+The user reports no gaps or ghosting after the first in-document edit, but four visible flashes
+and a transient cleared screen before content returns. Device logs confirm four display-wide GC
+calls at 03:40:25.771, .818, .904 and 03:40:26.455. Reflow page notifications, the explicit Finish
+refresh and the later native-tile refresh were each publishing intermediate frames. Removing the
+native View before replacement ink decoded also exposed the transient empty readback region.
+
+The follow-up freezes/detaches input while retaining the native pixel View, suppresses intermediate
+page/tile refresh requests during terminal readback, waits for visible tiles to decode successfully,
+then removes the retained View and requests one final refresh. A failed tile keeps the editor
+locked with Retry; it is not reported as a completed replacement frame. The browser test holds
+tile completion and verifies no premature detach or refresh, then exactly one refresh after
+release. The real Android test counts native refresh calls for both Finish and Cancel.
+
+The physical edit itself is safely committed: the older open session retains sixteen strokes /
+2,068 points; the new finished document session has four strokes / 351 points. The closed library
+passes integrity checking with 25 outbox rows / maximum sequence 25
+(`/tmp/forestread-d41-refresh-before.db`).
+
+Verification: the qualification app/test build passes, all five shared-reader browser cases pass,
+and **26/26 native tests pass**, including exactly one refresh for each terminal operation
+(`/tmp/forestread-d41-refresh-build.log`, `/tmp/forestread-d41-refresh-browser.log`,
+`/tmp/forestread-d41-refresh-native.log`). This focused UI/readback correction postdates the
+headless source snapshot above; storage/sync code is unchanged and the full headless suite was
+not rerun for this correction. In-place app SHA-256
+`d17c8b4129324e168919a5961bd3ac8e0c7c7c100d4da4eb1663612ffc366049`, test
+`6ecca4cec8b43bbf7202134bf37f98395b8223eac56fa2856330fcd5f5947c28`.
+The interactive database remains `.dump`-identical after testing
+(`/tmp/forestread-d41-refresh-preserved.db`); normal FN's package path/library hash are unchanged.
+Physical confirmation of the single-refresh transition remains the next handoff.

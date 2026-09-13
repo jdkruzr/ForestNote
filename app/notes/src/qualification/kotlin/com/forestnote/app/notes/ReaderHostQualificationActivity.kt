@@ -30,7 +30,7 @@ class ReaderHostQualificationActivity:Activity() {
                     startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE);type="*/*"
                     },41)
-                },{backend?.refreshUiFrame(it)},{ReaderHostQualificationSession.rendered=it},backend)
+                },{backend?.refreshUiFrame(it);ReaderHostQualificationSession.refreshes++},{ReaderHostQualificationSession.rendered=it},backend)
                 host=view;ReaderHostQualificationSession.view=view
                 setContentView(view)
                 if(resumed) view.resume()
@@ -68,6 +68,7 @@ class ReaderHostQualificationActivity:Activity() {
     }
 }
 internal object ReaderHostQualificationSession {
+    @Volatile var refreshes:Int=0
     @Volatile var store:NotebookStore?=null
     @Volatile var view:ReaderHostView?=null
     @Volatile var rendered:String?=null

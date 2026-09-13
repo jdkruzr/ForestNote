@@ -155,8 +155,11 @@ class ReaderAnnotationRenderingTest {
             waitFor("typeof forestReadState==='function' && forestReadState().editAttached");nativeReady()
             assertSame(edit,access.documentEdit)
             instrumentation.runOnMainSync {assertEquals(saved,ReaderHostQualificationSession.view!!.documentInk!!.ink.strokes)}
+            val beforeCancelRefresh=ReaderHostQualificationSession.refreshes
             js("document.getElementById('cancelInk').click(); true")
             waitFor("!forestReadState().editing && forestReadState().inkTiles>0")
+            withTimeout(10000) {while(ReaderHostQualificationSession.refreshes==beforeCancelRefresh) delay(50)}
+            delay(750);assertEquals("Cancel publishes one settled frame",beforeCancelRefresh+1,ReaderHostQualificationSession.refreshes)
             assertEquals(listOf("older-stroke"),access.annotation("note")!!.strokes.map {it.id})
             assertEquals(SessionState.OPEN,access.annotationSessionState(old.id));assertNull(access.documentEdit)
             // A second fresh session can finish and render the new fingerprint without reopening the book.
@@ -168,8 +171,11 @@ class ReaderAnnotationRenderingTest {
                 surface.begin(Tool.Pen,surface.params)
                 surface.accept(InkSample(4000,500,500,0),InkPhase.DOWN);surface.accept(InkSample(5000,1000,600,1),InkPhase.UP)
             }
+            val beforeFinishRefresh=ReaderHostQualificationSession.refreshes
             js("document.getElementById('finishInk').click(); true")
             waitFor("!forestReadState().editing && forestReadState().inkTiles>0")
+            withTimeout(10000) {while(ReaderHostQualificationSession.refreshes==beforeFinishRefresh) delay(50)}
+            delay(750);assertEquals("Finish publishes one settled frame",beforeFinishRefresh+1,ReaderHostQualificationSession.refreshes)
             assertEquals(SessionState.FINISHED,access.annotationSessionState(finished.queue.session.id))
             assertEquals(2,access.annotation("note")!!.strokes.size)
         } finally {

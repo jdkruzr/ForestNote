@@ -165,6 +165,12 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
                 JSONObject.NULL
             }
             "editRetry" -> {check(request.getString("token")==editingToken);checkNotNull(library.documentEdit).queue.retry();JSONObject.NULL}
+            "editFreeze" -> {
+                val token=request.getString("token");val edit=checkNotNull(library.documentEdit)
+                check(books[token]?.snapshot?.book?.id==edit.queue.session.book && edit.queue.state.value.terminalCommitted)
+                withContext(Dispatchers.Main) {editorFrameReady=false;documentInk?.freezeForReadback()}
+                JSONObject.NULL
+            }
             "editDetach" -> {
                 val token=request.getString("token");checkNotNull(books[token])
                 val edit=library.documentEdit ?: return JSONObject.NULL

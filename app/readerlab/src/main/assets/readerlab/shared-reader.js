@@ -9,7 +9,10 @@ const pending = new Map(); let sequence = 0, current, opening = false;
 let editing = null;
 const report = message => { $('status').textContent = message; };
 const run = fn => async () => { try { await fn(); } catch (error) { report(error.message); } };
-const inkSlices = createInkSlices(reader, rpc, () => current, report);
+// During terminal readback the native surface remains visible. Intermediate page/tile
+// notifications must not request display-wide flashes; Finish publishes one settled frame.
+const refreshReading = () => editing ? Promise.resolve() : rpc('refresh');
+const inkSlices = createInkSlices(reader, rpc, () => current, report, refreshReading);
 let resizePending = false, resizeTimer, viewportSize = `${$('reader').clientWidth}:${$('reader').clientHeight}`;
 function reflowAfterResize() {
   if (!resizePending || editing || opening || reader.opening || reader.busy || reader.navigationLocked || reader.turning || !reader.doc) return;
@@ -89,7 +92,7 @@ $('library').onclick = run(async () => { if(editing) return; await shelves(); po
 $('import').onclick = run(async () => { if(!editing) await rpc('import'); });
 window.forestReadImported = run(async () => { await shelves(); report('Book Imported Into Shared Library'); });
 $('prev').onclick = run(() => reader.turn(-1)); $('next').onclick = run(() => reader.turn(1));
-reader.addEventListener('page', ({ detail }) => { $('page').textContent = `${detail.index + 1} · ${Math.round((detail.fraction ?? 0) * 100)}%`; rpc('refresh').catch(() => {}); });
+reader.addEventListener('page', ({ detail }) => { $('page').textContent = `${detail.index + 1} · ${Math.round((detail.fraction ?? 0) * 100)}%`; refreshReading().catch(() => {}); });
 reader.addEventListener('error', ({ detail }) => report(detail.message));
 // Until explicit edit-session persistence is attached, selections cannot become orphan edits.
 reader.addEventListener('selection', () => { reader._selection = null; reader.setSelecting(false); reader.doc?.getSelection()?.removeAllRanges(); report('Annotation Editing Is Not Connected Yet'); });
@@ -134,15 +137,17 @@ async function finishEdit(cancel) {
   editing.ending=cancel;
   try {
     if(!editing.committed) {await rpc('editEnd',{token:current.token,cancel});editing.committed=true;}
-    // First release the firmware surface, then rebuild from authoritative projections.
-    if(!editing.detached) {await rpc('editDetach',{token:current.token});editing.detached=true;}
+    // Stop input, but retain the last native ink pixels until replacement tiles have decoded.
+    if(!editing.frozen) {await rpc('editFreeze',{token:current.token});editing.frozen=true;}
     const saved=await loadAnnotations(rpc,current.token);
     reader.annotations=saved.annotations;
     const location={...reader.location};
-    reader.setEditing(null);await reader.reflow(location);
+    resizePending=false;reader.setEditing(null);await reader.reflow(location);
+    await inkSlices.settled();
+    if(!editing.detached) {await rpc('editDetach',{token:current.token});editing.detached=true;}
     editing=null;editChrome(false);reader.reportRects();reflowAfterResize();
     report(cancel ? 'Edit Cancelled · Earlier Ink Preserved' : 'Writing Saved'); await rpc('refresh');
-  } catch(error) { $('retryInk').hidden=false;report(error.message); }
+  } catch(error) { if(editing) reader.setEditing(editing.annotation.id);$('retryInk').hidden=false;report(error.message); }
 }
 $('finishInk').onclick=run(()=>finishEdit(false));$('cancelInk').onclick=run(()=>finishEdit(true));
 $('retryInk').onclick=run(async()=>{

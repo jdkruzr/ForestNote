@@ -25,8 +25,9 @@ export async function loadAnnotations(rpc, token) {
 /** One in-flight native tile, visible DOM only. Late replies cannot paint a different book/page.
  * Page layout supplies virtual slice bounds; width-fit renders retain the canonical aspect ratio.
  */
-export function createInkSlices(reader, rpc, current, report) {
+export function createInkSlices(reader, rpc, current, report, refresh = () => rpc('refresh')) {
   let desired = new Map(), running = false, again = false;
+  const waiting = new Set(), failures = new Set();
   const remove = element => { element.querySelector('[data-shared-ink]')?.remove(); delete element.dataset.sharedInkKey; };
   async function drain() {
     if (running) return;
@@ -48,17 +49,17 @@ export function createInkSlices(reader, rpc, current, report) {
             img.style.cssText = `width:100%!important;height:auto!important;top:0!important;left:0!important`;
             await img.decode();
             if (!valid()) continue;
-            remove(element); element.append(img); element.dataset.sharedInkKey = job.key; painted = true;
+            remove(element); element.append(img); element.dataset.sharedInkKey = job.key; failures.delete(job.key); painted = true;
           } catch {
             if (valid()) {
-              remove(element); element.dataset.sharedInkKey = job.key;
+              remove(element); element.dataset.sharedInkKey = job.key; failures.add(job.key);
               report('Saved Ink Preview Unavailable · Reopen Book To Retry');
             }
           }
         }
-        if (painted) await rpc('refresh').catch(() => {});
+        if (painted) await refresh().catch(() => {});
       } while (again);
-    } finally { running = false; }
+    } finally { running = false; for(const resolve of waiting) resolve(); waiting.clear(); }
   }
   function update({ slots }) {
     if(reader.editingId) return; // Freeze existing document pixels while native ink owns its slice.
@@ -77,7 +78,13 @@ export function createInkSlices(reader, rpc, current, report) {
       }
     }
     for (const element of previous.keys()) if (!desired.has(element)) remove(element);
+    const keys=new Set([...desired.values()].map(job=>job.key));
+    for(const key of failures) if(!keys.has(key)) failures.delete(key);
     again = true; void drain();
   }
-  return { update, clear: () => update({ slots: [] }) };
+  async function settled() {
+    while(running) await new Promise(resolve=>waiting.add(resolve));
+    if([...desired.values()].some(job=>failures.has(job.key))) throw new Error('Saved Ink Preview Unavailable · Retry');
+  }
+  return { update, settled, clear: () => update({ slots: [] }) };
 }

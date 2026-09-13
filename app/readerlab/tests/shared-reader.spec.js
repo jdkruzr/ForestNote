@@ -14,7 +14,7 @@ test('saved shared annotations compose into the book with native tiles and width
     window.calls = [];
     window.ForestRead = { postMessage(data) {
       const r = JSON.parse(data); calls.push(r); let result = null;
-      if(r.action==='editDetach' && window.failNextReadback) window.failAnnotations=true;
+      if(r.action==='editFreeze' && window.failNextReadback) window.failAnnotations=true;
       if(r.action==='annotations' && window.failAnnotations) {
         window.failAnnotations=false;window.failNextReadback=false;
         queueMicrotask(()=>ForestRead.onmessage({data:JSON.stringify({id:r.id,error:'Simulated Readback Failure'})}));return;
@@ -26,6 +26,9 @@ test('saved shared annotations compose into the book with native tiles and width
         const canvas = document.createElement('canvas'); canvas.width = r.pixels; canvas.height = Math.ceil((r.end - r.start) * r.pixels / 10000);
         const ctx = canvas.getContext('2d'); ctx.fillStyle = 'white'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = 'black'; ctx.fillRect(10, 10, 40, 5);
         result = { image: canvas.toDataURL(), width: canvas.width, height: canvas.height };
+      }
+      if(r.action==='inkSlice' && window.holdTile) {
+        window.releaseInkTile=()=>{window.holdTile=false;ForestRead.onmessage({data:JSON.stringify({id:r.id,result})});};return;
       }
       queueMicrotask(() => ForestRead.onmessage({ data: JSON.stringify({ id: r.id, result }) }));
     } };
@@ -69,10 +72,16 @@ test('saved shared annotations compose into the book with native tiles and width
   await page.getByRole('button',{name:'Cancel Edit',exact:true}).click();
   await expect(page.locator('#status')).toHaveText('Simulated Readback Failure');
   expect(await page.evaluate(()=>forestReadState().navigationLocked)).toBe(true);
+  await page.evaluate(()=>window.holdTile=true);
   await page.getByRole('button',{name:'Retry Ink Save',exact:true}).click();
+  await page.waitForFunction(()=>typeof releaseInkTile==='function');
+  expect(await page.evaluate(()=>calls.filter(c=>c.action==='editDetach').length)).toBe(0);
+  expect(await page.evaluate(()=>calls.slice(calls.findIndex(c=>c.action==='editFreeze')).filter(c=>c.action==='refresh').length)).toBe(0);
+  await page.evaluate(()=>releaseInkTile());
   await page.waitForFunction(()=>!forestReadState().editing && forestReadState().inkTiles===1);
   expect(await page.evaluate(()=>calls.filter(c=>c.action==='editEnd').map(c=>c.cancel))).toEqual([true]);
   expect(await page.evaluate(()=>calls.filter(c=>c.action==='editDetach').length)).toBe(1);
+  expect(await page.evaluate(()=>calls.slice(calls.findIndex(c=>c.action==='editFreeze')).filter(c=>c.action==='refresh').length)).toBe(1);
   await expect(page.locator('#next')).toBeEnabled();
 });
 

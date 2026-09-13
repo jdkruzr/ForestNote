@@ -48,6 +48,8 @@ internal class ReaderDocumentInkView(context:Context,val edit:ReaderDocumentEdit
     }
     fun resume() {resumed=true;backend.onResumeReacquire();syncInput();ink.reconcile()}
     fun pause() {resumed=false;backend.setInputSuspended(true);ink.cancel()}
+    /** Keep committed pixels on screen while the browser builds replacement readback behind us. */
+    fun freezeForReadback() {pause();backend.detachInput()}
     fun viewportChanged() {geometryChanged=true;backend.setInputSuspended(true);ink.cancel();visibility=INVISIBLE}
     override fun onWindowFocusChanged(focus:Boolean) {super.onWindowFocusChanged(focus);if(!focus) ink.cancel();syncInput()}
     fun end(cancel:Boolean):Boolean {
