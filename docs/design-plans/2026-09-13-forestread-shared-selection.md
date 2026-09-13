@@ -83,3 +83,38 @@ acceptance of these new creation paths remains pending; automated input is not a
 Shared Penu/eraser/grow controls, editing saved highlight boundaries, annotation browsing/search
 UI and Viwoods physical acceptance remain separate integration slices. No production reader
 activation, normal FN library changes, UB deployment or test-article migration is included.
+
+## Finger selection follow-up
+
+The user's finger hold initially opened WebView's blue selection and Copy/Share/Select All
+menu instead of the shared controls. Finger selection now uses the same source-anchor draft:
+hold on text for 450 ms, drag to extend, lift for the portable drops and compact header actions.
+Moving more than 10 CSS pixels before the hold cancels selection admission, preserving ordinary
+page swipes. A second finger cancels a touch hold/draft, while a palm cannot interrupt an active
+pen selection. Cancelled pointers, hidden documents and detached/stale targets cannot leave
+a delayed selection behind. Blank-margin holds do not select distant words. Image long-press
+zoom remains owned by its existing handler.
+
+The book document disables native selection for touch/pen and cancels the context menu;
+desktop mouse selection remains available. This is shared reader code, not a Boox-only native
+drawable or popup workaround. Selection and draft cancellation still author no database rows.
+
+The browser suite passes **117/117** (`/tmp/forestread-finger-full-browser.log`), including new
+EPUB/MOBI real touch-event hold/drag, multi-touch/cancel, native-range clearing, fixed viewport
+and quick-swipe cases. Existing pen, image zoom, Penu and persistence tests also pass.
+The Android selection test now injects **explicit TOOL_TYPE_FINGER touchscreen MotionEvents**
+and checks that the app draft opens without Android Copy/Share/Select All actions. Its first
+attempt used the short MotionEvent constructor, which delivered an empty/unknown pointer type;
+the test now asserts that WebView actually received `pointerType=touch`. It also respects the
+existing 400 ms post-hold compatibility-click guard before its scripted saved-highlight tap.
+
+This is a UI/input follow-up; storage/sync implementations and the headless result above are
+unchanged. That earlier source snapshot does not certify this later Reader input change.
+
+Final Go 10.3 II run: **27/27 native tests pass** (`/tmp/forestread-finger-final-native.log`),
+including finger-created highlights, conversion/recreation/Cancel and new native ink Finish.
+App SHA-256 `5ba45b9f93e594553f308fd6c1ec6c8d40af33e3f1e615d25cb990175b2666ec`;
+test `09185da532da8662d51663ccd747c5ea5e9942d2ceb63b9e0c24b36f73a85b20`.
+Both are certificate-matched in-place qualification upgrades. The stopped interactive database
+remains `.dump`-identical (`/tmp/forestread-finger-before.db` and
+`/tmp/forestread-finger-preserved.db`); the normal FN main library hash is unchanged.

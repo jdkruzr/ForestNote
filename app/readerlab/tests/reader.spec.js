@@ -695,6 +695,56 @@ for (const format of ['epub', 'mobi']) {
   });
 }
 
+for (const format of ['epub', 'mobi']) {
+  test(`${format}: finger hold selects with app controls while quick swipes still turn pages`, async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 800 });
+    await page.goto('http://127.0.0.1:4173/readerlab/index.html'); await page.waitForFunction(() => window.labReady);
+    await page.evaluate(format => openFixture(format), format);
+    const points = await page.evaluate(async () => {
+      const { TextIndex } = await import('/readerlab/anchors.js');
+      const idx = new TextIndex(reader.doc), frame = reader.doc.defaultView.frameElement.getBoundingClientRect();
+      return ['remarkably', 'passage'].map(word => {
+        const start = idx.text.indexOf(word), r = idx.range(start + 1, start + 2).getBoundingClientRect();
+        return { x: frame.x + r.x + r.width / 2, y: frame.y + r.y + r.height / 2 };
+      });
+    });
+    const before = await page.locator('#reader').boundingBox();
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points });
+    await touch('touchStart', [points[0]]);
+    await page.waitForFunction(() => reader.selecting && reader.selection?.quote === 'remarkably');
+    await expect(page.locator('#draftHighlight span').first()).toBeVisible();
+    await touch('touchMove', [points[1]]);
+    await page.waitForFunction(() => reader.selection?.quote === 'remarkably inconvenient passage');
+    await touch('touchEnd', []);
+    await expect(page.locator('#selection')).toBeVisible();
+    await expect(page.locator('#startHandle')).toBeVisible(); await expect(page.locator('#endHandle')).toBeVisible();
+    expect(await page.locator('#reader').boundingBox()).toEqual(before);
+    expect(await page.evaluate(() => reader.doc.getSelection().isCollapsed)).toBe(true);
+    expect(await page.evaluate(() => reader.doc.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })))).toBe(false);
+    await page.locator('#cancel').click();
+    // A second contact cancels a pending hold; it cannot become a delayed highlight.
+    await touch('touchStart', [points[0]]);
+    await touch('touchStart', [points[0], { x: points[0].x + 35, y: points[0].y + 35 }]);
+    await page.waitForTimeout(550); await touch('touchEnd', []);
+    expect(await page.evaluate(() => reader.selection)).toBeNull();
+    // Cancel after a hold removes just the draft.
+    await touch('touchStart', [points[0]]);
+    await page.waitForFunction(() => reader.selecting);
+    await touch('touchCancel', []);
+    expect(await page.evaluate(() => reader.selection)).toBeNull();
+    expect(await page.evaluate(() => reader.annotations.length)).toBe(0);
+    const previousPage = await page.evaluate(() => reader.renderer.page);
+    await touch('touchStart', [{ x: 330, y: 650 }]);
+    await touch('touchMove', [{ x: 100, y: 650 }]);
+    await touch('touchEnd', []);
+    await page.waitForFunction(old => reader.renderer.page !== old, previousPage);
+    await page.waitForTimeout(550);
+    expect(await page.evaluate(() => reader.selection)).toBeNull();
+    await cdp.detach();
+  });
+}
+
 for (const [width, height, density] of [[360, 800, 1], [572, 728, 2], [1000, 1200, 3]]) {
   test(`portable selection drops: ${width}px at density ${density}`, async ({ browser }, testInfo) => {
     const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: density, hasTouch: true });

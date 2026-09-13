@@ -194,12 +194,39 @@ class ReaderAnnotationRenderingTest {
             checkNotNull(ReaderHostQualificationSession.view).web.evaluateJavascript(expression) {result.complete(it)}
             withTimeout(10000) {result.await()}
         }
-        suspend fun waitFor(expression:String)=withTimeout(45000) {while(js(expression)!="true") delay(50)}
+        suspend fun waitFor(expression:String) {
+            try {withTimeout(45000) {while(js(expression)!="true") delay(50)}}
+            catch(e:TimeoutCancellationException) {throw AssertionError("Waiting for $expression; "+js("JSON.stringify({status:document.getElementById('status')?.textContent,state:window.forestReadState?.(),trace:window.touchTrace})"),e)}
+        }
         suspend fun select() {
-            js("""(()=>{const d=document.querySelector('foliate-paginator').getContents()[0].doc,r=d.createRange();
-                r.selectNodeContents(d.querySelector('p'));d.getSelection().removeAllRanges();d.getSelection().addRange(r);
-                d.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true;})()""")
+            // Inject real Android touchscreen input, not a synthetic DOM selection/mouseup.
+            val point=JSONObject(js("""(()=>{const d=document.querySelector('foliate-paginator').getContents()[0].doc;
+                window.touchTrace=[];for(const t of ['pointerdown','pointermove','pointerup','pointercancel','contextmenu']) d.addEventListener(t,e=>touchTrace.push([t,e.pointerType,e.clientX,e.clientY]),{once:true});
+                const n=d.createTreeWalker(d.querySelector('p'),NodeFilter.SHOW_TEXT).nextNode(),r=d.createRange();
+                r.setStart(n,1);r.setEnd(n,2);const b=r.getBoundingClientRect(),f=d.defaultView.frameElement.getBoundingClientRect();
+                return {x:f.x+b.x+b.width/2,y:f.y+b.y+b.height/2,width:innerWidth};})()"""))
+            val screen=IntArray(2);var scale=1.0
+            instrumentation.runOnMainSync {
+                val web=ReaderHostQualificationSession.view!!.web;web.getLocationOnScreen(screen)
+                scale=web.width/point.getDouble("width")
+            }
+            val x=(screen[0]+point.getDouble("x")*scale).toFloat();val y=(screen[1]+point.getDouble("y")*scale).toFloat()
+            val down=android.os.SystemClock.uptimeMillis()
+            fun touch(action:Int) {
+                val properties=android.view.MotionEvent.PointerProperties().apply {this.id=0;toolType=android.view.MotionEvent.TOOL_TYPE_FINGER}
+                val coords=android.view.MotionEvent.PointerCoords().apply {this.x=x;this.y=y;pressure=1f;size=0.1f}
+                val event=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,1,
+                    arrayOf(properties),arrayOf(coords),0,0,1f,1f,0,0,android.view.InputDevice.SOURCE_TOUCHSCREEN,0)
+                try {instrumentation.sendPointerSync(event)} finally {event.recycle()}
+            }
+            touch(android.view.MotionEvent.ACTION_DOWN)
+            try {delay(800)} finally {touch(android.view.MotionEvent.ACTION_UP)}
+            assertEquals("Touch injection must identify a finger", "true",js("touchTrace.some(e=>e[0]==='pointerdown' && e[1]==='touch')"))
             waitFor("!document.getElementById('selection').hidden && document.querySelectorAll('#draftHighlight span').length>0")
+            assertEquals("true",js("document.querySelector('foliate-paginator').getContents()[0].doc.getSelection().isCollapsed"))
+            val tree=checkNotNull(instrumentation.uiAutomation.rootInActiveWindow)
+            for(label in listOf("Copy","Share","Select all"))
+                assertTrue("No competing Android $label action",tree.findAccessibilityNodeInfosByText(label).none {it.text?.toString().equals(label,ignoreCase=true)})
         }
         suspend fun nativeReady()=withTimeout(15000) {while(true) {
             var ready=false
@@ -225,6 +252,9 @@ class ReaderAnnotationRenderingTest {
             waitFor("document.getElementById('status').textContent.startsWith('Highlight Saved')")
             val highlight=access.annotations(book).ids.single()
             assertEquals(0L,access.annotation(highlight)!!.effectiveHeight)
+            // The post-hold compatibility-click guard intentionally rejects immediate book
+            // clicks. A scripted click has no human movement time between the two buttons.
+            delay(450)
             js("document.querySelector('foliate-paginator').getContents()[0].doc.querySelector('[data-lab-highlight]').click(); true")
             waitFor("document.getElementById('savedHighlightOptions').open")
             js("document.getElementById('writeSavedHighlight').click(); true")

@@ -157,6 +157,14 @@ export class Reader extends EventTarget {
     // Keep Android's default pan recognizer from cancelling our pointer swipe.
     // Image zoom lives in its own top-level overlay with separate pinch handlers.
     doc.documentElement.style.touchAction = 'none';
+    // Touch/pen selection belongs to our source-anchor UI, not Android's Copy/Share
+    // action mode. Mouse selection remains available for the desktop lab.
+    const nativeSelection = enabled => {
+      doc.documentElement.style.userSelect = enabled ? 'text' : 'none';
+      doc.documentElement.style.webkitUserSelect = enabled ? 'text' : 'none';
+    };
+    nativeSelection(false);
+    doc.addEventListener('contextmenu', event => event.preventDefault());
     this.guardNavigationGestures(doc);
     installImageLongPress(doc, this);
     let ignoreClickUntil = 0;
@@ -192,24 +200,27 @@ export class Reader extends EventTarget {
         }
       }
     });
-    let gesture, previewFrame;
+    let gesture, previewFrame, holdTimer;
     const updateDraft = () => {
       cancelAnimationFrame(previewFrame); previewFrame = null;
-      if (gesture?.type === 'pen' && Number.isInteger(gesture.end)) {
+      if (gesture?.selecting && Number.isInteger(gesture.end)) {
         this.propose(Math.min(gesture.start, gesture.end), Math.max(gesture.start, gesture.end) + 1, gesture.text);
       }
     };
     const cancelGesture = () => {
+      clearTimeout(holdTimer);
       if (!gesture) return;
       cancelAnimationFrame(previewFrame);
-      const old = gesture.previous, wasPen = gesture.type === 'pen'; gesture = null;
-      if (wasPen) {
+      const old = gesture.previous, wasSelecting = gesture.selecting; gesture = null;
+      if (wasSelecting) {
         this.selection = old; this.setSelecting(false);
         this.emit('selection', old);
       }
     };
     doc.addEventListener('pointerdown', event => {
-      if (gesture || this.navigationLocked || this.turning || this.busy || event.target.closest('[data-lab-generated]')) return;
+      if (gesture) { if (gesture.type === 'touch') cancelGesture(); return; }
+      nativeSelection(event.pointerType === 'mouse');
+      if (this.navigationLocked || this.turning || this.busy || event.target.closest('[data-lab-generated]')) return;
       gesture = { x: event.clientX, y: event.clientY, type: event.pointerType, id: event.pointerId, previous: this.selection };
       if (event.pointerType === 'pen') {
         event.preventDefault();
@@ -218,13 +229,27 @@ export class Reader extends EventTarget {
         gesture.start = this.hit(event.clientX, event.clientY, gesture.text);
         if (gesture.start == null) { gesture = null; return; }
         gesture.end = gesture.start;
+        gesture.selecting = true;
         try { doc.documentElement.setPointerCapture(event.pointerId); } catch { /* Synthetic test events have no active pointer. */ }
         this.setSelecting(true);
         if (!gesture.annotation) updateDraft();
+      } else if (event.pointerType === 'touch') {
+        const press = gesture, target = event.target;
+        holdTimer = setTimeout(() => {
+          if (gesture !== press || this.doc !== doc || !target.isConnected || this.navigationLocked || this.busy || this.turning) return;
+          const text = new TextIndex(doc), start = this.hit(press.x, press.y, text);
+          // A stationary palm/blank margin is not a request to select a distant word.
+          if (start == null || !text.rects(start, start + 1).some(r => press.x >= r.left - 12 && press.x <= r.right + 12 && press.y >= r.top - 12 && press.y <= r.bottom + 12)) return;
+          Object.assign(press, { selecting: true, text, start, end: start });
+          try { doc.documentElement.setPointerCapture(press.id); } catch { /* Synthetic pointers. */ }
+          doc.getSelection()?.removeAllRanges();
+          this.setSelecting(true); updateDraft();
+        }, 450);
       }
     });
     doc.addEventListener('pointermove', event => {
-      if (gesture?.type === 'pen' && gesture.id === event.pointerId) {
+      if (gesture?.type === 'touch' && !gesture.selecting && gesture.id === event.pointerId && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 10) clearTimeout(holdTimer);
+      if (gesture?.selecting && gesture.id === event.pointerId) {
         event.preventDefault();
         if (gesture.annotation) {
           if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < 8) return;
@@ -237,7 +262,8 @@ export class Reader extends EventTarget {
     });
     doc.addEventListener('pointerup', event => {
       if (!gesture || gesture.id !== event.pointerId) return;
-      if (gesture.type === 'pen') {
+      clearTimeout(holdTimer);
+      if (gesture.selecting) {
         event.preventDefault();
         if (gesture.annotation && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < 8) {
           const annotation = gesture.annotation; gesture = null;
@@ -256,6 +282,8 @@ export class Reader extends EventTarget {
     });
     doc.addEventListener('pointercancel', cancelGesture);
     doc.addEventListener('lostpointercapture', cancelGesture);
+    doc.addEventListener('visibilitychange', () => { if (doc.hidden) cancelGesture(); });
+    doc.defaultView.addEventListener('pagehide', cancelGesture);
     // A second finger/palm must not let Foliate turn pages during a stylus selection.
     for (const type of ['touchstart', 'touchmove', 'touchend']) doc.addEventListener(type, event => {
       if (this.selecting) { event.preventDefault(); event.stopImmediatePropagation(); }
