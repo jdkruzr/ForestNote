@@ -24,11 +24,12 @@ export function options(args) {
     return {serial:args[1],ub:resolve(args[3]),route:args[5]??'direct'};
 }
 
-export async function run({serial,ub,route='direct',mixed=false,book=null,foreground=false,library=false,renderer=false}) {
+export async function run({serial,ub,route='direct',mixed=false,book=null,foreground=false,library=false,renderer=false,annotations=false}) {
     assert.ok(!book || mixed,'Assets require explicit mixed mode');
     assert.ok(!foreground || book,'Foreground qualification requires a real book');
     assert.ok(!library || foreground,'Reader library qualification requires foreground mode');
     assert.ok(!renderer || library,'Renderer qualification requires shared library mode');
+    assert.ok(!annotations || renderer,'Annotation qualification requires renderer mode');
     const dir=await mkdtemp(join(tmpdir(),'forestread-https-'));
     const abort=new AbortController();const children=new Set();const servers=[];const cleanups=[];
     const interrupt=()=>abort.abort();
@@ -36,7 +37,7 @@ export async function run({serial,ub,route='direct',mixed=false,book=null,foregr
     const watchdog=setTimeout(interrupt,10*60_000);
     const report={version:1,status:'running',runId:`tls_${Date.now()}`,invocation:randomUUID(),phases:[],
         tls:'Android default trust to Cloudflare edge; encrypted tunnel; narrow loopback proxy to disposable UB',
-        route,mixed,assets:!!book,foreground,library,renderer,productionActivated:false,started:new Date().toISOString()};
+        route,mixed,assets:!!book,foreground,library,renderer,annotations,productionActivated:false,started:new Date().toISOString()};
     const reversePorts=[];
     const redactions=[];
     const command=async(cmd,args,cwd,timeout=60_000)=>{
@@ -130,6 +131,10 @@ export async function run({serial,ub,route='direct',mixed=false,book=null,foregr
                 'app/readerlab/src/main/assets/readerlab/shared-reader.html',
                 'app/readerlab/src/main/assets/readerlab/shared-reader.js',
                 'app/readerlab/src/main/assets/readerlab/reader.js']:[]),
+            ...(annotations?['docs/test-plans/forestread-device/annotation-run.mjs',
+                'app/notes/src/qualificationTest/kotlin/com/forestnote/app/notes/ReaderAnnotationQualification.kt',
+                'core/reader/src/main/kotlin/com/forestnote/core/reader/ReaderEditRepository.kt',
+                'core/reader/src/main/kotlin/com/forestnote/core/reader/ReaderProjectionRepository.kt']:[]),
             'app/notes/src/qualificationTest/kotlin/com/forestnote/app/notes/ReaderDeviceQualificationTest.kt',
             'app/notes/src/main/kotlin/com/forestnote/app/notes/enrollment/HttpsEnrollmentTransport.kt',
             'app/notes/src/main/kotlin/com/forestnote/app/notes/enrollment/ReplicaEnrollmentCoordinator.kt',
@@ -214,6 +219,7 @@ export async function run({serial,ub,route='direct',mixed=false,book=null,foregr
                 ...(book?['-e','bookHash',report.book.sha256]:[]),
                 ...(library?['-e','readerLibrary','true']:[]),
                 ...(renderer?['-e','readerRenderer','true']:[]),
+                ...(annotations?['-e','readerAnnotations','true']:[]),
                 ...(proxyPortArg?['-e','httpsProxyPort',proxyPortArg]:[]),
                 '-e','httpsUntrusted',`https://127.0.0.1:${reversePort}`,target+'.test/androidx.test.runner.AndroidJUnitRunner']);
             await writeFile(join(dir,phase+'.log'),output.replaceAll(password,'<redacted>').replaceAll(prefix,'/<redacted>'),{flag:'wx',mode:0o600});

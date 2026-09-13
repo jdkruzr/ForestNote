@@ -216,6 +216,11 @@ the headless result does not activate production integration.
    library authority. Script-disabled chapter frames and a scoped main-frame message bridge
    separate book content from native operations. This is reading-only; annotation sessions,
    native ink and production activation remain subsequent gates.
+   **D37 annotation intent boundary:** [owner-bound commands and projection reads](2026-09-13-forestread-annotation-intents.md)
+   exposes explicit session operations and bounded annotation/session discovery through the same
+   owner. Cancel does not infer deletes; interrupted sessions remain recoverable and another
+   replica cannot resume them as its own. The next attachment is native ink and contextual editor
+   UI using those intents, not a whole-snapshot adapter. Production activation remains off.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

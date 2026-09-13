@@ -40,6 +40,7 @@ internal class MixedTransportQualification(private val context:Context,private v
     private val password=checkNotNull(args.getString("httpsPassword")).also {require(Regex("[0-9a-f]{64}").matches(it))}
     private val account="forestread-disposable"
     private val libraryMode=args.getString("readerLibrary")=="true"
+    private val annotationMode=args.getString("readerAnnotations")=="true"
     private val secrets=SecureCredentialsStore(EncryptedPrefsCredentialsBackend(context))
     private val owner=StorageOwnerQueue()
     private val recovery=LibraryRecoveryCoordinator.forQualification(context,owner,secrets)
@@ -182,6 +183,7 @@ internal class MixedTransportQualification(private val context:Context,private v
             } else s.withReader {r ->r.imports.importBook("real-book",context.cacheDir,
                 {File(context.cacheDir,"asset-$run.epub").inputStream()})}
             check(book.id==args.getString("bookHash") && book.byteLength>2L*ASSET_CHUNK_BYTES)
+            val annotationHash=if(annotationMode) seedAnnotationIntents(checkNotNull(library),book.id) else null
             delay(500);check(requests.get()==paused)
             check(rows(file(id+"_a"),"SELECT COUNT(*) FROM rhizome_outbox").single().single()!="0")
             activity.moveToState(Lifecycle.State.RESUMED);settled(d)
@@ -199,6 +201,7 @@ internal class MixedTransportQualification(private val context:Context,private v
             })
             save(buildJsonObject {
                 put("invocation",invocation);put("process",process);put("sourceActor",identity.second);put("book",book.id)
+                annotationHash?.let {put("annotationHash",it)}
                 put("versions",rows(file(id+"_a"),"SELECT tbl,pk,site_id,op_seq,op_ts FROM rhizome_row_meta ORDER BY tbl,pk").toString())
             })
         } finally {activity?.close();s.shutdown();StorageQualificationSession.store=null}
@@ -276,8 +279,13 @@ internal class MixedTransportQualification(private val context:Context,private v
         val s=selected()
         try {
             enroll(s);exchange(s);s.resumeReaderWork()
-            withTimeout(8000) {while(s.withReader {it.books.list()}.isEmpty()) delay(20)}
             val f=selectedFile()
+            // Book materialization is not dependency closure: sessions/ink can need
+            // another local inbox sweep. Wait for exact received provenance, not one row.
+            withTimeout(8000) {
+                while(rows(f,"SELECT tbl,pk,site_id,op_seq,op_ts FROM rhizome_row_meta ORDER BY tbl,pk").toString()!=expected.getValue("versions").jsonPrimitive.content)
+                    delay(20)
+            }
             check(rows(f,"SELECT COUNT(*) FROM stroke").single().single()==if(assets) "2" else "1")
             check(rows(f,"SELECT COUNT(*) FROM rhizome_outbox").single().single()=="0")
             check(rows(f,"SELECT tbl,pk,site_id,op_seq,op_ts FROM rhizome_row_meta ORDER BY tbl,pk").toString()==expected.getValue("versions").jsonPrimitive.content)
@@ -285,6 +293,8 @@ internal class MixedTransportQualification(private val context:Context,private v
             check(!s.withReader {it.books.list()}.single().contentReady)
             if(libraryMode) {
                 val library=s.readerLibraryForQualification(context.cacheDir)
+                if(annotationMode) verifyAnnotationIntents(library,expected.getValue("book").jsonPrimitive.content,
+                    expected.getValue("annotationHash").jsonPrimitive.content)
                 val book=library.list().books.single()
                 check(book.displayTitle=="Shared Shelves: No Pancakes" && !book.contentReady)
                 check(library.preferences(book.book.id)==null) // Typography stays local to its device.
@@ -329,6 +339,8 @@ internal class MixedTransportQualification(private val context:Context,private v
                 if(libraryMode) {
                     val library=s.readerLibraryForQualification(context.cacheDir)
                     val unchanged=history(f)
+                    if(annotationMode) verifyAnnotationIntents(library,expected.getValue("book").jsonPrimitive.content,
+                        expected.getValue("annotationHash").jsonPrimitive.content)
                     val prepared=withContext(Dispatchers.Main) {library.prepareBook(expected.getValue("book").jsonPrimitive.content)}
                     check(prepared.snapshot.displayTitle=="Shared Shelves: No Pancakes")
                     check(RecoveryFiles.digest(prepared.file)==args.getString("bookHash"))

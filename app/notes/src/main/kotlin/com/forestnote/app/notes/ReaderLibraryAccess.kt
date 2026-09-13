@@ -12,6 +12,11 @@ import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
 
 internal data class ReaderLibraryPage(val books:List<BookSnapshot>,val next:String?)
+internal data class ReaderIdPage(val ids:List<String>,val next:String?)
+/** A session is bound to this database owner, not merely a browser-supplied identifier. */
+internal class ReaderAnnotationSession internal constructor(
+    internal val owner:ReaderLibraryAccess,val id:String,val annotation:String,val book:String,
+)
 
 /** Disposable renderer input, never a new source of library truth. Release after closing
  * the renderer; a second lease allows navigation to prepare without deleting the old frame.
@@ -67,6 +72,52 @@ internal class ReaderLibraryAccess(
         s.state.preferences(book) ?: if(book!=null) s.state.preferences(null) else null
     }
     suspend fun savePosition(command:String,book:String,locator:VersionedJson) = request {it.state.savePosition(command,book,locator)}
+
+    suspend fun annotations(book:String,after:String="",limit:Int=32):ReaderIdPage = request {s ->
+        require(limit in 1..64)
+        page(s.projections.list(book,after,limit+1),limit)
+    }
+    suspend fun annotation(id:String):AnnotationProjection? = request {it.projections.read(id)}
+    suspend fun openAnnotationSessions(annotation:String,after:String="",limit:Int=32):ReaderIdPage = request {s ->
+        require(limit in 1..64)
+        page(s.edits.openSessions(annotation,after,limit+1),limit)
+    }
+    private fun page(ids:List<String>,limit:Int)=ReaderIdPage(ids.take(limit),if(ids.size>limit) ids[limit-1] else null)
+    private suspend fun boundSession(s:ReaderStorage,id:String):ReaderAnnotationSession {
+        val row=requireNotNull(s.edits.resumeSession(id)) {"Session not found"}
+        val annotation=row.columns.getValue("annotation_id") as String
+        return ReaderAnnotationSession(this,id,annotation,requireNotNull(s.projections.book(annotation)))
+    }
+    suspend fun resumeAnnotation(id:String):ReaderAnnotationSession = request {s ->
+        val row=requireNotNull(s.edits.resumeSession(id)) {"Session not found"}
+        check(row.columns["state"]=="open") {"Session is terminal"}
+        boundSession(s,id)
+    }
+    suspend fun createAnnotation(command:String,annotation:String,book:String,session:String,
+        anchor:VersionedJson,width:Long,height:Long):ReaderAnnotationSession = request {s ->
+        check(s.books.open(book)?.deleted==false) {"Book unavailable"}
+        s.edits.createAnnotation(command,annotation,book,session,anchor,width,height)
+        boundSession(s,session)
+    }
+    suspend fun beginAnnotation(command:String,annotation:String,session:String):ReaderAnnotationSession = request {s ->
+        check(s.projections.read(annotation)?.visible==true) {"Annotation unavailable"}
+        s.edits.beginSession(command,session,annotation);boundSession(s,session)
+    }
+    private fun owned(session:ReaderAnnotationSession) {require(session.owner===this) {"Session belongs to another library owner"}}
+    suspend fun appendAnnotationStroke(command:String,session:ReaderAnnotationSession,stroke:InkRecord):String? {
+        owned(session)
+        // Freeze caller-owned buffers before the owner request's first suspension.
+        val ink=stroke.copy(points=stroke.points.copyOf(),dynamics=stroke.dynamics?.copyOf())
+        return request {it.edits.appendStroke(command,session.id,ink)}
+    }
+    suspend fun eraseAnnotationStroke(command:String,session:ReaderAnnotationSession,stroke:String,active:Boolean) = request {s ->
+        owned(session);s.edits.erase(command,session.id,stroke,active)
+    }
+    suspend fun setAnnotationProperty(command:String,session:ReaderAnnotationSession,property:AnnotationProperty,value:VersionedJson) = request {s ->
+        owned(session);s.edits.setProperty(command,session.id,property,value)
+    }
+    suspend fun finishAnnotation(command:String,session:ReaderAnnotationSession) = request {s ->owned(session);s.edits.finish(command,session.id)}
+    suspend fun cancelAnnotation(command:String,session:ReaderAnnotationSession) = request {s ->owned(session);s.edits.cancel(command,session.id)}
 
     /** Stream off-main and verify the complete cache copy before exposing it.
      * Metadata-only or deleted books never fall back to a lab/file copy.

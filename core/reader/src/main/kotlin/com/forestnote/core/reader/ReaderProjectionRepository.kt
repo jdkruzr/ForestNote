@@ -5,6 +5,16 @@ import kotlinx.coroutines.withContext
 
 /** Snapshot one annotation atomically on the host writer; reduce/hash off that writer. */
 class ReaderProjectionRepository internal constructor(private val s: ReaderStorage) {
+    /** IDs only, including hidden/pending annotations. Never load a book's ink to list it. */
+    suspend fun list(book:String,after:String="",limit:Int=32):List<String> = withContext(s.dispatcher) {
+        require(limit in 1..65)
+        s.db.query("SELECT id FROM reader_annotation WHERE book_id=? AND id>? ORDER BY id LIMIT ?",
+            listOf(book,after,limit.toLong())) {it.getString("id")!!}
+    }
+    suspend fun book(annotation:String):String? = withContext(s.dispatcher) {
+        s.row("reader_annotation",annotation)?.text("book_id")
+    }
+
     suspend fun read(annotation: String, maxRows: Int = 4096, maxBytes: Long = 16 * 1024 * 1024): AnnotationProjection? {
         require(maxRows in 1..16384 && maxBytes in 1..64L * 1024 * 1024)
         val snapshot = withContext(s.dispatcher) { s.db.transaction {

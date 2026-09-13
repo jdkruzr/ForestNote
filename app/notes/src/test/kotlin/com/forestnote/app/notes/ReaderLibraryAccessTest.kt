@@ -4,7 +4,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
-import com.forestnote.core.reader.VersionedJson
+import com.forestnote.core.reader.*
 import io.rhizome.core.assetDigest
 import kotlinx.coroutines.*
 import org.junit.Test
@@ -12,6 +12,8 @@ import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 import java.io.*
 import java.sql.DriverManager
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -20,6 +22,9 @@ import java.util.zip.ZipOutputStream
 import kotlin.test.*
 
 class ReaderLibraryAccessTest {
+    private val anchor=VersionedJson("""{"version":1,"section":0,"start":0,"end":12,"quote":"No pancakes.","prefix":"","suffix":""}""")
+    private fun ink(id:String,y:Int=100)=InkRecord(id,-16777216,1,3,"ballpoint",1,42,
+        ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN).putInt(40).putInt(y).putInt(500).putInt(0).putInt(1).array())
     @get:Rule val temp=TemporaryFolder()
     private fun open(file:File,gated:Boolean=true)=NotebookStore(repoProvider={
         val exists=file.exists();val driver=JdbcSqliteDriver("jdbc:sqlite:${file.path}")
@@ -148,5 +153,78 @@ class ReaderLibraryAccessTest {
             assertTrue(retried.contentReady);assertEquals("complete",a.imports().single().state)
             val prepared=a.prepareBook(retried.book.id);a.release(prepared)
         } finally {release.countDown();s.shutdown()}
+    }
+
+    @Test fun explicitSessionsCancelOnlyTheirOwnContributionsAndClampHeight()=runBlocking<Unit> {
+        val file=File(temp.root,"sessions.db");val s=open(file)
+        try {
+            val a=s.readerLibraryForQualification(temp.root);val book=a.importBook("import",{bytes().inputStream()}).book.id
+            val initial=a.createAnnotation("create","annotation",book,"initial",anchor,1000,20)
+            a.appendAnnotationStroke("stroke",initial,ink("kept"));a.finishAnnotation("finish",initial)
+            val before=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            a.finishAnnotation("finish",initial)
+            assertEquals(before,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            val draft=a.beginAnnotation("begin","annotation","draft")
+            a.eraseAnnotationStroke("erase",draft,"kept",true)
+            a.appendAnnotationStroke("draft-ink",draft,ink("cancelled",400))
+            a.setAnnotationProperty("height",draft,AnnotationProperty.HEIGHT,VersionedJson("""{"version":1,"height":500}"""))
+            val later=a.beginAnnotation("later","annotation","later-session")
+            a.appendAnnotationStroke("later-ink",later,ink("later",200));a.finishAnnotation("later-finish",later)
+            a.cancelAnnotation("cancel",draft)
+            val projected=assertNotNull(a.annotation("annotation"))
+            assertEquals(listOf("kept","later"),projected.strokes.map {it.id})
+            assertEquals(20,projected.requestedHeight);assertEquals(203,projected.effectiveHeight)
+            assertTrue(projected.visible)
+            assertFails {a.appendAnnotationStroke("late",draft,ink("refused"))}
+            val history=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            repeat(3) {a.annotation("annotation");a.annotations(book);a.openAnnotationSessions("annotation")}
+            assertEquals(history,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+        } finally {s.shutdown()}
+    }
+
+    @Test fun unfinishedSessionsResumeAfterOwnerRestartButOldHandlesDoNot()=runBlocking<Unit> {
+        val file=File(temp.root,"resume-session.db");var s=open(file)
+        try {
+            val a=s.readerLibraryForQualification(temp.root);val book=a.importBook("import",{bytes().inputStream()}).book.id
+            val old=a.createAnnotation("create","annotation",book,"session",anchor,1000,20)
+            a.appendAnnotationStroke("stroke",old,ink("first"));val history=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            s.shutdown();s=open(file)
+            val b=s.readerLibraryForQualification(temp.root)
+            assertEquals(listOf("session"),b.openAnnotationSessions("annotation").ids)
+            val resumed=b.resumeAnnotation("session");assertEquals(book,resumed.book)
+            assertEquals(history,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            assertFails {b.appendAnnotationStroke("foreign-handle",old,ink("refused"))}
+            b.appendAnnotationStroke("second",resumed,ink("second"));b.finishAnnotation("finish",resumed)
+            assertEquals(listOf("first","second"),b.annotation("annotation")!!.strokes.map {it.id})
+            assertTrue(b.openAnnotationSessions("annotation").ids.isEmpty());assertFails {b.resumeAnnotation("session")}
+        } finally {s.shutdown()}
+    }
+
+    @Test fun annotationPagesRetainHiddenEntriesAndCancelledCreationDoesNotBecomeDelete()=runBlocking<Unit> {
+        val file=File(temp.root,"annotation-pages.db");val s=open(file)
+        try {
+            val a=s.readerLibraryForQualification(temp.root);val book=a.importBook("import",{bytes().inputStream()}).book.id
+            for(id in listOf("a","b","c")) {
+                val session=a.createAnnotation("create-$id",id,book,"session-$id",anchor,1000,20)
+                if(id=="b") a.cancelAnnotation("cancel-b",session) else a.finishAnnotation("finish-$id",session)
+            }
+            val page=a.annotations(book,limit=2);assertEquals(listOf("a","b"),page.ids);assertEquals("b",page.next)
+            val rest=a.annotations(book,after=page.next!!,limit=2);assertEquals(listOf("c"),rest.ids);assertNull(rest.next)
+            assertEquals(ProjectionStatus.CANCELLED,a.annotation("b")!!.status)
+            assertEquals(listOf(listOf("0")),sql(file,"SELECT COUNT(*) FROM reader_annotation_lifecycle"))
+            assertFails {a.annotations(book,limit=65)};assertFails {a.beginAnnotation("hidden","b","new-session")}
+        } finally {s.shutdown()}
+    }
+
+    @Test fun annotationStrokeOwnsMutableBuffersBeforeDispatch()=runBlocking<Unit> {
+        val s=open(File(temp.root,"owned-ink.db"))
+        try {
+            val a=s.readerLibraryForQualification(temp.root);val book=a.importBook("import",{bytes().inputStream()}).book.id
+            val session=a.createAnnotation("create","annotation",book,"session",anchor,1000,20)
+            val input=ink("frozen");val expected=input.points.copyOf()
+            val append=async(start=CoroutineStart.UNDISPATCHED) {a.appendAnnotationStroke("append",session,input)}
+            input.points.fill(0);append.await()
+            assertContentEquals(expected,a.annotation("annotation")!!.strokes.single().columns["points"] as ByteArray)
+        } finally {s.shutdown()}
     }
 }

@@ -35,6 +35,14 @@ class ReaderEditRepository internal constructor(private val s: ReaderStorage) {
         s.row("reader_edit_session", session)?.also { require(it.columns["owner_site"] == s.actor) }
     }
 
+    /** Recover only this replica's open sessions; never resume another device's editor. */
+    suspend fun openSessions(annotation:String,after:String="",limit:Int=32):List<String> = withContext(s.dispatcher) {
+        require(limit in 1..65)
+        s.db.query("""SELECT id FROM reader_edit_session WHERE annotation_id=? AND owner_site=?
+            AND kind='interactive' AND state='open' AND id>? ORDER BY id LIMIT ?""",
+            listOf(annotation,s.actor,after,limit.toLong())) {it.getString("id")!!}
+    }
+
     suspend fun finish(command: String, session: String) = terminal(command, session, SessionState.FINISHED)
     suspend fun cancel(command: String, session: String) = terminal(command, session, SessionState.CANCELLED)
     private suspend fun terminal(command: String, session: String, state: SessionState) =
