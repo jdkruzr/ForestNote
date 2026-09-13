@@ -30,6 +30,11 @@ test('awake-only mode records sleep/wake as deferred, never silently passed',()=
     assert.deepEqual(phaseSelection('upgrade'),{phases:['upgrade-verify'],deferred:[]});
     assert.throws(()=>phaseSelection('arbitrary'));
 });
+test('manual unlock is a separate opt-in single-cycle phase, not an automated keyguard bypass',()=>{
+    assert.equal(parseOptions(['--serial','USB','--phase-set','sleep-manual'])['--phase-set'],'sleep-manual');
+    assert.deepEqual(phaseSelection('sleep-manual'),{phases:['sleep-wake-manual'],deferred:[]});
+    assert.ok(!phaseSelection().phases.includes('sleep-wake-manual'));
+});
 test('requires one actual passing test, not a shell exit or an expected crash alone',()=>{
     assert.equal(passed({code:0,output:'OK (1 test)\nINSTRUMENTATION_CODE: -1'}),true);
     for(const output of ['','OK (0 tests)\nINSTRUMENTATION_CODE: -1','OK (1 test)',

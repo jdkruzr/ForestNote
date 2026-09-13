@@ -194,8 +194,9 @@ the headless result does not activate production integration.
    and disposable-UB restarts; partial content stays unavailable and ink still saves. Android XML
    portability is fixed without permitting DTDs. The user reclaimed the 6 II after 22/22 standard
    checks. The Go 10.3 II now passes all 13 final HTTPS phases and 21 awake-only device checks,
-   including the scheduler revocation refinement. Its secure-keyguard sleep/wake test remains
-   explicitly deferred for a manual unlock; neither the screen lock nor normal FN data was changed.
+   including the scheduler revocation refinement. Its separate one-cycle secure-keyguard
+   sleep/wake follow-up now passes with the user's normal unlock, 0–6 ms lifecycle hooks and no
+   main-thread disk violations; neither the screen lock nor normal FN data was changed.
    Foreground lifecycle driving and reader UI attachment remain next, with production gates off.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.

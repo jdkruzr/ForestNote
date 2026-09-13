@@ -73,10 +73,11 @@ class ReaderDeviceQualificationTest {
     @Test fun qualification() = runBlocking<Unit> {
         check(context.packageName == "com.forestnote.qualification") { "Refusing non-isolated target" }
         check(Looper.myLooper() != Looper.getMainLooper())
-        withTimeout(if(args.getString("phase")?.startsWith("assets-")==true) 180_000 else 45_000) {
+        withTimeout(if(args.getString("phase")?.let {it.startsWith("assets-") || it=="sleep-wake-manual"}==true) 180_000 else 45_000) {
             when(val phase=args.getString("phase") ?: "smoke") {
                 "smoke" -> smoke()
                 "sleep-wake" -> sleepWake()
+                "sleep-wake-manual" -> sleepWake(manual=true)
                 "handoff" -> closeHandoff()
                 "enrollment-seed" -> enrollmentSeed()
                 "enrollment-verify" -> enrollmentVerify()
@@ -661,10 +662,14 @@ class ReaderDeviceQualificationTest {
     private fun shell(command: String) = ParcelFileDescriptor.AutoCloseInputStream(
         instrumentation.uiAutomation.executeShellCommand(command)).use {it.readBytes().toString(Charsets.UTF_8)}
 
-    private suspend fun sleepWake() {
-        check(!context.getSystemService(KeyguardManager::class.java).isDeviceSecure) {
-            "Secure keyguard needs user coordination; no automatic bypass"
-        }
+    private suspend fun sleepWake(manual:Boolean=false) {
+        val keyguard=context.getSystemService(KeyguardManager::class.java)
+        if(manual) {
+            check(keyguard.isDeviceSecure && !keyguard.isKeyguardLocked) {
+                "Manual test requires an initially unlocked device with its secure lock still enabled"
+            }
+        } else check(!keyguard.isDeviceSecure) {"Secure keyguard needs user coordination; no automatic bypass"}
+        val cycles=if(manual) 1 else 3
         val id="${runId}_sleep"
         check(!database(id).exists())
         val secrets=credentials()
@@ -678,10 +683,14 @@ class ReaderDeviceQualificationTest {
             val baseline=history(id)
             check(StorageQualificationSession.store==null)
             StorageQualificationSession.store=s
-            shell("input keyevent 224");shell("wm dismiss-keyguard")
+            shell("input keyevent 224");if(!manual) shell("wm dismiss-keyguard")
             activity=ActivityScenario.launch(Intent(context,StorageQualificationActivity::class.java))
             withTimeout(10_000) {while(s.readerWorkStatus()!="Running") delay(20)}
-            repeat(3) {
+            if(manual) {
+                instrumentation.sendStatus(0,Bundle().apply {putString("manual_unlock_stage","Sleeping Shortly")})
+                delay(3000)
+            }
+            repeat(cycles) {
                 val resumes=StorageQualificationSession.resumes.get()
                 val pauses=StorageQualificationSession.pauses.get()
                 shell("input keyevent 223")
@@ -690,10 +699,16 @@ class ReaderDeviceQualificationTest {
                 }
                 delay(1000)
                 check(history(id)==baseline)
-                shell("input keyevent 224");shell("wm dismiss-keyguard")
-                withTimeout(10_000) {
-                    while(!power.isInteractive || StorageQualificationSession.resumes.get()<=resumes || s.readerWorkStatus()!="Running") delay(20)
+                if(manual) withTimeout(10_000) {while(!keyguard.isDeviceLocked) delay(20)}
+                shell("input keyevent 224")
+                if(manual) {
+                    instrumentation.sendStatus(0,Bundle().apply {putString("manual_unlock_stage","Unlock Now")})
+                } else shell("wm dismiss-keyguard")
+                withTimeout(if(manual) 90_000 else 10_000) {
+                    while(!power.isInteractive || (manual && keyguard.isKeyguardLocked) ||
+                        StorageQualificationSession.resumes.get()<=resumes || s.readerWorkStatus()!="Running") delay(20)
                 }
+                if(manual) check(keyguard.isDeviceSecure && !keyguard.isDeviceLocked)
                 check(s.readerIdentity()==identity)
                 check(withContext(Dispatchers.IO) {secrets.replicas.read(scope(identity))}?.tokenHash==credential.tokenHash)
             }
@@ -704,12 +719,13 @@ class ReaderDeviceQualificationTest {
             check(s.readerIdentity()==identity && history(id)==baseline)
             check(StorageQualificationSession.diskViolations.get()==0) {"Lifecycle hook performed main-thread disk I/O"}
             instrumentation.sendStatus(0,Bundle().apply {
-                putString("sleep_wake_cycles","3")
+                putString("sleep_wake_cycles",cycles.toString())
+                putString("unlock_mode",if(manual) "User; Secure Keyguard Retained" else "Nonsecure Automated")
                 putString("lifecycle_hook_ms",StorageQualificationSession.timings.toString())
                 putString("lifecycle_disk_violations","0")
             })
         } finally {
-            shell("input keyevent 224");shell("wm dismiss-keyguard")
+            shell("input keyevent 224");if(!manual) shell("wm dismiss-keyguard")
             activity?.close()
             s.shutdown()
             StorageQualificationSession.store=null

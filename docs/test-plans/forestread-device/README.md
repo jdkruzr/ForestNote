@@ -482,3 +482,29 @@ unchanged and its main library SHA-256 remains
 `23c9904722e978eaac813ebef53f3a65f7e59785a53b73c9c7d4fa45a63bc691` (111,411,200 bytes; not a
 standalone live-WAL snapshot). No reverse mappings remain. D33 transfer qualification is complete;
 the secure-keyguard sleep/wake case remains deferred pending a manual unlock.
+
+### Secure sleep/wake with the user's unlock
+
+The user-coordinated follow-up now passes:
+
+```sh
+node docs/test-plans/forestread-device/run.mjs --serial dfef8c1 --phase-set sleep-manual
+```
+
+Only run this mode with a user ready to unlock the tablet. It starts with secure keyguard enabled
+and the device already unlocked, sleeps once, verifies that the device is actually locked, wakes
+it and waits for normal user unlocking. No lock-screen dismissal command or security-setting
+change runs in this branch. A timeout remains a failure. The default nonsecure test remains three
+cycles; manual mode is a separate one-cycle qualification, not a silent replacement.
+
+`/tmp/forestread-device-LZCpXP/report.json`: **1/1**, completed with the user's unlock. Reader
+pause/resume and activity recreation preserve identity, private credentials and queued history.
+The lifecycle hooks take **0–6 ms** with **zero main-thread disk violations**. This closes the
+specific Go 10.3 II deferral above, not future network-worker lifecycle coverage. Twelve host
+tests and the instrumentation build pass.
+
+Only the test APK changed: installed/local SHA-256
+`fe897b656a213805e42044a900e059bafe6fcc008ceac273bff24bc4e6a4ca9b`; same debug signing certificate.
+The lab app hash remains `5fa41cd8115664818095c51b5f1194fd11a89f966f8c2910b36c2d1af7b5cc21`.
+Normal FN's package and main-library hash are unchanged. Prior suite results retain their original
+test-APK provenance; they were not rerun on this test-only change.

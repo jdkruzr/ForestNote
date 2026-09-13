@@ -156,7 +156,28 @@ Final normal FN package path matches its pre-install path. Its 111,411,200-byte 
 hashes to `23c9904722e978eaac813ebef53f3a65f7e59785a53b73c9c7d4fa45a63bc691` (main file only).
 No ADB reverse mappings remain; the isolated setup activity is left ready for inspection.
 
-**D33 original-byte transport qualification is complete.** The separate secure-keyguard sleep/wake
-check awaits user-coordinated unlocking, and foreground scheduler lifecycle/UI integration is not
-implemented by this checkpoint. The existing Go 6 II sleep/wake evidence does not substitute for
-that pending test on this tablet.
+**D33 original-byte transport qualification is complete.** Foreground scheduler lifecycle/UI
+integration is not implemented by this checkpoint. The originally deferred secure-keyguard
+sleep/wake check is covered by the user-coordinated follow-up below; it is separate from the
+Go 6 II's three-cycle nonsecure test.
+
+### Secure-keyguard follow-up
+
+With the user available, `--phase-set sleep-manual` runs one explicit `sleep-wake-manual` phase.
+It requires the tablet to start unlocked with secure keyguard enabled, observes real sleep/pause
+and the device becoming locked, wakes the screen, then waits up to 90 seconds for the user's
+normal unlock. This branch never issues `wm dismiss-keyguard` or changes lock settings. The
+default three-cycle nonsecure test still refuses secure devices; `awake` still records deferral.
+
+**Passed:** `/tmp/forestread-device-LZCpXP/report.json`, one manually unlocked sleep/wake cycle,
+plus actual activity recreation. Reader identity, private credential hash and queued history
+remain intact. Lifecycle hooks measured **0–6 ms**, with **zero main-thread disk violations**.
+This qualifies the existing local-reader lifecycle, not the still-unimplemented foreground
+network scheduler. Twelve host tests and the instrumentation build pass.
+
+Only the isolated test APK was updated in place, retaining its certificate. Its installed and
+local SHA-256 is `fe897b656a213805e42044a900e059bafe6fcc008ceac273bff24bc4e6a4ca9b`;
+the qualification app remains `5fa41cd8115664818095c51b5f1194fd11a89f966f8c2910b36c2d1af7b5cc21`.
+The prior 13 HTTPS / 21 awake-only results retain their earlier instrumentation provenance; they
+are not represented as reruns on this new test APK. Normal FN's package path and main-library hash
+are unchanged, and the isolated setup activity is restored after the test.

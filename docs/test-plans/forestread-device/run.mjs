@@ -23,7 +23,7 @@ export function parseOptions(args) {
     for (let i=0; i<args.length; i+=2) {
         const key=args[i]; const value=args[i+1];
         if (!['--serial','--ssh','--port','--run-id','--phase-set'].includes(key) || !value || key in options)
-            throw new Error('Use --serial SERIAL or --ssh USER@HOST [--port 8022], optional --run-id ID and --phase-set standard|awake|upgrade');
+            throw new Error('Use --serial SERIAL or --ssh USER@HOST [--port 8022], optional --run-id ID and --phase-set standard|awake|sleep-manual|upgrade');
         options[key]=value;
     }
     if (Boolean(options['--serial']) === Boolean(options['--ssh'])) throw new Error('Select exactly one device transport');
@@ -32,12 +32,13 @@ export function parseOptions(args) {
         throw new Error('Invalid SSH port');
     options['--run-id'] ??= `device_${Date.now()}`;
     if (!/^[A-Za-z0-9_-]{1,40}$/.test(options['--run-id'])) throw new Error('Invalid run ID');
-    if(options['--phase-set'] && !['standard','awake','upgrade'].includes(options['--phase-set'])) throw new Error('Invalid phase set');
+    if(options['--phase-set'] && !['standard','awake','sleep-manual','upgrade'].includes(options['--phase-set'])) throw new Error('Invalid phase set');
     return options;
 }
 
 export function phaseSelection(set='standard') {
     if(set==='upgrade') return {phases:['upgrade-verify'],deferred:[]};
+    if(set==='sleep-manual') return {phases:['sleep-wake-manual'],deferred:[]};
     if(!['standard','awake'].includes(set)) throw new Error('Invalid phase set');
     const phases=['smoke','sleep-wake','handoff','enrollment-seed','enrollment-verify','columns-seed','columns-kill','columns-verify',
         'recovery','recovery-kill-snapshot','recovery-verify-snapshot','recovery-kill-fresh','recovery-verify-fresh',
@@ -59,12 +60,12 @@ export function passed(result) {
         !/FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed/.test(result.output);
 }
 
-function execute(command,args) {
+function execute(command,args,timeout=60_000) {
     return new Promise((resolve,reject) => {
         const child=spawn(command,args,{stdio:['ignore','pipe','pipe']});
         let output='';
         let timedOut=false;
-        const timer=setTimeout(()=>{timedOut=true;child.kill('SIGTERM');},60_000);
+        const timer=setTimeout(()=>{timedOut=true;child.kill('SIGTERM');},timeout);
         const collect=chunk=>{output+=chunk.toString();if(output.length>2_000_000) child.kill('SIGTERM');};
         child.stdout.on('data',collect);child.stderr.on('data',collect);
         child.on('error',error=>{clearTimeout(timer);reject(error);});
@@ -78,7 +79,7 @@ export async function run(options) {
     const selected=phaseSelection(phaseSet);
     const report={version:1,target,runId:options['--run-id'],invocation:randomUUID(),status:'running',phaseSet,
         deferred:selected.deferred,phases:[],started:new Date().toISOString()};
-    const call=async args=>execute(...deviceCommand(options,args));
+    const call=async args=>execute(...deviceCommand(options,args),phaseSet==='sleep-manual'?200_000:60_000);
     try {
         for(const name of [target,`${target}.test`]) {
             const installed=await call(['cmd','package','path',name]);
