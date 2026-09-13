@@ -10,6 +10,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.BrushKind
 import io.rhizome.core.Op
+import io.rhizome.core.toOp
 import io.rhizome.core.Registry
 import io.rhizome.sqlite.IncomingRowPolicy
 import io.rhizome.sqlite.SqliteRow
@@ -159,9 +160,11 @@ class NotebookRepository private constructor(
 
     fun <T> installStorageExtension(registry: Registry, policies: List<IncomingRowPolicy>,
         reservedIdentity: ReservedIdentity? = null,
+        allowEnabledShared: Boolean = false,
         install: (SqliteHandle, SqliteStorageAdapter, String, String) -> T): T {
         check(!closed && !extensionInstalled) { "Storage extension already installed or library closed" }
-        check(settings().syncEnabled != true && syncSiteId() == null) { "Mixed-library sync activation is not qualified yet" }
+        check(settings().syncEnabled != true && (syncSiteId() == null ||
+            (allowEnabledShared && hasSharedLibraryIdentity()))) { "Mixed-library sync activation is not qualified yet" }
         val owner = Thread.currentThread()
         val handle = object : SqliteHandle {
             private fun guard() { check(!closed && Thread.currentThread() === owner) { "Shared library handle used outside its live writer" } }
@@ -190,6 +193,38 @@ class NotebookRepository private constructor(
     ) { true }.isNotEmpty()
 
     fun requireWriterOnlySync() { check(!extensionInstalled) { "Mixed-library transport is not activated; pending history preserved" } }
+
+    /** Explicit shared-owner gate, not the legacy Settings join/backfill path. */
+    fun prepareMixedSync(actor: String, schemaHash: String) = db.transaction {
+        check(extensionInstalled && !closed)
+        runBlocking {
+            check(syncStore.localAuthorId() == actor && (syncStore.siteId() == null || syncStore.siteId() == actor))
+            syncStore.enableSync(actor)
+        }
+        db.notebookQueries.ensureSyncState()
+        SchemaReconciliation.prepare(syncHandle, schemaHash)
+    }
+
+    /** All callers remain on the live owner's writer; never expose the raw adapter to network code. */
+    fun mixedSyncAdapter(): io.rhizome.core.BoundedSyncLocalStore {
+        check(extensionInstalled && !closed)
+        return syncStore
+    }
+
+    fun acceptMixedResponse(response: io.rhizome.core.SyncResponse) = db.transaction {
+        check(extensionInstalled && !closed)
+        runBlocking { syncStore.acceptResponse(response) }
+        applySyncHooks(response.ops.map { it.toOp() })
+    }
+
+    fun finishMixedJoin() = db.transaction {
+        check(extensionInstalled && !closed)
+        if(!syncJoined()) {
+            discardPristineUntrackedBootstrapIfServerContent(currentNotebookId)
+            runBlocking {syncStore.backfillUntracked()}
+            setSyncJoined(true)
+        }
+    }
 
     companion object {
         private const val TAG = "NotebookRepository"
@@ -1651,6 +1686,10 @@ class NotebookRepository private constructor(
     fun applySyncOps(ops: List<Op>) {
         if (ops.isEmpty()) return
         runBlocking { syncStore.applyRelayed(ops) }
+        applySyncHooks(ops)
+    }
+
+    private fun applySyncHooks(ops: List<Op>) {
         db.transaction {
             for (op in ops) {
                 when (op.table) {

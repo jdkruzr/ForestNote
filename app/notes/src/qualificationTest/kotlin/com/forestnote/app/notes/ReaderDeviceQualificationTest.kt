@@ -83,6 +83,10 @@ class ReaderDeviceQualificationTest {
                 "columns-seed" -> WriterUpgradeQualification(context,runId,invocation,processNonce).seed()
                 "columns-kill" -> WriterUpgradeQualification(context,runId,invocation,processNonce).kill()
                 "columns-verify" -> WriterUpgradeQualification(context,runId,invocation,processNonce).verify()
+                "mixed-seed" -> MixedTransportQualification(context,args,runId,invocation,processNonce).seed()
+                "mixed-pull" -> MixedTransportQualification(context,args,runId,invocation,processNonce).pull()
+                "mixed-reopen" -> MixedTransportQualification(context,args,runId,invocation,processNonce).reopen(false)
+                "mixed-revoked" -> MixedTransportQualification(context,args,runId,invocation,processNonce).reopen(true)
                 "https-refusal", "https-seed", "https-verify", "https-confirmed", "https-revoked" ->
                     httpsEnrollment(phase)
                 "recovery" -> recovery()

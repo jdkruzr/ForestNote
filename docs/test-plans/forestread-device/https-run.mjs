@@ -22,7 +22,7 @@ export function options(args) {
     return {serial:args[1],ub:resolve(args[3]),route:args[5]??'direct'};
 }
 
-export async function run({serial,ub,route='direct'}) {
+export async function run({serial,ub,route='direct',mixed=false}) {
     const dir=await mkdtemp(join(tmpdir(),'forestread-https-'));
     const abort=new AbortController();const children=new Set();const servers=[];const cleanups=[];
     const interrupt=()=>abort.abort();
@@ -30,7 +30,7 @@ export async function run({serial,ub,route='direct'}) {
     const watchdog=setTimeout(interrupt,10*60_000);
     const report={version:1,status:'running',runId:`tls_${Date.now()}`,invocation:randomUUID(),phases:[],
         tls:'Android default trust to Cloudflare edge; encrypted tunnel; narrow loopback proxy to disposable UB',
-        route,productionActivated:false,started:new Date().toISOString()};
+        route,mixed,productionActivated:false,started:new Date().toISOString()};
     const reversePorts=[];
     const redactions=[];
     const command=async(cmd,args,cwd,timeout=60_000)=>{
@@ -85,6 +85,11 @@ export async function run({serial,ub,route='direct'}) {
         report.fnRevision=(await command('git',['rev-parse','HEAD'],root)).trim();
         report.sources={};
         for(const file of ['app/notes/build.gradle.kts','app/notes/src/qualification/AndroidManifest.xml','app/notes/src/qualificationNetwork/AndroidManifest.xml',
+            ...(mixed?['app/notes/src/qualificationTest/kotlin/com/forestnote/app/notes/MixedTransportQualification.kt',
+                'app/notes/src/main/kotlin/com/forestnote/app/notes/MixedSyncCoordinator.kt',
+                'app/notes/src/main/kotlin/com/forestnote/app/notes/NotebookStore.kt',
+                'core/format/src/main/kotlin/com/forestnote/core/format/NotebookRepository.kt',
+                'gradle/rhizome-integration-revision.txt','docs/test-plans/forestread-device/mixed-run.mjs']:[]),
             'app/notes/src/qualificationTest/kotlin/com/forestnote/app/notes/ReaderDeviceQualificationTest.kt',
             'app/notes/src/main/kotlin/com/forestnote/app/notes/enrollment/HttpsEnrollmentTransport.kt',
             'app/notes/src/main/kotlin/com/forestnote/app/notes/enrollment/ReplicaEnrollmentCoordinator.kt',
@@ -101,7 +106,7 @@ export async function run({serial,ub,route='direct'}) {
         let host=await fixture();
         const prefix='/'+randomBytes(32).toString('hex');const password=randomBytes(32).toString('hex');
         redactions.push(prefix,password);
-        const proxy=createEnrollmentProxy({prefix,password,upstream:()=>origin});
+        const proxy=createEnrollmentProxy({prefix,password,upstream:()=>origin,mixed,suppressFirst:!mixed});
         const proxyPort=await listen(proxy.server);servers.push(proxy.server);report.proxy=proxy.evidence;
         // A valid-for-IP but untrusted one-day certificate; never installed in Android's trust store.
         await command('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=ForestRead Disposable',
@@ -143,17 +148,19 @@ export async function run({serial,ub,route='direct'}) {
         }
         const registry=async()=>JSON.parse(await command('sqlite3',['-readonly','-json',db,
             'SELECT site_id,token_hash,revoked FROM sync_device_identity ORDER BY site_id']));
-        for(const phase of ['https-refusal','https-seed','https-verify','https-confirmed','https-revoked']) {
+        for(const phase of (mixed?['mixed-seed','mixed-pull','mixed-reopen','mixed-revoked']:
+            ['https-refusal','https-seed','https-verify','https-confirmed','https-revoked'])) {
             abort.signal.throwIfAborted();
-            if(phase==='https-verify') {
+            if(phase==='https-verify' || phase==='mixed-pull') {
                 report.committedBeforeRetry=await registry();assert.equal(report.committedBeforeRetry.length,1);
                 await host.stop();host=await fixture();assert.deepEqual(await registry(),report.committedBeforeRetry);
                 report.serverRestartPreservedBinding=true;
             }
-            if(phase==='https-revoked') {
-                const rows=await registry();assert.equal(rows.length,1);
+            if(phase==='https-revoked' || phase==='mixed-revoked') {
+                const rows=await registry();assert.equal(rows.length,mixed?2:1);
+                const revokedSite=mixed?proxy.evidence.enrollments.at(-1).site:rows[0].site_id;
                 const r=await fetch(origin+'/sync/devices/v1/revoke',{method:'POST',signal:AbortSignal.timeout(5000),
-                    headers:{Authorization:fixtureAdmin,'Content-Type':'application/json'},body:JSON.stringify({site_id:rows[0].site_id})});
+                    headers:{Authorization:fixtureAdmin,'Content-Type':'application/json'},body:JSON.stringify({site_id:revokedSite})});
                 assert.equal(r.status,204);await r.body?.cancel();
             }
             await adb(['shell','am','force-stop',target]);
@@ -169,12 +176,22 @@ export async function run({serial,ub,route='direct'}) {
         }
         assert.equal(untrustedHttpRequests,0,'Untrusted endpoint received HTTP authority');
         report.untrustedHttpRequests=untrustedHttpRequests;
+        if(mixed) {
+            assert.equal(proxy.evidence.suppressed,0);
+            assert.deepEqual(proxy.evidence.enrollments.map(x=>x.status),[204,204]);
+            assert.equal(new Set(proxy.evidence.enrollments.map(x=>x.site)).size,2);
+            assert.ok(proxy.evidence.rows.length>=4);
+            assert.ok(proxy.evidence.rows.every(x=>x.status===200 && x.count<=2));
+            assert.equal(proxy.evidence.capabilities.at(-1).status,401);
+            report.finalRegistry=await registry();assert.equal(report.finalRegistry.filter(x=>x.revoked===1).length,1);
+        } else {
         assert.equal(proxy.evidence.suppressed,1);
         assert.deepEqual(proxy.evidence.enrollments.map(x=>x.status),[204,204,409]);
         assert.equal(new Set(proxy.evidence.enrollments.map(x=>x.site+':'+x.hash)).size,1);
         report.finalRegistry=await registry();assert.equal(report.finalRegistry[0].revoked,1);
         assert.equal(report.finalRegistry[0].token_hash,proxy.evidence.enrollments[0].hash);
         assert.deepEqual(proxy.evidence.capabilities.map(x=>x.status),[200,401,401,200,401,401,401]);
+        }
         await host.stop();await tunnel.stop();
         report.status='passed';
     } catch(error) {report.status='failed';report.error=error.message;throw error;}

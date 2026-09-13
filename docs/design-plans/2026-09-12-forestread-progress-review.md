@@ -181,6 +181,13 @@ the headless result does not activate production integration.
    This explicit lab gate does not activate ordinary production migrations or mixed sync. Next is
    the shared-owner mixed transport gate and ordinary pull; already-upgraded uncertain files still
    need explicit policy, not guessed historical repair.
+   **D32 Android mixed rows:** [shared-owner transport gate](2026-09-13-forestread-android-mixed-transport.md)
+   admits confirmed private replica credentials and combined-schema capabilities before activation,
+   pulls first, then captures only untracked local rows. Bounded ACK/inbox/writer hooks share one
+   transaction; owner shutdown joins network work. The Go proves ordinary notebook/ink/book-metadata
+   pull into a selected fresh replica, provenance-preserving reopen, and revoked-token refusal while
+   local ink still saves. Production activation remains off. Next: the shared row/asset scheduler,
+   original-byte transfer/resume and honest content readiness, then reader UI integration.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

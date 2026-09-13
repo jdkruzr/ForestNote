@@ -1,6 +1,24 @@
-# Stage 2 shared-library foundation (through D31)
+# Stage 2 shared-library foundation (through D32)
 
 Current status and remaining integration work: [2026-09-12 plan review](../../design-plans/2026-09-12-forestread-progress-review.md).
+
+## D32: Android mixed-library row transport
+
+[D32](../../design-plans/2026-09-13-forestread-android-mixed-transport.md) attaches the existing
+Rhizome bounded session to FN's shared writer, behind the isolated qualification gate. Confirmed
+private authority and current server capabilities precede activation; first join pulls before
+untracked-only backfill. Reader inbox, writer hooks, ACK and cursor commit atomically. Shutdown
+cancels/joins requests before driver close, without holding the writer during network waits.
+
+The Go passes four real mixed HTTPS phases with a source replica and a selected fresh recovery
+replica. Book metadata materializes with its original provenance; content remains pending until
+the next asset-transfer gate. This is a synthetic metadata fixture, not an EPUB rendering test.
+Main FN and production UB remain untouched. See the [device evidence](../forestread-device/README.md#d32-mixed-library-row-transport).
+
+Final headless report: `/tmp/forestread-stage-2-1wxmsG/report.json` passes 187 Kotlin tests, 61
+process scenarios, Go race checks and eight unchanged original imports, with all 179 source hashes
+matching. The new shared-owner tests execute separately in the Android-module JVM suite (401 app +
+292 format). The acceptance catalog's 47 pending adapters are not counted as executed behavior.
 
 ## D31: known-prior writer upgrade on Android
 

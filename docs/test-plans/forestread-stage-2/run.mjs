@@ -135,6 +135,8 @@ try {
       'core/format/src/test/kotlin/com/forestnote/core/format/LegacySyncMigrationTest.kt',
       'core/format/src/test/kotlin/com/forestnote/core/format/PreservingDatabaseCallbackTest.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/NotebookStore.kt',
+      'app/notes/src/main/kotlin/com/forestnote/app/notes/MixedSyncCoordinator.kt',
+      'app/notes/src/test/kotlin/com/forestnote/app/notes/MixedSyncStoreTest.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/MainActivity.kt',
       'app/notes/src/main/res/values/strings.xml',
       'app/notes/src/test/kotlin/com/forestnote/app/notes/NotebookStoreTest.kt',

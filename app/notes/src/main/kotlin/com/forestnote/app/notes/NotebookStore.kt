@@ -123,6 +123,7 @@ class NotebookStore(
     // Its worker is joined before the final driver-close task is submitted.
     private val writerDispatcher = persistenceExecutor.asCoroutineDispatcher()
     @Volatile private var readerRuntime: ReaderRuntime? = null
+    private var mixedSync: MixedSyncCoordinator? = null
     private val lifecycleLock = Any()
     private var readerForeground = false
     private var closing = false
@@ -142,7 +143,8 @@ class NotebookStore(
                 try {
                     if(qualifyReaderStorage) {
                         val newIdentity = !opened.hasSharedLibraryIdentity()
-                        val attached=opened.installStorageExtension(ReaderSchema.registry,listOf(ReaderIncomingPolicy()),recoveryIdentity) { db,adapter,actor,libraryId ->
+                        val attached=opened.installStorageExtension(ReaderSchema.registry,listOf(ReaderIncomingPolicy()),recoveryIdentity,
+                            allowEnabledShared=true) { db,adapter,actor,libraryId ->
                             val storage = ReaderStorage.attachOnWriter(db,writerDispatcher,actor,adapter)
                             // Private ownership must be durable before the new DB identity commits.
                             // Failure rolls the database transaction back; an orphan private receipt
@@ -151,6 +153,8 @@ class NotebookStore(
                                 if (recoveryIdentity == null) secureCredentials?.replicas?.claimLocal(libraryId, actor)
                                 else requireNotNull(secureCredentials).replicas.claimReservedLocal(libraryId,actor)
                             }
+                            if(opened.syncSiteId()!=null) check(requireNotNull(secureCredentials).replicas.registration(libraryId,actor)==
+                                com.forestnote.app.notes.caldav.ReplicaRegistrationState.ENROLLED) {"Enabled shared library requires private enrollment; recovery required"}
                             storage to libraryId
                         }
                         // Publish/start only after commit, never while installation can roll back.
@@ -212,6 +216,38 @@ class NotebookStore(
             credentials = requireNotNull(secureCredentials).replicas,
             transport = transport,
         )
+
+    /** Internal lab gate only. One coordinator per owner, including competing callers. */
+    internal fun mixedSyncForQualification(
+        transport: (com.forestnote.app.notes.caldav.ReplicaCredentialScope,String)->io.rhizome.core.BoundedRowTransport = { target,token ->
+            io.rhizome.http.HttpUrlTransport(target.server.trimEnd('/')+"/sync/v1","Bearer $token")
+        }, limits:io.rhizome.core.RowLimits=io.rhizome.core.RowLimits(),
+    ):MixedSyncCoordinator = synchronized(lifecycleLock) {
+        check(qualifyReaderStorage && !closing) {"Mixed transport is gated off"}
+        mixedSync ?: run {
+            val hash=io.rhizome.core.Registry(com.forestnote.core.format.ForestNoteRegistry.registry.tables+ReaderSchema.registry.tables).schemaHash()
+            val local=object:io.rhizome.core.BoundedSyncLocalStore {
+                override suspend fun siteId():String = readerIdentity().second
+                override suspend fun cursor()=onDb {runBlocking {it.mixedSyncAdapter().cursor()}}
+                override suspend fun pendingOps():List<Op> = error("Mixed transport requires bounded pages")
+                override suspend fun applyRelayed(ops:List<Op>):Unit = error("Mixed transport requires atomic receipt")
+                override suspend fun markAckedThrough(through:Long):Unit = error("Mixed transport requires atomic receipt")
+                override suspend fun setCursor(cursor:Long):Unit = error("Mixed transport requires atomic receipt")
+                override suspend fun pendingPage(budget:io.rhizome.core.RowPageBudget)=onDb {
+                    if(!it.syncJoined()) io.rhizome.core.PendingRowPage.Page(emptyList(),false)
+                    else runBlocking {it.mixedSyncAdapter().pendingPage(budget)}
+                }
+                override suspend fun hasPending()=onDb {it.syncJoined() && runBlocking {it.mixedSyncAdapter().hasPending()}}
+                override suspend fun acceptResponse(response:io.rhizome.core.SyncResponse) {
+                    val request=currentCoroutineContext()
+                    onDb {request.ensureActive();it.acceptMixedResponse(response)}
+                }
+            }
+            MixedSyncCoordinator({readerIdentity()},requireNotNull(secureCredentials).replicas,local,
+                {actor -> val request=currentCoroutineContext();onDb {request.ensureActive();it.prepareMixedSync(actor,hash)}},hash,
+                {val request=currentCoroutineContext();onDb {request.ensureActive();it.finishMixedJoin()}},transport,limits).also {mixedSync=it}
+        }
+    }
 
     /** Load all strokes (z-ordered) off-thread; result posted to the main thread. */
     fun load(onLoaded: (List<Stroke>) -> Unit) {
@@ -1059,6 +1095,7 @@ class NotebookStore(
         }
         CoroutineScope(Dispatchers.Default).launch {
             try {
+                mixedSync?.close()
                 runtime?.close()
                 persistenceExecutor.execute {
                     val result = runCatching {

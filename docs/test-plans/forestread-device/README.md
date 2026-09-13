@@ -1,4 +1,4 @@
-# D23–D31: disposable Android storage, upgrade and HTTPS qualification
+# D23–D32: disposable Android storage, upgrade and HTTPS qualification
 
 Returns to [D22's hardware handoff](../../design-plans/2026-09-12-forestread-android-foundation.md)
 and [the larger plan, item 3](../../design-plans/2026-09-12-forestread-progress-review.md#recommended-next-order).
@@ -385,3 +385,50 @@ Installed/local APK hashes for this checkpoint:
 Same debug signing certificate and package IDs as D30; only in-place lab updates, no uninstall or
 data clear. Normal FN's package path and main library-file hash remain unchanged. No production UB
 deployment, Rhizome revision change, wire-hash change or historical migration-file rewrite.
+
+## D32: mixed-library row transport
+
+Run the separate opt-in mode against a fresh, disposable UB:
+
+```sh
+node docs/test-plans/forestread-device/mixed-run.mjs \
+  --serial 6D02351A --ub-repo /home/jtd/ultrabridge --route adb-proxy
+```
+
+This uses the same network-enabled, signature-matched lab APK pair, never the normal application.
+Four phases prove source upload, selected-fresh-replica pull after UB restart, Android process
+restart/no reauthoring, and explicit token revocation with local ink still writable. The proxy
+only adds a bounded, replica-token-only row route in this mode; assets and unrelated routes remain
+closed. Default enrollment-only mode keeps its prior narrow route set. TLS stays native/default-
+trusted through the explicit ADB carrier; direct Wi-Fi/DNS reliability is not claimed.
+
+- Mixed HTTPS: **4/4**, `/tmp/forestread-https-IxZ3HX/report.json`. Five row POSTs succeed; outgoing
+  pages contain 0, 2, 2, 0, 0 rows. All **15** recorded source hashes match. Neither fresh-replica
+  pull nor reopen creates a reauthored upload. Revocation stops before another row POST.
+- Standard Android regression: **22/22**, `/tmp/forestread-device-AEa6GW/report.json`.
+- Existing enrollment HTTPS regression: **5/5**, `/tmp/forestread-https-KcLvzn/report.json`, on
+  the same APK pair. All nine recorded source hashes match; untrusted TLS receives no HTTP requests.
+- **401 app + 292 format JVM tests** pass, including four shared-owner transport tests: private/
+  capability refusal, bounded pull-first/reopen, nonblocking network/shutdown, and post-receipt
+  writer-hook rollback. Nine host tests pass, including the new token-only mixed proxy route.
+- Rhizome's 10 HTTP tests pass. FN now pins `0b4d40492e9eb1df1c58c2969b9fe806a44a559f`, adding only
+  optional per-connection routing to the native HTTP adapter and its regression. No wire change.
+- Full headless regression: `/tmp/forestread-stage-2-1wxmsG/report.json`, **187 Kotlin tests**,
+  **61 process scenarios**, Go race checks, 13 HUFF vectors and eight unchanged original books.
+  All **179** source hashes match. The four new Android-module JVM tests are separate evidence,
+  not extra headless tests. The 47 pending acceptance-catalog adapters remain pending.
+
+Installed/local APK SHA-256:
+
+- Qualification app: `b3412b9c8f5b9b220064bfdb81b44f15b5639e54b76a61938b3bc005faae8191`
+- Instrumentation: `5396bd10814e4e8504fbcdac836fca86ddfc88e3e04e0be0d5911261d24e953b`
+
+Both retain debug certificate `e91d14f5065a1eb6cfbd42aee993b51c6cb16f7cc21d4879b0b4db1e136f9680`.
+Only in-place isolated-package updates were installed. The normal FN package path and main-library
+hash remain unchanged (`e9d4b69ed4a378730ef6d84431db48408da13a1cf49acbc54624a095bd29c549`; main
+file only, not an independent live WAL snapshot). The old private recovery source and archive are
+also hash-checked before/after mixed sync.
+
+The source book contains tiny synthetic metadata-fixture bytes, not a valid rendering EPUB.
+The receiver honestly reports `contentReady=false`. Original-byte transfer, fair asset scheduling,
+foreground network lifecycle and reader UI integration are the next gates, not claims of this run.
