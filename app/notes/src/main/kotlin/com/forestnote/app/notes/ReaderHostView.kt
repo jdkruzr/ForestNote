@@ -48,7 +48,8 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
                 require(id.matches(Regex("[0-9]{1,12}")))
                 JSONObject().put("id",id).put("result",handle(request))
             } catch(e:CancellationException) {throw e}
-            catch(_:Exception) {JSONObject().put("id",id).put("error","Reader Action Failed. Reopen To Check Saved State.")}
+            catch(e:Exception) {JSONObject().put("id",id).put("error",if(e is com.forestnote.core.reader.ReaderAnchorChangedException) e.message else "Reader Action Failed. Reopen To Check Saved State.")
+                .put("code",if(e is com.forestnote.core.reader.ReaderAnchorChangedException) "anchor_changed" else JSONObject.NULL)}
             withContext(Dispatchers.Main) {if(!disposed) runCatching {message.reply.postMessage(response.toString())}}
         }
     }
@@ -107,6 +108,12 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
                 JSONObject.NULL
             }
             "preferences" -> {check(!editing);library.applyPreferences(request.getString("book"),VersionedJson(request.getJSONObject("value").toString()));JSONObject.NULL}
+            "adjustHighlight" -> {
+                val book=checkNotNull(books[request.getString("token")]).snapshot.book.id
+                JSONObject(library.adjustHighlight(book,request.getString("annotation"),request.getString("command"),
+                    VersionedJson(request.getJSONObject("expected").toString()),request.getString("inputHash"),
+                    VersionedJson(request.getJSONObject("anchor").toString())))
+            }
             "selectionCommit" -> {
                 checkNotNull(inkBackend) {"Native editor unavailable"}
                 val book=checkNotNull(books[request.getString("token")]).snapshot.book.id

@@ -221,6 +221,33 @@ class ReaderAnnotationRenderingTest {
             delay(750);assertEquals("Finish publishes one settled frame",beforeFinishRefresh+1,ReaderHostQualificationSession.refreshes)
             assertEquals(SessionState.FINISHED,access.annotationSessionState(finished.queue.session.id))
             assertEquals(2,access.annotation("note")!!.strokes.size)
+            // Adjust the saved highlight, not the handwriting contribution. Drafts never author.
+            val beforeAnchor=access.annotation("note")!!
+            fun outboxCount()=SQLiteDatabase.openDatabase(context.getDatabasePath("reader-qualification-$id.db").path,null,SQLiteDatabase.OPEN_READONLY).use {db ->
+                db.rawQuery("SELECT count(*) FROM rhizome_outbox",null).use {c ->c.moveToFirst();c.getLong(0)}
+            }
+            val draftHistory=outboxCount()
+            suspend fun adjust() {
+                js("document.querySelector('foliate-paginator').getContents()[0].doc.querySelector('mark').click();true")
+                waitFor("document.getElementById('savedHighlightOptions').open")
+                assertEquals("\"Edit Handwriting\"",js("document.getElementById('writeSavedHighlight').textContent"))
+                js("document.getElementById('adjustSavedHighlight').click();true")
+                waitFor("!document.getElementById('selection').hidden")
+                js("document.getElementById('boundaryMenu').click();document.getElementById('endEarlier').click();document.getElementById('boundaryOptions').close();true")
+            }
+            adjust();assertEquals(draftHistory,outboxCount())
+            js("document.getElementById('cancel').click();true")
+            assertEquals(beforeAnchor.anchor,access.annotation("note")!!.anchor);assertEquals(draftHistory,outboxCount())
+            adjust()
+            val beforeAnchorRefresh=ReaderHostQualificationSession.refreshes
+            js("document.getElementById('highlight').click();true")
+            waitFor("document.getElementById('status').textContent==='Highlight Updated · Handwriting Preserved'")
+            withTimeout(10000) {while(ReaderHostQualificationSession.refreshes==beforeAnchorRefresh) delay(50)}
+            delay(750);assertEquals(beforeAnchorRefresh+1,ReaderHostQualificationSession.refreshes)
+            val afterAnchor=access.annotation("note")!!
+            assertNotEquals(beforeAnchor.anchor,afterAnchor.anchor)
+            assertEquals(beforeAnchor.inputHash,afterAnchor.inputHash);assertEquals(beforeAnchor.effectiveHeight,afterAnchor.effectiveHeight)
+            assertEquals(beforeAnchor.strokes.map {it.id to it.version},afterAnchor.strokes.map {it.id to it.version})
         } finally {
             activity?.close();ReaderHostQualificationSession.cleanup?.join()
             ReaderHostQualificationSession.store=null;store.shutdown()

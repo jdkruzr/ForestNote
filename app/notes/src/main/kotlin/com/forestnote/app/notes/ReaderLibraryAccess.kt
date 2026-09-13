@@ -158,6 +158,12 @@ internal class ReaderLibraryAccess(
     suspend fun cancelAnnotation(command:String,session:ReaderAnnotationSession) = request {s ->owned(session);s.edits.cancel(command,session.id)}
 
     fun existingEditQueue(session:String):ReaderEditQueue? = editor?.takeIf {it.session.id==session && !it.state.value.sealed}
+    suspend fun adjustHighlight(book:String,annotation:String,command:String,expected:VersionedJson,hash:String,anchor:VersionedJson):String = request {s -> editGate.withLock {
+        require(command.matches(Regex("[a-zA-Z0-9-]{1,80}")))
+        check(documentEdit==null && editor?.state?.value?.settled!=false) {"Finish writing before adjusting a highlight"}
+        s.edits.reattachAnchor("anchor-$command",annotation,book,"anchor-session-$command",expected,hash,anchor)
+        ReaderAnnotationPresentation.metadata(checkNotNull(s.projections.read(annotation))).toString()
+    }}
     /** Stable selection intent, retried with the same command and arguments. A new box uses
      * its creation session so Cancel masks the box; a saved highlight gets a fresh session
      * whose height contribution can be cancelled without removing the highlight. */

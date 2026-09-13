@@ -174,7 +174,7 @@ export class Reader extends EventTarget {
     };
     const openMarkedAnnotation = annotation => {
       if (this.reattachingId || !annotation) return;
-      this.emit(annotation.height > 0 ? 'edit' : 'highlightmenu', { annotation });
+      this.emit(annotation.height > 0 && !this.savedHighlightActions ? 'edit' : 'highlightmenu', { annotation });
     };
     doc.addEventListener('click', event => {
       if (performance.now() < ignoreClickUntil || this.navigationLocked || this.busy || this.turning) { event.preventDefault(); event.stopPropagation(); return; }

@@ -7,6 +7,7 @@ import { moreIcon } from './icons.js';
 import { setupEditorTools } from './shared-tools.js';
 const $ = id => document.getElementById(id);
 const reader = new Reader($('reader'));
+reader.savedHighlightActions = true;
 for (const button of document.querySelectorAll('[data-icon="more"]')) button.append(moreIcon());
 const defaults = { ...reader.prefs };
 const pending = new Map(); let sequence = 0, current, opening = false;
@@ -19,7 +20,7 @@ const refreshReading = () => editing || selectionUI.pending ? Promise.resolve() 
 const inkSlices = createInkSlices(reader, rpc, () => current, report, refreshReading);
 let resizePending = false, resizeTimer, viewportSize = `${$('reader').clientWidth}:${$('reader').clientHeight}`;
 function reflowAfterResize() {
-  if (!resizePending || editing || opening || reader.opening || reader.busy || reader.navigationLocked || reader.turning || !reader.doc) return;
+  if (!resizePending || editing || opening || reader.opening || reader.busy || reader.navigationLocked || reader.turning || !reader.doc || selectionUI.pending) return;
   resizePending = false; reader.reflow().catch(error => report(error.message));
 }
 new ResizeObserver(() => {
@@ -44,7 +45,7 @@ if (window.ForestRead) ForestRead.onmessage = ({ data }) => {
   const message = JSON.parse(data), request = pending.get(message.id);
   if (!request) { if (message.result?.token) rpc('release', { token: message.result.token }).catch(() => {}); return; }
   clearTimeout(request.timer); pending.delete(message.id);
-  message.error ? request.reject(new Error(message.error)) : request.resolve(message.result);
+  message.error ? request.reject(Object.assign(new Error(message.error), { code: message.code })) : request.resolve(message.result);
 };
 const popups = createPopupHost({ onChange: () => { reader.highlightMenuOpen = !!document.querySelector('dialog[open]'); reflowAfterResize(); void toolsUI?.popupChanged(); } });
 for (const [dialog, closeButton] of [['shelves', 'closeShelves'], ['chapters', 'closeChapters'], ['settings', 'closeSettings']]) popups.register($(dialog), { closeButton: $(closeButton) });
@@ -98,7 +99,7 @@ window.forestReadImported = run(async () => { await shelves(); report('Book Impo
 $('prev').onclick = run(() => reader.turn(-1)); $('next').onclick = run(() => reader.turn(1));
 reader.addEventListener('page', ({ detail }) => { $('page').textContent = `${detail.index + 1} · ${Math.round((detail.fraction ?? 0) * 100)}%`; refreshReading().catch(() => {}); });
 reader.addEventListener('error', ({ detail }) => report(detail.message));
-const selectionUI = setupSharedSelection(reader, $, { rpc, current: () => current, editing: () => editing, beginEdit, report, popups });
+const selectionUI = setupSharedSelection(reader, $, { rpc, current: () => current, editing: () => editing, beginEdit, report, popups, settled: () => inkSlices.settled() });
 toolsUI = setupEditorTools(reader, $, { rpc, current: () => current, getEdit: () => editing, attachEdit, report, popups });
 reader.addEventListener('edit', ({detail}) => { void beginEdit(detail).catch(error => report(error.message)); });
 function editChrome(active) {

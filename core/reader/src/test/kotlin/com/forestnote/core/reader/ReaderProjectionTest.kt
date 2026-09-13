@@ -34,6 +34,29 @@ internal suspend fun Library.receive(ops: List<Op>) {
 class ReaderProjectionTest {
     @get:Rule val temp = TemporaryFolder()
 
+    @Test fun atomicReattachmentReplicatesWithoutReauthoringInkAndRejectsStaleAnchor()=runBlocking<Unit> {
+        Library(File(temp.root,"a.db")).use {a -> Library(File(temp.root,"b.db"),Library.B).use {b ->
+            a.annotation();a.s.edits.beginSession("write","ink-session","n")
+            a.s.edits.appendStroke("ink","ink-session",sampleInk("keep"))
+            val before=a.s.projections.read("n")!!;val book=a.s.projections.book("n")!!
+            b.enable();b.receive(a.ops())
+            val moved=VersionedJson("""{"version":1,"section":0,"start":5,"end":9,"quote":"next","prefix":"text ","suffix":""}""")
+            a.s.edits.reattachAnchor("move","n",book,"move-session",sampleAnchor,before.inputHash!!,moved)
+            val count=a.ops().size
+            a.s.edits.reattachAnchor("move","n",book,"move-session",sampleAnchor,before.inputHash!!,moved)
+            assertEquals(count,a.ops().size)
+            b.receive(a.ops().reversed())
+            val after=b.s.projections.read("n")!!
+            assertEquals(moved,after.anchor);assertEquals(before.inputHash,after.inputHash)
+            assertEquals(before.effectiveHeight,after.effectiveHeight)
+            assertEquals(before.strokes.single().version,after.strokes.single().version)
+            assertFailsWith<ReaderAnchorChangedException> {
+                b.s.edits.reattachAnchor("stale","n",book,"stale-session",sampleAnchor,before.inputHash!!,sampleAnchor)
+            }
+            assertNull(b.s.edits.resumeSession("stale-session"))
+        }}
+    }
+
     @Test fun independentErasesCancelAndAcceptedHighlightSurvive() = runBlocking<Unit> {
         Library(File(temp.root, "a.db")).use { a -> Library(File(temp.root, "b.db"), Library.B).use { b ->
             a.annotation(); a.s.edits.beginSession("write", "sa", "n")

@@ -132,6 +132,9 @@ Stopped interactive dumps are identical (`/tmp/forestread-pencil-fast-before.db`
 `/tmp/forestread-pencil-fast-after.db`): integrity OK, 47 strokes / 5,057 points / 62 outbox rows.
 Normal FN's library hash is unchanged. Physical fast-preview acceptance is pending.
 
+The user subsequently confirms the restored native pencil path: "yes, excellent."
+Continue with [D44 saved-highlight adjustment](2026-09-13-forestread-saved-highlight-adjustment.md).
+
 ## Next
 
 Saved highlight-boundary adjustment, annotation browsing/recognized-text search attachment,

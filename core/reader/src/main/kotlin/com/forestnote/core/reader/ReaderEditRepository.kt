@@ -3,7 +3,36 @@ package com.forestnote.core.reader
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 
+class ReaderAnchorChangedException:IllegalStateException("Highlight Changed. Reopen The Book Before Adjusting It.")
+
 class ReaderEditRepository internal constructor(private val s: ReaderStorage) {
+    /** Explicit Apply: one receipt/transaction creates a finished anchor-only contribution.
+     * Snapshot/reduction remain off the writer; recheck every input version before committing. */
+    suspend fun reattachAnchor(command:String,annotation:String,book:String,session:String,
+        expected:VersionedJson,hash:String,anchor:VersionedJson):String? {
+        ReaderValidation.anchor(anchor)
+        val json=Json.parseToJsonElement(anchor.raw).jsonObject
+        require(json.getValue("version").jsonPrimitive.int==1 && anchor.raw.length<=16000 && json.getValue("end").jsonPrimitive.long>json.getValue("start").jsonPrimitive.long
+            && json.getValue("quote").jsonPrimitive.content.isNotEmpty())
+        val snapshot=s.projections.snapshot(annotation)
+        val projection=withContext(kotlinx.coroutines.Dispatchers.Default) {snapshot?.let(ReaderProjection::reduce)}
+        return s.command(command,"reattach_anchor",listOf(annotation,book,session,expected.raw,hash,anchor.raw)) {
+            fun versions(rows:AnnotationRows?) = rows?.let {r -> listOf(
+                r.annotation.id to r.annotation.version,r.bookPresent,r.bookDeleted,r.annotationDeleted,
+                r.sessions.map {it.id to it.version},r.strokes.map {it.id to it.version},
+                r.claims.map {it.id to it.version},r.values.map {it.id to it.version})}
+            if(snapshot?.annotation?.columns?.get("book_id")!=book || projection?.visible!=true ||
+                projection.status!=ProjectionStatus.READY || projection.inputHash!=hash ||
+                projection.anchor?.let {Json.parseToJsonElement(it.raw)}!=Json.parseToJsonElement(expected.raw) ||
+                versions(snapshot)!=versions(s.projections.snapshotOnWriter(annotation))) throw ReaderAnchorChangedException()
+            require(s.row("reader_edit_session",session)==null) {"Anchor session identity already used"}
+            s.put("reader_edit_session",session,mapOf("annotation_id" to annotation,"owner_site" to s.actor,
+                "kind" to "interactive","state" to "finished"),immutable=true)
+            s.put("reader_annotation_value",compositeId(session,AnnotationProperty.ANCHOR.wire),mapOf(
+                "session_id" to session,"property" to AnnotationProperty.ANCHOR.wire,"value_json" to anchor.raw))
+            annotation
+        }
+    }
     suspend fun createAnnotation(command: String, annotation: String, book: String, session: String,
         anchor: VersionedJson, width: Long, height: Long) = s.command(command, "create_annotation",
         listOf(annotation, book, session, anchor.raw, width, height)) {

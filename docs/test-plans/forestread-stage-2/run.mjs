@@ -169,6 +169,7 @@ try {
       'app/readerlab/src/main/assets/readerlab/selection-handles.css',
       'app/readerlab/src/main/assets/readerlab/icons.js',
       'app/readerlab/tests/shared-reader.spec.js',
+      'app/readerlab/tests/shared-anchor.spec.js',
       'app/notes/src/test/kotlin/com/forestnote/app/notes/ForegroundSyncDriverTest.kt',
       'core/format/src/test/kotlin/com/forestnote/core/format/LocalCommitNotificationTest.kt',
       'app/notes/src/test/kotlin/com/forestnote/app/notes/MixedSyncStoreTest.kt',

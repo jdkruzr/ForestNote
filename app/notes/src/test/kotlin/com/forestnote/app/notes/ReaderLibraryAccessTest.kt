@@ -182,6 +182,53 @@ class ReaderLibraryAccessTest {
         } finally {s.shutdown()}
     }
 
+    @Test fun savedHighlightAdjustmentPreservesInkSizeAndRetriesButRejectsStaleAnchors()=runBlocking<Unit> {
+        val file=File(temp.root,"adjust.db");val s=open(file)
+        try {
+            val a=s.readerLibraryForQualification(temp.root)
+            val book=a.importBook("import",{bytes().inputStream()}).book.id
+            val old=a.createAnnotation("create","note",book,"old",anchor,10000,6000)
+            a.appendAnnotationStroke("ink",old,ink("keep"));a.finishAnnotation("finish",old)
+            val before=a.annotation("note")!!
+            val paint=sql(file,"SELECT * FROM reader_stroke")
+            val moved=VersionedJson("""{"version":1,"section":0,"start":0,"end":2,"quote":"No","prefix":"","suffix":" pancakes."}""")
+            a.adjustHighlight(book,"note","move",anchor,before.inputHash!!,moved)
+            val after=a.annotation("note")!!
+            assertEquals(moved,after.anchor);assertEquals(before.inputHash,after.inputHash)
+            assertEquals(before.canvasWidth,after.canvasWidth);assertEquals(before.effectiveHeight,after.effectiveHeight)
+            assertEquals(paint,sql(file,"SELECT * FROM reader_stroke"))
+            assertEquals(SessionState.FINISHED,a.annotationSessionState("anchor-session-move"))
+            val history=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            a.adjustHighlight(book,"note","move",anchor,before.inputHash!!,moved)
+            assertFails {a.adjustHighlight(book,"note","move",anchor,before.inputHash!!,anchor)}
+            assertFailsWith<ReaderAnchorChangedException> {a.adjustHighlight(book,"note","stale",anchor,before.inputHash!!,moved)}
+            assertEquals(history,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            val edit=a.beginDocumentEdit(book,"note",after.inputHash!!,"writing",0.0)
+            assertFails {a.adjustHighlight(book,"note","during-ink",moved,after.inputHash!!,anchor)}
+            assertTrue(edit.queue.end(true));edit.queue.awaitSettled();a.acknowledgeDocumentEdit(edit)
+        } finally {s.shutdown()}
+    }
+
+    @Test fun failedAnchorApplyRollsBackSessionPropertyAndReceiptTogether()=runBlocking<Unit> {
+        val file=File(temp.root,"adjust-rollback.db");val s=open(file)
+        fun execute(sql:String)=DriverManager.getConnection("jdbc:sqlite:${file.path}").use {it.createStatement().use {st ->st.execute(sql)}}
+        try {
+            val a=s.readerLibraryForQualification(temp.root)
+            val book=a.importBook("import",{bytes().inputStream()}).book.id
+            val old=a.createAnnotation("create","note",book,"old",anchor,10000,0)
+            a.finishAnnotation("finish",old)
+            val before=a.annotation("note")!!;val history=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            execute("CREATE TRIGGER fail_anchor BEFORE INSERT ON reader_annotation_value BEGIN SELECT RAISE(ABORT,'held anchor'); END")
+            assertFails {a.adjustHighlight(book,"note","retry",anchor,before.inputHash!!,anchor)}
+            assertNull(a.annotationSessionState("anchor-session-retry"))
+            assertEquals(history,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            assertTrue(sql(file,"SELECT * FROM reader_command WHERE id='anchor-retry'").isEmpty())
+            execute("DROP TRIGGER fail_anchor")
+            a.adjustHighlight(book,"note","retry",anchor,before.inputHash!!,anchor)
+            assertEquals(SessionState.FINISHED,a.annotationSessionState("anchor-session-retry"))
+        } finally {s.shutdown()}
+    }
+
     @Test fun resizingRetainsSessionClampsToInkAndRetriesWithoutReauthoring()=runBlocking<Unit> {
         val file=File(temp.root,"resize.db");val s=open(file)
         try {

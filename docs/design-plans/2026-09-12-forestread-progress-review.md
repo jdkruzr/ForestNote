@@ -250,6 +250,11 @@ the headless result does not activate production integration.
    attaches compact brush/thickness controls, ordered whole-stroke erasing and explicit-Apply
    grow/shrink to the same native contribution session. Saved-boundary adjustment, annotation
    browsing/search UI and integrated Viwoods acceptance remain next; production stays gated.
+   **D44 saved boundaries:** [anchor-only adjustment](2026-09-13-forestread-saved-highlight-adjustment.md)
+   reuses the live handles for existing highlights, including those with handwriting. Apply is a
+   retryable atomic contribution; Cancel authors nothing and ink/box geometry stay intact.
+   The [library navigation outline](2026-09-13-forestread-library-navigation.md) records a proposed
+   top-level Notebooks/Books switch; its final UI is not approved or implemented yet.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 
