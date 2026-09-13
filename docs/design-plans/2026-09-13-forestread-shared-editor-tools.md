@@ -113,6 +113,25 @@ Both match the installed certificate-preserving upgrade pair. The interactive da
 Normal FN's main-library hash remains unchanged. Physical acceptance of the corrected pencil
 appearance and matched-preview latency is still the user's next check.
 
+### Pencil preview latency correction
+
+The user confirms corrected pencil redraw and reports that matched drawing is too slow.
+Restore Boox reader AUTO pencils to native firmware preview, retaining the canonical graphite
+opacity correction, SVG layering and editor border. Calligraphy remains matched; erasing still
+detaches firmware input. Native preview remains an approximation, but no longer gives up its
+low latency to obtain pixel identity. Added explicit coverage for every pencil reattaching native
+input after calligraphy and after erasing, while keeping firmware suspended behind menus.
+
+The qualification pair builds, 121 ink JVM tests and **30/30 native tests** pass
+(`/tmp/forestread-pencil-fast-build.log`, `/tmp/forestread-pencil-fast-native.log`). No JS,
+canonical pixels or storage changes in this correction; the browser/headless suites were not
+rerun. Installed app/test hashes match the certificate-preserving build pair:
+`6e2fd4e92d6d621cc06b4cc35f68fc78e01641ca62fb3f96c70de879527dd920` /
+`e8f5640da8a1030925aa41b217828e38f9a909e2a3f0287114d942dff7dff38c`.
+Stopped interactive dumps are identical (`/tmp/forestread-pencil-fast-before.db` and
+`/tmp/forestread-pencil-fast-after.db`): integrity OK, 47 strokes / 5,057 points / 62 outbox rows.
+Normal FN's library hash is unchanged. Physical fast-preview acceptance is pending.
+
 ## Next
 
 Saved highlight-boundary adjustment, annotation browsing/recognized-text search attachment,

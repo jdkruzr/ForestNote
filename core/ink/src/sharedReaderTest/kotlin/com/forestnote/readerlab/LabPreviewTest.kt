@@ -102,7 +102,7 @@ class LabPreviewTest {
             backend.setInputSuspended(true); backend.setMode(mode); backend.updatePen(readerPenParams(kind, 100))
             assertTrue("Menu must keep firmware off", native.suspended)
             backend.setInputSuspended(false)
-            val exact = mode == ReaderPreviewBackend.Mode.MATCHED || (mode == ReaderPreviewBackend.Mode.AUTO && (CalligraphyNib.fallbackAngle(kind) != null || PencilTexture.isPencil(kind)))
+            val exact = mode == ReaderPreviewBackend.Mode.MATCHED || (mode == ReaderPreviewBackend.Mode.AUTO && CalligraphyNib.fallbackAngle(kind) != null)
             assertEquals(exact, backend.matched); assertEquals(!exact, backend.ownsInput())
             assertEquals(exact, native.suspended)
             backend.onResumeReacquire(); assertEquals(exact, native.suspended)
@@ -114,6 +114,27 @@ class LabPreviewTest {
         for (kind in listOf(BrushKind.BALLPOINT, BrushKind.FINELINER, BrushKind.MARKER, BrushKind.TRANSLUCENT_MARKER, BrushKind.HIGHLIGHTER)) {
             val p = readerPenParams(kind, 100); assertEquals(p.wMax, p.wMin)
         }
+    }
+
+    @Test fun autoPencilsReattachFastPreviewAfterCalligraphyAndEraser() = main {
+        val native=FakeNative();val backend=ReaderPreviewBackend(native,true)
+        val host=android.view.View(instrumentation.targetContext)
+        val surface=ReaderInkSurface(instrumentation.targetContext,backend)
+        try {
+            for(kind in BrushKind.entries.filter(PencilTexture::isPencil)) {
+                backend.setInputSuspended(true)
+                backend.updatePen(readerPenParams(BrushKind.CALLIGRAPHY,140))
+                backend.attachInput(host,surface,emptyList());assertFalse(native.attached)
+                backend.updatePen(readerPenParams(kind,140))
+                backend.attachInput(host,surface,emptyList())
+                assertTrue("Menu still suspends pencil preview",native.suspended)
+                backend.setInputSuspended(false)
+                assertTrue(native.attached);assertTrue(backend.ownsInput());assertFalse(native.suspended)
+                backend.setActiveTool(Tool.StrokeEraser);assertFalse(native.attached)
+                backend.setActiveTool(Tool.Pen);backend.attachInput(host,surface,emptyList())
+                assertTrue(native.attached);assertTrue(backend.ownsInput());assertFalse(native.suspended)
+            }
+        } finally {surface.releasePreview()}
     }
 
     @Test fun liveWorkerPixelsMatchCanonicalForAllBrushesIncludingTextureAndAlpha() {
