@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' blob: data:; font-src 'self' blob: data:; connect-src 'self' blob:; frame-src blob:; worker-src blob:; object-src 'none'; base-uri 'none'">
+<title>ForestRead</title><link rel="stylesheet" href="menu-tokens.css"><link rel="stylesheet" href="lab.css"></head>
+<body>
+<header><button id="library" aria-label="ForestRead Library" title="ForestRead Library">☰</button><button id="contents" aria-label="Contents" title="Contents">☷</button><button id="reading" aria-label="Reading Settings" title="Reading Settings">Aa</button><button id="prev" aria-label="Previous Page">◀</button><span id="page">—</span><button id="next" aria-label="Next Page">▶</button></header>
+<main id="reader"></main>
+<dialog id="shelves" class="anchoredPopup popupWide" aria-label="Books"><div class="menuHeading"><strong>Books</strong><button id="import">Import Book…</button><button id="closeShelves" class="iconButton" aria-label="Close Books">×</button></div><div id="bookRows" class="penuBody"></div></dialog>
+<dialog id="chapters" class="anchoredPopup popupWide" aria-label="Contents"><div class="menuHeading"><strong>Contents</strong><button id="closeChapters" class="iconButton" aria-label="Close Contents">×</button></div><div id="chapterRows" class="penuBody"></div></dialog>
+<dialog id="settings" class="anchoredPopup penuPopup" aria-label="Reading Settings"><div class="menuHeading"><strong>Reading Settings</strong><button id="closeSettings" class="iconButton" aria-label="Close Reading Settings">×</button></div><div class="compactSettings">
+<label>Font Size <input id="fontSize" type="number" min="12" max="64" value="22"></label><label>Line Spacing <input id="lineHeight" type="number" min="1" max="3" step="0.1" value="1.5"></label><label>Letter Spacing <input id="letterSpacing" type="number" min="0" max="5" step="0.25" value="0"></label><label>Word Spacing <input id="wordSpacing" type="number" min="0" max="12" step="1" value="0"></label><label>Paragraph Spacing <input id="paragraphSpacing" type="number" min="0" max="3" step="0.25" value="1"></label><button id="apply">Apply Reading Settings</button><button id="refresh">Clear Ghosting</button></div></dialog>
+<dialog id="imageZoom" aria-label="Image Zoom"><div class="zoomHeading"><strong>Image Zoom</strong><span id="zoomScale">100%</span><button id="closeImageZoom" class="iconButton" aria-label="Close Image Zoom">×</button></div><div id="imageZoomStage"><img id="zoomImage" alt="Book Image" draggable="false" hidden></div></dialog>
+<footer><span id="status">Opening Shared Library…</span><span id="title" dir="auto">No Book Open</span></footer>
+<script src="shared-reader.js" type="module"></script></body></html>

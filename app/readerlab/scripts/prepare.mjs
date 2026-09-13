@@ -17,6 +17,10 @@ const renderBefore = '    render(layout) {\n        if (!layout) return';
 const renderAfter = '    render(layout) {\n        if (!layout || !this.document?.body) return';
 const scrollBefore = '    #afterScroll(reason) {\n        const range = this.#getVisibleRange()';
 const scrollAfter = '    #afterScroll(reason) {\n        if (!this.#view?.document?.body) return\n        const range = this.#getVisibleRange()';
+// Chromium does not need Foliate's WebKit script workaround. Book code must never
+// execute in the same origin as the trusted native bridge, even before load handlers.
+const sandboxBefore = "this.#iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts')";
+const sandboxAfter = "this.#iframe.setAttribute('sandbox', 'allow-same-origin')";
 for (const file of files) {
   const target = new URL(`vendor/foliate/${file}`, root);
   await mkdir(new URL('.', target), { recursive: true });
@@ -28,14 +32,15 @@ for (const file of files) {
     bytes = Buffer.from(await response.arrayBuffer());
     await writeFile(target, bytes);
   }
-  if (file === 'paginator.js') bytes = Buffer.from(bytes.toString().replace(expandAfter, expandBefore).replace(renderAfter, renderBefore).replace(scrollAfter, scrollBefore));
+  if (file === 'paginator.js') bytes = Buffer.from(bytes.toString().replace(expandAfter, expandBefore).replace(renderAfter, renderBefore).replace(scrollAfter, scrollBefore).replace(sandboxAfter, sandboxBefore));
   const digest = createHash('sha256').update(bytes).digest('hex');
   if (digest !== lock.files[file]) throw new Error(`Pinned source checksum mismatch: ${file}`);
   manifest.files[file] = digest;
   if (file === 'paginator.js') {
     if (!bytes.toString().includes(expandBefore)) throw new Error('Paginator patch context changed');
     if (!bytes.toString().includes(scrollBefore)) throw new Error('Paginator scroll patch context changed');
-    await writeFile(target, bytes.toString().replace(expandBefore, expandAfter).replace(renderBefore, renderAfter).replace(scrollBefore, scrollAfter));
+    if (!bytes.toString().includes(sandboxBefore)) throw new Error('Paginator sandbox patch context changed');
+    await writeFile(target, bytes.toString().replace(expandBefore, expandAfter).replace(renderBefore, renderAfter).replace(scrollBefore, scrollAfter).replace(sandboxBefore, sandboxAfter));
   }
 }
 await writeFile(new URL('vendor/foliate/PIN.json', root), JSON.stringify(manifest, null, 2));

@@ -39,6 +39,8 @@ android {
         // warning). Return defaults instead of throwing "not mocked".
         unitTests.isReturnDefaultValues = true
     }
+    // Reuse checked renderer sources; do not ship the lab's IndexedDB app/fixtures.
+    sourceSets.getByName("qualification").assets.srcDir(layout.buildDirectory.dir("generated/sharedReaderAssets"))
 
     // Three Onyx native artifacts (onyxsdk-pen, onyxsdk-pennative, mmkv) each bundle their own
     // libc++_shared.so — take the first and move on (matches the proven `notable` packaging).
@@ -51,7 +53,20 @@ android {
 
 val libs = extensions.getByType<VersionCatalogsExtension>().named("libs")
 
+val prepareSharedReaderAssets by tasks.registering(Sync::class) {
+    dependsOn(":app:readerlab:prepareReaderAssets")
+    into(layout.buildDirectory.dir("generated/sharedReaderAssets"))
+    from("../readerlab/src/main/assets") {
+        include("readerlab/shared-reader.*","readerlab/reader.js","readerlab/anchors.js","readerlab/image-zoom.js",
+            "readerlab/book-images.js","readerlab/book-runtime.js","readerlab/decompression.js","readerlab/popups.js",
+            "readerlab/menu-tokens.css","readerlab/lab.css")
+    }
+    from("../readerlab/build/generated/readerAssets") {include("readerlab/vendor/**")}
+}
+tasks.matching {it.name=="preQualificationBuild"}.configureEach {dependsOn(prepareSharedReaderAssets)}
+
 dependencies {
+    implementation("androidx.webkit:webkit:1.12.1")
     implementation(project(":core:ink"))
     implementation(project(":core:format"))
     implementation(project(":core:reader"))

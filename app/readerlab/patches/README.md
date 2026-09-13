@@ -27,3 +27,15 @@ while switching/reloading books (observed in the existing-highlight regression t
 
 This is a maintained local extension, not an upstream submission. Original files,
 their SHA-256 digests, and the upstream MIT license are included in generated assets.
+
+## Script-disabled book frames (shared Android host)
+
+`prepare.mjs` removes `allow-scripts` from the paginator's iframe sandbox before chapter
+navigation. Same-origin access remains so the trusted parent can measure/select/reflow chapter
+DOM. Book-authored scripts and event handlers cannot run before Reader's load-time sanitizing.
+This also applies to the standalone Android lab; Chromium regression tests retain selection,
+links, image zoom and annotation behavior. This is not a WebKit compatibility claim.
+
+The generator reverses this local patch before checking the pinned upstream SHA-256, just as
+it does for its paginator reflow guards. `tests/shared-reader.spec.js` includes a malicious EPUB
+test without the shell CSP, to exercise the iframe boundary itself.

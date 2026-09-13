@@ -22,7 +22,7 @@ internal class QualificationSetupController(context: Context, private val worksp
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private val mutable=MutableStateFlow(LibrarySetupState(SetupStatus.BUSY,text(R.string.setup_checking)))
     val state=mutable.asStateFlow()
-    private var active: NotebookStore?=null
+    @Volatile private var active: NotebookStore?=null
     private var choice: SelectedLibrary?=null
     private var source: File?=null
     private var attempt: String?=null
@@ -42,6 +42,10 @@ internal class QualificationSetupController(context: Context, private val worksp
     }
 
     private suspend fun closeActive() {active?.shutdown();active=null}
+    internal fun readerStore():NotebookStore {
+        check(mutable.value.status in setOf(SetupStatus.LOCAL_ONLY,SetupStatus.SELECTED)) {"Library setup is not ready"}
+        return checkNotNull(active)
+    }
     private suspend fun loadSafely() {
         try {load()} catch(_: CancellationException) {throw CancellationException()}
         catch(_: Exception) {mutable.value=LibrarySetupState(SetupStatus.STOPPED,

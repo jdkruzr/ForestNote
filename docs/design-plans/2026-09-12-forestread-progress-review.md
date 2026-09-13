@@ -211,6 +211,11 @@ the headless result does not activate production integration.
    qualifies that boundary through a real foreground HTTPS round trip and 21 awake regressions.
    This does not yet replace Reader Lab's IndexedDB, attach visible UI or migrate annotations.
    Next: renderer-host attachment and explicit annotation-session intents, with production gates off.
+   **D36 shared renderer attachment:** [gated host and resource boundary](2026-09-13-forestread-renderer-host.md)
+   attaches the existing renderer to D35's owner-bound book inputs without lab IndexedDB or new
+   library authority. Script-disabled chapter frames and a scoped main-frame message bridge
+   separate book content from native operations. This is reading-only; annotation sessions,
+   native ink and production activation remain subsequent gates.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

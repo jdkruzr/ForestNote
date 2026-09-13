@@ -1,7 +1,11 @@
-# D23–D32: disposable Android storage, upgrade and HTTPS qualification
+# D23–D36: disposable Android storage, upgrade and HTTPS qualification
 
 Returns to [D22's hardware handoff](../../design-plans/2026-09-12-forestread-android-foundation.md)
 and [the larger plan, item 3](../../design-plans/2026-09-12-forestread-progress-review.md#recommended-next-order).
+
+Newest attachment: [D36's actual shared-library renderer host](../../design-plans/2026-09-13-forestread-renderer-host.md).
+`renderer-run.mjs` adds real WebView open/settings/Contents/recreation to the disposable real-book
+round trip. It is explicitly opt-in; ordinary storage suites do not claim renderer or pen coverage.
 
 ## Isolation and scope
 

@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.HttpsURLConnection
 
 /** Real bounded HTTPS against a disposable UB, with two private replicas of one author's library.
- * The optional real-book mode also qualifies bytes; neither mode qualifies rendering.
+ * Real-book mode qualifies bytes; the explicit renderer flag also attaches the gated host.
  */
 internal class MixedTransportQualification(private val context:Context,private val args:Bundle,
     private val run:String,private val invocation:String,private val process:String) {
@@ -334,6 +334,10 @@ internal class MixedTransportQualification(private val context:Context,private v
                     check(RecoveryFiles.digest(prepared.file)==args.getString("bookHash"))
                     check(history(f)==unchanged)
                     library.release(prepared);check(!prepared.file.exists())
+                    if(!revoked && args.getString("readerRenderer")=="true") {
+                        qualifyReaderHost(s,expected.getValue("book").jsonPrimitive.content)
+                        check(history(f)==unchanged) {"Renderer reads/settings authored shared history"}
+                    }
                 }
             }
             s.save(Stroke(points=listOf(StrokePoint(41,42,500,0))));s.readerIdentity()
