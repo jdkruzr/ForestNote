@@ -79,6 +79,40 @@ Physical Penu/eraser/grow acceptance on the Go and integrated Viwoods acceptance
 from automated tests; screenshots cannot establish absence of physical panel ghosting.
 The Go is left reading Shared Ink Qualification, ready for the user to reopen a writing region.
 
+### Physical follow-up — boundary and pencil redraw
+
+The user reported an invisible writing-region boundary and Pencil 8B turning into apparent
+Fountain ink on redraw. The private database confirms the new test strokes retain `pencil_8b`
+identity and 28/140 widths: this was rendering, not brush identity being overwritten.
+Canonical pencil rendering applied body opacity to each short segment; dense round-cap overlap
+accumulated nearly opaque black. The graphite body now composites once per stroke, followed by
+its deterministic flecks. Separate strokes can still build darkness. SVG uses the same separate
+body/texture layering. This fixes shared canonical rendering (including older saved pencil ink)
+without rewriting rows or changing brush identity/parameters. Boox reader AUTO preview now uses
+the existing matched worker for all pencils, as for calligraphy, instead of a vendor approximation.
+Other vendors' preview routing and the ordinary writer's input routing are unchanged.
+
+The editor's black foreground border sits above the opaque native canvas; its snapshot placeholder
+gets an inset outline too. Neither changes layout dimensions, intercepts input or adds pixels to
+saved strokes/tiles/exports. The real native-view test checks visible border pixels and an unbordered
+ink canvas with identical dimensions.
+
+Verification: **442 Notes + 121 ink JVM tests**, **29 native tests** on the Go and the full
+**117 browser tests** pass (`/tmp/forestread-penu-fix-build-final.log`,
+`/tmp/forestread-penu-fix-native.log`, `/tmp/forestread-penu-fix-browser.log`). New Android pixel
+coverage tests all five grades with 200 repeated samples, and retains all-brush live/commit/reload
+parity. The earlier headless snapshot is not a certification of this later renderer change;
+no storage/sync code changed and that harness was not rerun for this fix.
+
+Installed qualification app SHA-256:
+`916be9dafde1fd2f549c256ab3a330c17fa3f534ba09d6b8f0e4d0be1ba824e2`;
+test `35d6338daa0b01c751f224f638b3cf71fdab2abaabc026f3d0b9684089253da4`.
+Both match the installed certificate-preserving upgrade pair. The interactive database is
+`.dump`-identical before/after (`/tmp/forestread-penu-fix-before.db`,
+`/tmp/forestread-penu-fix-after.db`), integrity OK, 33 strokes / 3,444 points / 44 outbox rows.
+Normal FN's main-library hash remains unchanged. Physical acceptance of the corrected pencil
+appearance and matched-preview latency is still the user's next check.
+
 ## Next
 
 Saved highlight-boundary adjustment, annotation browsing/recognized-text search attachment,

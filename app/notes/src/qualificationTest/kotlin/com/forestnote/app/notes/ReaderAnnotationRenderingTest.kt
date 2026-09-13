@@ -137,6 +137,17 @@ class ReaderAnnotationRenderingTest {
             js("document.querySelector('foliate-paginator').getContents()[0].doc.querySelector('[data-shared-ink]').parentElement.click(); true")
             waitFor("forestReadState().editAttached");nativeReady()
             val edit=checkNotNull(access.documentEdit);assertNotEquals(old.id,edit.queue.session.id)
+            instrumentation.runOnMainSync {
+                val view=ReaderHostQualificationSession.view!!.documentInk!!
+                val frame=Bitmap.createBitmap(view.width,view.height,Bitmap.Config.ARGB_8888)
+                val ink=Bitmap.createBitmap(view.ink.width,view.ink.height,Bitmap.Config.ARGB_8888)
+                try {
+                    view.draw(Canvas(frame));view.ink.draw(Canvas(ink))
+                    assertEquals("Visible editor boundary",android.graphics.Color.BLACK,frame.getPixel(0,view.height/2))
+                    assertEquals("Boundary is not saved ink",android.graphics.Color.WHITE,ink.getPixel(0,view.ink.height/2))
+                    assertEquals(view.width,view.ink.width);assertEquals(view.height,view.ink.height)
+                } finally {frame.recycle();ink.recycle()}
+            }
             js("document.getElementById('draw').click(); true")
             waitFor("document.getElementById('penOptions').open && !document.getElementById('draw').disabled")
             instrumentation.runOnMainSync {

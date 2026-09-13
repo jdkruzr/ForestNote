@@ -4,6 +4,11 @@ import kotlin.math.hypot
 
 /** Deterministic graphite texture in virtual page space, shared by bitmap and SVG renderers. */
 object PencilTexture {
+    fun isPencil(kind: BrushKind): Boolean = when (kind) {
+        BrushKind.PENCIL_HB, BrushKind.PENCIL_2B, BrushKind.PENCIL_4B,
+        BrushKind.PENCIL_6B, BrushKind.PENCIL_8B -> true
+        else -> false
+    }
     data class Fleck(val x: Float, val y: Float, val radius: Float = FLECK_RADIUS_V)
 
     fun gradeOpacity(kind: BrushKind): Float = when (kind) {

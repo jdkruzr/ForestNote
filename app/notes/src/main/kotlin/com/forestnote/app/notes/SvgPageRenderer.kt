@@ -52,13 +52,13 @@ object SvgPageRenderer {
         if (stroke.points.isEmpty()) return
         val opacity = when (stroke.brushKind) {
             BrushKind.TRANSLUCENT_MARKER -> BrushAppearance.alpha(stroke.brushKind) / 255f
-            BrushKind.PENCIL_HB, BrushKind.PENCIL_2B, BrushKind.PENCIL_4B,
-            BrushKind.PENCIL_6B, BrushKind.PENCIL_8B -> PencilTexture.gradeOpacity(stroke.brushKind)
             else -> 1f
         }
         out.append("<g data-forestnote-brush=\"").append(stroke.brushKind.wireId)
             .append("\" stroke=\"").append(color(stroke.color)).append("\" fill=\"")
             .append(color(stroke.color)).append("\" opacity=\"").append(opacity).append("\">\n")
+        if (stroke.brushKind in PENCILS) out.append("<g opacity=\"")
+            .append(PencilTexture.gradeOpacity(stroke.brushKind)).append("\">\n")
         if (stroke.brushKind in NIBS && stroke.points.size > 1) {
             for (i in 1 until stroke.points.size) appendNib(out, stroke, stroke.points[i - 1], stroke.points[i])
         } else if (stroke.points.size == 1) {
@@ -77,11 +77,11 @@ object SvgPageRenderer {
             }
         }
         if (stroke.brushKind in PENCILS) {
-            val relativeOpacity = (PencilTexture.fleckOpacity(stroke.brushKind) / opacity).coerceIn(0f, 1f)
+            out.append("</g>\n") // Grade covers the body once; texture is a separate layer.
             for (fleck in PencilTexture.flecks(stroke)) {
                 out.append("<circle cx=\"").append(fleck.x).append("\" cy=\"").append(fleck.y)
                     .append("\" r=\"").append(fleck.radius).append("\" opacity=\"")
-                    .append(relativeOpacity).append("\"/>\n")
+                    .append(PencilTexture.fleckOpacity(stroke.brushKind)).append("\"/>\n")
             }
         }
         out.append("</g>\n")

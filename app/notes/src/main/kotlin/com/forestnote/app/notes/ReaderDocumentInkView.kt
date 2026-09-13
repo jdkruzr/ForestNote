@@ -22,6 +22,11 @@ internal class ReaderDocumentInkView(context:Context,val edit:ReaderDocumentEdit
     private val queue=edit.queue
     val ink=ReaderInkSurface(context,backend)
     init {
+        // Chrome above the opaque canvas, without changing geometry or saved ink pixels.
+        foreground=android.graphics.drawable.GradientDrawable().apply {
+            setColor(android.graphics.Color.TRANSPARENT)
+            setStroke(kotlin.math.ceil(resources.displayMetrics.density.toDouble()).toInt(),android.graphics.Color.BLACK)
+        }
         backend.setInputSuspended(true)
         check(!backend.requiresInputSurface() || input!=null)
         input?.let {addView(it,LayoutParams(-1,-1))}

@@ -102,7 +102,7 @@ class LabPreviewTest {
             backend.setInputSuspended(true); backend.setMode(mode); backend.updatePen(readerPenParams(kind, 100))
             assertTrue("Menu must keep firmware off", native.suspended)
             backend.setInputSuspended(false)
-            val exact = mode == ReaderPreviewBackend.Mode.MATCHED || (mode == ReaderPreviewBackend.Mode.AUTO && CalligraphyNib.fallbackAngle(kind) != null)
+            val exact = mode == ReaderPreviewBackend.Mode.MATCHED || (mode == ReaderPreviewBackend.Mode.AUTO && (CalligraphyNib.fallbackAngle(kind) != null || PencilTexture.isPencil(kind)))
             assertEquals(exact, backend.matched); assertEquals(!exact, backend.ownsInput())
             assertEquals(exact, native.suspended)
             backend.onResumeReacquire(); assertEquals(exact, native.suspended)
@@ -144,6 +144,27 @@ class LabPreviewTest {
                 assertEquals(kind, completed.brushKind)
                 view.releasePreview()
             }
+        }
+    }
+
+    @Test fun pencilOpacityDoesNotAccumulatePerDigitizerSample() = main {
+        val t = PageTransform().apply { updatePage(500, 200, 10000, 4000) }
+        for (kind in BrushKind.entries.filter(PencilTexture::isPencil)) {
+            val point = StrokePoint(5000, 2000, 600, 0)
+            val stroke = Stroke(id="pencil-density", points=listOf(point), brushKind=kind,
+                penWidthMin=500, penWidthMax=500, brushSeed=42)
+            fun render(points:List<StrokePoint>) = Bitmap.createBitmap(500,200,Bitmap.Config.ARGB_8888).also {
+                val canvas=Canvas(it);canvas.drawColor(android.graphics.Color.WHITE)
+                CanonicalBrushRenderer.drawStroke(canvas,stroke.copy(points=points),t)
+            }
+            val tap=render(listOf(point));val dense=render(List(200) {point.copy(timestampMs=it.toLong())})
+            try {
+                val a=tap.getPixel(250,100) and 255;val b=dense.getPixel(250,100) and 255
+                assertTrue("$kind became solid black: $b",b>20)
+                assertTrue("$kind darkened with sample density: $a vs $b",kotlin.math.abs(a-b)<=1)
+                val canvas=Canvas(dense);CanonicalBrushRenderer.drawStroke(canvas,stroke,t)
+                assertTrue("Separate strokes should still build graphite",(dense.getPixel(250,100) and 255)<b)
+            } finally {tap.recycle();dense.recycle()}
         }
     }
 

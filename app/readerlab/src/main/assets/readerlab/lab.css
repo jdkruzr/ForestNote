@@ -117,5 +117,5 @@ body[data-shared-selection][data-native-edit] #editControls { visibility: visibl
 body[data-native-edit] header { position: relative; }
 body[data-native-edit] header > :not(#editControls) { visibility: hidden; }
 #editControls:not([hidden]) { position: absolute; inset: 0 auto 0 4px; display: flex; align-items: center; gap: 4px; background: white; }
-#editBackdrop { position: fixed; z-index: 2; pointer-events: none; object-fit: contain; }
+#editBackdrop { position: fixed; z-index: 2; pointer-events: none; object-fit: contain; outline: 1px solid black; outline-offset: -1px; }
 #applySpace { border: var(--menu-border-strong); font-weight: 600; }

@@ -130,8 +130,11 @@ object CanonicalBrushRenderer {
 
     private fun drawPencil(canvas: Canvas, stroke: Stroke, t: PageTransform, paint: Paint) {
         val grade = PencilTexture.gradeOpacity(stroke.brushKind)
-        paint.alpha = (255 * grade).toInt()
+        // One graphite body, not another translucent coat at every digitizer sample.
+        val body = canvas.saveLayerAlpha(strokeBounds(stroke, t), (255 * grade).toInt())
+        paint.alpha = 255
         drawPressureSegments(canvas, stroke, t, paint)
+        canvas.restoreToCount(body)
 
         // Texture geometry lives in virtual page space, so a scale/device change cannot alter it.
         paint.style = Paint.Style.FILL

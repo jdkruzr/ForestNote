@@ -26,7 +26,7 @@ class ReaderPreviewBackend(
     // Erasing must leave TouchHelper entirely, just like matched drawing. Disabling its
     // firmware switches alone can leave the listener holding the Android stylus stream.
     val matched: Boolean get() = canSwitch && (tool == Tool.StrokeEraser || when (mode) {
-        Mode.AUTO -> CalligraphyNib.fallbackAngle(brush) != null
+        Mode.AUTO -> CalligraphyNib.fallbackAngle(brush) != null || PencilTexture.isPencil(brush)
         Mode.MATCHED -> true
         Mode.NATIVE -> false
     })

@@ -41,6 +41,10 @@ class SvgPageRendererTest {
         assertEquals(first, SvgPageRenderer.render(notebook, page).decodeToString())
         assertTrue(first.contains("data-forestnote-brush=\"pencil_4b\""))
         assertTrue(first.count { it == '<' } > 5, "graphite flecks add vector circles")
+        val body=first.indexOf("<g opacity=\"0.72\">")
+        assertTrue(body>=0,"Pencil body needs one grouped grade opacity")
+        assertTrue(first.indexOf("</g>",body)<first.indexOf("<circle",body),
+            "Graphite flecks must composite after the translucent body, not disappear inside it")
     }
 
     @Test
