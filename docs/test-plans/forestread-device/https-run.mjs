@@ -24,9 +24,10 @@ export function options(args) {
     return {serial:args[1],ub:resolve(args[3]),route:args[5]??'direct'};
 }
 
-export async function run({serial,ub,route='direct',mixed=false,book=null,foreground=false}) {
+export async function run({serial,ub,route='direct',mixed=false,book=null,foreground=false,library=false}) {
     assert.ok(!book || mixed,'Assets require explicit mixed mode');
     assert.ok(!foreground || book,'Foreground qualification requires a real book');
+    assert.ok(!library || foreground,'Reader library qualification requires foreground mode');
     const dir=await mkdtemp(join(tmpdir(),'forestread-https-'));
     const abort=new AbortController();const children=new Set();const servers=[];const cleanups=[];
     const interrupt=()=>abort.abort();
@@ -34,7 +35,7 @@ export async function run({serial,ub,route='direct',mixed=false,book=null,foregr
     const watchdog=setTimeout(interrupt,10*60_000);
     const report={version:1,status:'running',runId:`tls_${Date.now()}`,invocation:randomUUID(),phases:[],
         tls:'Android default trust to Cloudflare edge; encrypted tunnel; narrow loopback proxy to disposable UB',
-        route,mixed,assets:!!book,foreground,productionActivated:false,started:new Date().toISOString()};
+        route,mixed,assets:!!book,foreground,library,productionActivated:false,started:new Date().toISOString()};
     const reversePorts=[];
     const redactions=[];
     const command=async(cmd,args,cwd,timeout=60_000)=>{
@@ -117,6 +118,8 @@ export async function run({serial,ub,route='direct',mixed=false,book=null,foregr
                 'gradle/rhizome-integration-revision.txt','docs/test-plans/forestread-device/mixed-run.mjs']:[]),
             ...(foreground?['docs/test-plans/forestread-device/foreground-run.mjs',
                 'app/notes/src/qualification/kotlin/com/forestnote/app/notes/StorageQualificationActivity.kt']:[]),
+            ...(library?['docs/test-plans/forestread-device/library-run.mjs',
+                'app/notes/src/main/kotlin/com/forestnote/app/notes/ReaderLibraryAccess.kt']:[]),
             'app/notes/src/qualificationTest/kotlin/com/forestnote/app/notes/ReaderDeviceQualificationTest.kt',
             'app/notes/src/main/kotlin/com/forestnote/app/notes/enrollment/HttpsEnrollmentTransport.kt',
             'app/notes/src/main/kotlin/com/forestnote/app/notes/enrollment/ReplicaEnrollmentCoordinator.kt',
@@ -199,6 +202,7 @@ export async function run({serial,ub,route='direct',mixed=false,book=null,foregr
                 '-e','runId',report.runId,'-e','invocation',report.invocation,'-e','phase',phase,
                 '-e','httpsServer',publicUrl+prefix,'-e','httpsPassword',password,
                 ...(book?['-e','bookHash',report.book.sha256]:[]),
+                ...(library?['-e','readerLibrary','true']:[]),
                 ...(proxyPortArg?['-e','httpsProxyPort',proxyPortArg]:[]),
                 '-e','httpsUntrusted',`https://127.0.0.1:${reversePort}`,target+'.test/androidx.test.runner.AndroidJUnitRunner']);
             await writeFile(join(dir,phase+'.log'),output.replaceAll(password,'<redacted>').replaceAll(prefix,'/<redacted>'),{flag:'wx',mode:0o600});

@@ -205,6 +205,12 @@ the headless result does not activate production integration.
    Production activation and physical Android network callbacks remain off; the test explicitly
    signals its ADB-carried route. Next: gated reader UI/import/status attachment and native
    lifecycle/network wiring, then cross-device rendering/pen acceptance and rollout gates.
+   **D35 shared-library UI boundary:** [owner-bound library access and renderer inputs](2026-09-13-forestread-shared-library-access.md)
+   supplies streamed import, bounded listing, explicit rename/trash/restore/preferences/position
+   operations and verified disposable book inputs through the existing repositories. The Go
+   qualifies that boundary through a real foreground HTTPS round trip and 21 awake regressions.
+   This does not yet replace Reader Lab's IndexedDB, attach visible UI or migrate annotations.
+   Next: renderer-host attachment and explicit annotation-session intents, with production gates off.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

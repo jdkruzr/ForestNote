@@ -39,6 +39,7 @@ internal class MixedTransportQualification(private val context:Context,private v
     }
     private val password=checkNotNull(args.getString("httpsPassword")).also {require(Regex("[0-9a-f]{64}").matches(it))}
     private val account="forestread-disposable"
+    private val libraryMode=args.getString("readerLibrary")=="true"
     private val secrets=SecureCredentialsStore(EncryptedPrefsCredentialsBackend(context))
     private val owner=StorageOwnerQueue()
     private val recovery=LibraryRecoveryCoordinator.forQualification(context,owner,secrets)
@@ -153,7 +154,32 @@ internal class MixedTransportQualification(private val context:Context,private v
             activity.moveToState(Lifecycle.State.CREATED)
             withTimeout(10_000) {while(d.status.value!=ForegroundSyncStatus.Paused) delay(20)}
             val paused=requests.get()
-            val book=s.withReader {r ->r.imports.importBook("real-book",context.cacheDir,
+            val library=if(libraryMode) s.readerLibraryForQualification(context.cacheDir) else null
+            val book=if(library!=null) {
+                val original=File(context.cacheDir,"asset-$run.epub")
+                val imported=withContext(Dispatchers.Main) {library.importBook("real-book",{
+                    check(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper())
+                    original.inputStream()
+                })}.book
+                library.rename("ui-rename",imported.id,"Shared Shelves: No Pancakes")
+                library.setDeleted("ui-trash",imported.id,true)
+                check(library.list().books.isEmpty())
+                val refused=try {library.prepareBook(imported.id);false} catch(_:IllegalStateException) {true}
+                check(refused)
+                val duplicate=library.importBook("duplicate",{original.inputStream()})
+                check(duplicate.deleted && duplicate.displayTitle=="Shared Shelves: No Pancakes")
+                library.setDeleted("ui-restore",imported.id,false)
+                val preferences=VersionedJson("""{"version":1,"fontSize":24}""")
+                library.applyPreferences(imported.id,preferences)
+                library.savePosition("ui-position",imported.id,VersionedJson("""{"version":1,"section":0,"offset":0}"""))
+                val before=history(file(id+"_a"))
+                val prepared=withContext(Dispatchers.Main) {library.prepareBook(imported.id)}
+                check(prepared.preferences==preferences && RecoveryFiles.digest(prepared.file)==imported.id)
+                check(history(file(id+"_a"))==before) // Opening must not author a new position or edit.
+                library.release(prepared);check(!prepared.file.exists())
+                check(RecoveryFiles.digest(original)==imported.id)
+                imported
+            } else s.withReader {r ->r.imports.importBook("real-book",context.cacheDir,
                 {File(context.cacheDir,"asset-$run.epub").inputStream()})}
             check(book.id==args.getString("bookHash") && book.byteLength>2L*ASSET_CHUNK_BYTES)
             delay(500);check(requests.get()==paused)
@@ -257,6 +283,14 @@ internal class MixedTransportQualification(private val context:Context,private v
             check(rows(f,"SELECT tbl,pk,site_id,op_seq,op_ts FROM rhizome_row_meta ORDER BY tbl,pk").toString()==expected.getValue("versions").jsonPrimitive.content)
             check(s.withReader {it.books.list()}.single().book.id==expected.getValue("book").jsonPrimitive.content)
             check(!s.withReader {it.books.list()}.single().contentReady)
+            if(libraryMode) {
+                val library=s.readerLibraryForQualification(context.cacheDir)
+                val book=library.list().books.single()
+                check(book.displayTitle=="Shared Shelves: No Pancakes" && !book.contentReady)
+                check(library.preferences(book.book.id)==null) // Typography stays local to its device.
+                val refused=try {library.prepareBook(book.book.id);false} catch(_:IllegalStateException) {true}
+                check(refused)
+            }
             check(s.remoteApplied.value==0L) // No reader navigation/reflow notification.
             if(assets) download(s,expected.getValue("book").jsonPrimitive.content,true)
             save(JsonObject(expected+mapOf("replica" to JsonPrimitive(s.readerIdentity().second),"process" to JsonPrimitive(process),
@@ -292,6 +326,15 @@ internal class MixedTransportQualification(private val context:Context,private v
                     override fun write(b:ByteArray,off:Int,len:Int) {digest.update(b,off,len)}
                 })}
                 check(digest.digest().joinToString("") {"%02x".format(it)}==args.getString("bookHash"))
+                if(libraryMode) {
+                    val library=s.readerLibraryForQualification(context.cacheDir)
+                    val unchanged=history(f)
+                    val prepared=withContext(Dispatchers.Main) {library.prepareBook(expected.getValue("book").jsonPrimitive.content)}
+                    check(prepared.snapshot.displayTitle=="Shared Shelves: No Pancakes")
+                    check(RecoveryFiles.digest(prepared.file)==args.getString("bookHash"))
+                    check(history(f)==unchanged)
+                    library.release(prepared);check(!prepared.file.exists())
+                }
             }
             s.save(Stroke(points=listOf(StrokePoint(41,42,500,0))));s.readerIdentity()
             check(rows(f,"SELECT COUNT(*) FROM rhizome_outbox").single().single()==if(revoked) "2" else "1")

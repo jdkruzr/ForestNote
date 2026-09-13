@@ -5,6 +5,9 @@ after [D33 native row/asset transport](2026-09-13-forestread-android-asset-sched
 
 ## Owner and lifecycle boundary
 
+Follow-up: [D35 shared-library UI access](2026-09-13-forestread-shared-library-access.md) adds
+the owner-bound book/import/resource handoff. Actual renderer and annotation UI attachment remain next.
+
 One `ForegroundSyncDriver` belongs to the existing `MixedSyncCoordinator` and `NotebookStore`.
 It starts paused and offline. The host supplies foreground and route availability; both must be
 true before work starts. Repeated identical state notifications do nothing. Real transitions

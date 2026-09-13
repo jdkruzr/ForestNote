@@ -137,6 +137,8 @@ try {
       'app/notes/src/main/kotlin/com/forestnote/app/notes/NotebookStore.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/MixedSyncCoordinator.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/ForegroundSyncDriver.kt',
+      'app/notes/src/main/kotlin/com/forestnote/app/notes/ReaderLibraryAccess.kt',
+      'app/notes/src/test/kotlin/com/forestnote/app/notes/ReaderLibraryAccessTest.kt',
       'app/notes/src/test/kotlin/com/forestnote/app/notes/ForegroundSyncDriverTest.kt',
       'core/format/src/test/kotlin/com/forestnote/core/format/LocalCommitNotificationTest.kt',
       'app/notes/src/test/kotlin/com/forestnote/app/notes/MixedSyncStoreTest.kt',

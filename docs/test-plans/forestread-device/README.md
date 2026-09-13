@@ -546,3 +546,23 @@ JVM tests** and **12 host tests**; those counts are separate from the device pha
 Final headless regression: `/tmp/forestread-stage-2-4Qkhqi/report.json`, **190 Kotlin tests**,
 61 process scenarios, eight unchanged originals, Go race/parity checks and 182 matching source
 hashes. The pending 47-case acceptance adapter remains distinct from these executed regressions.
+
+## D35: shared-library repository/resource handoff
+
+[Design, limits and checkpoint](../../design-plans/2026-09-13-forestread-shared-library-access.md).
+Run `library-run.mjs` with the same serial, UB, route and book arguments as `foreground-run.mjs`.
+This opt-in mode invokes the UI-facing API from the main dispatcher while import/cache I/O stays
+off-main. It checks rename/trash/restore/re-import, local typography, explicit position saves,
+non-authoring reads, pending-content refusal and byte-verified renderer inputs on both replicas.
+It is not a visible reader UI or pen test; production activation remains off.
+
+Go 10.3 II: **4/4**, `/tmp/forestread-https-z3j3p0/report.json`, 24 matching sources and chunk
+indices 0–4 exactly once in each direction. Awake-only: **21/21**,
+`/tmp/forestread-device-pfXf1L/report.json`; secure sleep/wake is not rerun in this mode.
+Lab APK SHA-256: `ec78584cc2fb00dad6a6f2a3b86a806344d85a459f1913eacd0f8a66060ab05f`;
+instrumentation: `bacd4c9e27d267eaf1d21210bc63ae52e33d9fbd2f9c7537df7fcb1ccfb5cb54`.
+Normal FN is unchanged and the setup screen is restored, with no remaining ADB reverse mappings.
+
+Regression: **416 app + 294 format JVM tests**, **12 host tests**; full headless report
+`/tmp/forestread-stage-2-5SBzpF/report.json` has 190 Kotlin tests, 61 process scenarios, eight
+unchanged originals and 184 matching source hashes. The 47 pending catalog adapters remain pending.

@@ -124,6 +124,8 @@ class NotebookStore(
     private val writerDispatcher = persistenceExecutor.asCoroutineDispatcher()
     @Volatile private var readerRuntime: ReaderRuntime? = null
     @Volatile private var mixedSync: MixedSyncCoordinator? = null
+    private var readerLibrary:ReaderLibraryAccess?=null
+    private var readerCachePath:String?=null
     private val lifecycleLock = Any()
     private var readerForeground = false
     private var closing = false
@@ -194,6 +196,14 @@ class NotebookStore(
     internal suspend fun <T> withReader(block: suspend (ReaderStorage)->T):T {
         val runtime=onDb {requireNotNull(readerRuntime) {"Reader storage is gated off"}}
         return block(runtime.storage)
+    }
+    /** Same-owner UI boundary. The gate does not activate storage or enroll a library. */
+    internal fun readerLibraryForQualification(cacheDirectory:File):ReaderLibraryAccess = synchronized(lifecycleLock) {
+        check(!closing && qualifyReaderStorage) {"Reader storage is gated off or closing"}
+        check(readerCachePath==null || readerCachePath==cacheDirectory.absolutePath) {"Reader cache owner changed"}
+        readerLibrary ?: ReaderLibraryAccess({withReader {it}},cacheDirectory).also {
+            readerLibrary=it;readerCachePath=cacheDirectory.absolutePath
+        }
     }
     fun resumeReaderWork() = synchronized(lifecycleLock) {
         if (!closing) { readerForeground=true; readerRuntime?.resume();mixedSync?.foregroundChanged(true) }
@@ -1107,6 +1117,7 @@ class NotebookStore(
         }
         CoroutineScope(Dispatchers.Default).launch {
             try {
+                readerLibrary?.close()
                 mixedSync?.close()
                 runtime?.close()
                 persistenceExecutor.execute {
