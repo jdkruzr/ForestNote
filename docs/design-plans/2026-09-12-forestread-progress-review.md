@@ -223,8 +223,10 @@ the headless result does not activate production integration.
    UI using those intents, not a whole-snapshot adapter. Production activation remains off.
    **D38 shared ink surface:** [native reuse and physical checkpoint](2026-09-13-forestread-shared-ink-surface.md)
    moves the tested native surface/preview code into `core/ink`, adds exact gesture-delta callbacks
-   and a gated drawing-only session probe. Physical pen input and subsequent document-slice/Penu
-   attachment remain explicit next steps; this is not the completed contextual editor.
+   and a gated drawing-only session probe. A real 851-point stroke survives isolated-process restart
+   and unfinished-session reopening with identical database contents and no duplicate edits.
+   Physical-panel confirmation and subsequent document-slice/Penu attachment remain explicit next
+   steps; this is not the completed contextual editor.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

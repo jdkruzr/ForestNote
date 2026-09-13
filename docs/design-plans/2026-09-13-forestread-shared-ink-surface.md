@@ -54,7 +54,7 @@ error/retry/recovery UI and editor navigation locks before sustained handwriting
 Incoming sync must not reflow or replace an active drawing surface. Repeat on the Viwoods backend
 before production activation. Main-FN Penu cleanup and production rollout remain gated.
 
-## Automated evidence and pending human input
+## Automated evidence and physical persistence checkpoint
 
 - Go 10.3 II: **21/21 native surface/preview/worker tests** in the isolated FN package,
   `/tmp/forestread-d38-native-ink.log`. They include exact gesture deltas/input gating, canonical
@@ -74,6 +74,19 @@ before production activation. Main-FN Penu cleanup and production rollout remain
   test APK `eaef585ff1f44099f5543067ba3bf3d9b78c2e8bcd732e68857e2d56b68307f7`.
   Certificate-matched in-place updates only. The interactive qualification library is local-only;
   a synthetic book/open session was created for the probe, not enrolled with any UB.
-- The screen reached **Ready · 0 Saved Strokes**. One continuous physical squiggle has been
-  requested; its persistence/reopen check is still pending. Leave the checkmark untouched until
-  that unfinished-session recovery check is recorded.
+- The user drew one continuous physical squiggle and confirmed pen-up after saving. The closed
+  isolated database contains **one stroke with 851 canonical points**, including pressure and
+  point dynamics. After leaving the settled probe, force-stopping only the qualification app and
+  reopening, the same unfinished session renders the curve and reports **Ready · 1 Saved Strokes**.
+- Closed database copies before/after that reopen both pass `integrity_check`; their complete
+  SQLite `.dump` outputs are identical. The session remains `open`, the outbox remains at four
+  rows / sequence 4, and reopening authors no duplicate edits. Evidence:
+  `/tmp/forestread-d38-written.db`, `/tmp/forestread-d38-reopened.db`, and corresponding
+  `/tmp/forestread-d38-written.png` / `/tmp/forestread-d38-reopened.png` screenshots.
+  Stroke `01M2CN5TBZJS93E7YW76B0S1QT` retains point SHA-256
+  `47664e05a99b7ad9574c9645e7b388cf1579848cca9a5885f0158e7b44c0c76f`
+  and dynamics SHA-256 `d91c66ae336da9e9bc05770eb802c406cfe144b3cf5162ef10b2f51cfbae97a4`.
+- The probe has been reopened again with the original stroke visible; neither Finish nor Cancel
+  was tapped. Persistence/reopen is verified, but physical-panel appearance still needs the user's
+  confirmation. Screenshots do not establish absence of e-ink ghosting. This is saved-stroke
+  recovery, not a kill-during-write or sustained-input qualification.
