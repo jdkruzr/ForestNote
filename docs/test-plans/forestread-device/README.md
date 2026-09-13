@@ -1,4 +1,4 @@
-# D23–D36: disposable Android storage, upgrade and HTTPS qualification
+# D23–D38: disposable Android storage, upgrade and HTTPS qualification
 
 Returns to [D22's hardware handoff](../../design-plans/2026-09-12-forestread-android-foundation.md)
 and [the larger plan, item 3](../../design-plans/2026-09-12-forestread-progress-review.md#recommended-next-order).
@@ -6,6 +6,18 @@ and [the larger plan, item 3](../../design-plans/2026-09-12-forestread-progress-
 Newest attachment: [D36's actual shared-library renderer host](../../design-plans/2026-09-13-forestread-renderer-host.md).
 `renderer-run.mjs` adds real WebView open/settings/Contents/recreation to the disposable real-book
 round trip. It is explicitly opt-in; ordinary storage suites do not claim renderer or pen coverage.
+
+[D38](../../design-plans/2026-09-13-forestread-shared-ink-surface.md) also shares the native ink
+tests with the standalone lab. After installing the opted-in isolated APK pair:
+
+```sh
+adb -s SERIAL shell am instrument -w -r \
+  -e class com.forestnote.readerlab.ReaderInkSurfaceTest,com.forestnote.readerlab.LabInkWorkerTest,com.forestnote.readerlab.LabPreviewTest \
+  com.forestnote.qualification.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+These are injected-input/pixel/worker checks. **Shared Ink Session Check** in the isolated setup
+screen is the separate physical drawing probe; its human-input result must be recorded separately.
 
 ## Isolation and scope
 

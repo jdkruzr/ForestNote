@@ -22,11 +22,13 @@ class SetupQualificationActivity: Activity() {
         state?.getString("reason")?.let {saved->runCatching {view.selectedReason=Reason.valueOf(saved)}}
         val reader=Button(this).apply {text="Open ForestRead";isEnabled=false
             setOnClickListener {startActivity(Intent(this@SetupQualificationActivity,ReaderHostQualificationActivity::class.java))}}
+        val ink=Button(this).apply {text="Shared Ink Session Check";isEnabled=false
+            setOnClickListener {startActivity(Intent(this@SetupQualificationActivity,ReaderInkQualificationActivity::class.java))}}
         setContentView(LinearLayout(this).apply {
             orientation=LinearLayout.VERTICAL;setBackgroundColor(android.graphics.Color.WHITE)
-            addView(reader);addView(ScrollView(this@SetupQualificationActivity).apply {addView(view)})
+            addView(reader);addView(ink);addView(ScrollView(this@SetupQualificationActivity).apply {addView(view)})
         })
-        ui.launch {host.state.collect {view.render(it);reader.isEnabled=it.status in setOf(SetupStatus.LOCAL_ONLY,SetupStatus.SELECTED)}}
+        ui.launch {host.state.collect {view.render(it);reader.isEnabled=it.status in setOf(SetupStatus.LOCAL_ONLY,SetupStatus.SELECTED);ink.isEnabled=reader.isEnabled}}
     }
     override fun onSaveInstanceState(out:Bundle) {out.putString("reason",view.selectedReason.name);super.onSaveInstanceState(out)}
     override fun onDestroy() {ui.cancel();super.onDestroy()}

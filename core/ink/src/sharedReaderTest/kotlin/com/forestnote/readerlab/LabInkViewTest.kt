@@ -13,7 +13,7 @@ import org.junit.Test
 import java.io.File
 
 /** Exercises the actual native sink, without launching an Activity or modifying saved notes. */
-class LabInkViewTest {
+class ReaderInkSurfaceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private class BatchBackend : InkBackend by GenericBackend() {
         var commits = 0
@@ -21,13 +21,13 @@ class LabInkViewTest {
         override fun ownsInput() = true
         override fun commitInkStroke(bitmap: Bitmap, viewLocation: IntArray, dirtyRect: Rect) { commits++; dirty = Rect(dirtyRect) }
     }
-    private fun view(backend: InkBackend = BatchBackend()) = LabInkView(instrumentation.targetContext, backend).apply {
+    private fun view(backend: InkBackend = BatchBackend()) = ReaderInkSurface(instrumentation.targetContext, backend).apply {
         sliceEnd = 2400f
         layout(0, 0, 1012, 243)
     }
-    private fun capture(view: LabInkView) = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).also { view.draw(Canvas(it)) }
+    private fun capture(view: ReaderInkSurface) = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).also { view.draw(Canvas(it)) }
     private fun sample(p: StrokePoint, offset: Int = 0) = InkSample(p.x, p.y - offset, p.pressure, p.timestampMs, p.tiltRadians, p.orientationRadians)
-    private fun feed(view: LabInkView, points: List<StrokePoint>, kind: BrushKind = BrushKind.FOUNTAIN, offset: Int = 0) {
+    private fun feed(view: ReaderInkSurface, points: List<StrokePoint>, kind: BrushKind = BrushKind.FOUNTAIN, offset: Int = 0) {
         view.begin(Tool.Pen, PenParams(Stroke.COLOR_BLACK, 7, 35, false, kind))
         points.forEachIndexed { i, p -> view.accept(sample(p, offset), when (i) {
             0 -> InkPhase.DOWN
@@ -52,6 +52,24 @@ class LabInkViewTest {
         assertFalse(blank.sameAs(capture(view)))
     }
 
+    @Test fun exactGestureDeltasAndInputGateDoNotRequireSnapshotDiffs() {
+        lateinit var surface:ReaderInkSurface
+        val committed=mutableListOf<Stroke>();val erased=mutableSetOf<String>()
+        instrumentation.runOnMainSync {
+            surface=view().apply {strokeCommitted={committed+=it};strokesErased={erased+=it}}
+            feed(surface,points(10));assertEquals(surface.strokes.single(),committed.single())
+            surface.inputEnabled={false};feed(surface,points(10));assertEquals(1,committed.size)
+            surface.erase(listOf(sample(committed.single().points.first())),Tool.StrokeEraser)
+            assertTrue(erased.isEmpty())
+            surface.inputEnabled={true}
+            surface.erase(listOf(sample(committed.single().points.first())),Tool.StrokeEraser)
+        }
+        awaitInkWork(surface)
+        instrumentation.runOnMainSync {
+            assertEquals(setOf(committed.single().id),erased);assertTrue(surface.strokes.isEmpty());surface.releasePreview()
+        }
+    }
+
     @Test fun incrementalCommitMatchesFullCanonicalReplayForEveryBrush() = instrumentation.runOnMainSync {
         val view = view()
         for (kind in BrushKind.entries) {
@@ -64,7 +82,7 @@ class LabInkViewTest {
 
     @Test fun expandedSliceCommitsReuseBitmapAndDirtyRectContainsEveryChangedPixel() = instrumentation.runOnMainSync {
         val backend = BatchBackend()
-        val view = LabInkView(instrumentation.targetContext, backend).apply {
+        val view = ReaderInkSurface(instrumentation.targetContext, backend).apply {
             sliceStart = 12000f; sliceEnd = 24034f; layout(0, 0, 1376, 1656)
         }
         val before = IntArray(view.width * view.height)
@@ -111,7 +129,7 @@ class LabInkViewTest {
     }
 
     @Test fun unchangedGeometryAndReconcileReuseCanonicalBitmap() {
-        lateinit var view: LabInkView
+        lateinit var view: ReaderInkSurface
         var invalidated = 0; var geometryCount = 0
         instrumentation.runOnMainSync {
         view = view()
@@ -157,7 +175,7 @@ class LabInkViewTest {
         var worstMs = 0L; var count = 0
         val started = SystemClock.elapsedRealtime()
         for (file in files) {
-            val saved = InkJson.read(JSONObject(file.readText()).getJSONArray("strokes"))
+            val saved = ReaderInkJson.read(JSONObject(file.readText()).getJSONArray("strokes"))
             for (stroke in saved) {
                 val start = SystemClock.elapsedRealtime()
                 feed(view, stroke.points, stroke.brushKind)

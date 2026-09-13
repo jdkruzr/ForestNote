@@ -1,10 +1,10 @@
-package com.forestnote.readerlab
+package com.forestnote.core.ink
 
 import com.forestnote.core.ink.*
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal object InkJson {
+object ReaderInkJson {
     fun read(array: JSONArray): List<Stroke> = (0 until array.length()).map { i ->
         val s = array.getJSONObject(i)
         val points = s.getJSONArray("points")

@@ -21,6 +21,7 @@ android {
     if (providers.gradleProperty("readerQualification").orNull == "true") {
         testBuildType = "qualification"
         sourceSets.getByName("androidTest").java.srcDir("src/qualificationTest/kotlin")
+        sourceSets.getByName("androidTest").java.srcDir("../../core/ink/src/sharedReaderTest/kotlin")
     }
 
     defaultConfig {

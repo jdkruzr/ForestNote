@@ -1,6 +1,7 @@
 plugins { id("forestnote.android.application") }
 
 android {
+    sourceSets.getByName("androidTest").java.srcDir("../../core/ink/src/sharedReaderTest/kotlin")
     buildFeatures { buildConfig = true }
     namespace = "com.forestnote.readerlab"
     defaultConfig {

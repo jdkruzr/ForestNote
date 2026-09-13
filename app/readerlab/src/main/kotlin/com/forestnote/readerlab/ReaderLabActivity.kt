@@ -32,8 +32,8 @@ class ReaderLabActivity : AppCompatActivity() {
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
     private lateinit var inkHost: FrameLayout
-    private lateinit var ink: LabInkView
-    private lateinit var backend: LabPreviewBackend
+    private lateinit var ink: ReaderInkSurface
+    private lateinit var backend: ReaderPreviewBackend
     private var surface: SurfaceView? = null
     private var annotation: JSONObject? = null
     private var activeBook = ""
@@ -99,13 +99,13 @@ class ReaderLabActivity : AppCompatActivity() {
         root = FrameLayout(this)
         web = WebView(this)
         root.addView(web, FrameLayout.LayoutParams(-1, -1)); setContentView(root)
-        backend = LabPreviewBackend(BackendDetector.detect(this).backend)
+        backend = ReaderPreviewBackend(BackendDetector.detect(this).backend)
         inkHost = FrameLayout(this).apply { visibility = View.GONE }
         if (backend.requiresInputSurface()) {
             surface = SurfaceView(this)
             inkHost.addView(surface, FrameLayout.LayoutParams(-1, -1))
         }
-        ink = LabInkView(this, backend)
+        ink = ReaderInkSurface(this, backend)
         inkHost.addView(ink, FrameLayout.LayoutParams(-1, -1)); root.addView(inkHost)
         backend.attachHost(ink); backend.setInputSuspended(true)
         ink.changed = { saveInk() }
@@ -160,7 +160,7 @@ class ReaderLabActivity : AppCompatActivity() {
                     try {
                         val decoded = JSONObject(payload)
                         val strokeData = if (decoded.optString("type") in listOf("startInk", "recognize"))
-                            decoded.optJSONObject("annotation")?.getJSONArray("strokes")?.let(InkJson::read) else null
+                            decoded.optJSONObject("annotation")?.getJSONArray("strokes")?.let(ReaderInkJson::read) else null
                         // Ordered decoder -> ordered main queue. Only View/firmware application is on main.
                         runOnUiThread {
                             if (!isDestroyed) try { handle(decoded, strokeData) }
@@ -254,9 +254,9 @@ class ReaderLabActivity : AppCompatActivity() {
     private fun setTool(message: JSONObject) {
         val kind = runCatching { BrushKind.valueOf(message.optString("pen", ink.params.brushKind.name)) }.getOrDefault(BrushKind.FOUNTAIN)
         val width = message.optInt("width", ink.params.wMax).coerceIn(7, 250)
-        ink.params = labPenParams(kind, width)
-        backend.setMode(runCatching { LabPreviewBackend.Mode.valueOf(message.optString("preview", backend.mode.name)) }
-            .getOrDefault(LabPreviewBackend.Mode.AUTO))
+        ink.params = readerPenParams(kind, width)
+        backend.setMode(runCatching { ReaderPreviewBackend.Mode.valueOf(message.optString("preview", backend.mode.name)) }
+            .getOrDefault(ReaderPreviewBackend.Mode.AUTO))
         ink.tool = if (message.optBoolean("erase")) Tool.StrokeEraser else Tool.Pen
         backend.updatePen(ink.params); backend.setActiveTool(ink.tool)
         // A matched preview is an ordinary View: do not leave a firmware SurfaceView hole or
@@ -366,7 +366,7 @@ class ReaderLabActivity : AppCompatActivity() {
         val publication = inkPublisher.invalidate()
         io.execute {
             try {
-                val result = JSONObject().put("type", "ink").put("id", id).put("revision", changedRevision).put("strokes", InkJson.write(strokes))
+                val result = JSONObject().put("type", "ink").put("id", id).put("revision", changedRevision).put("strokes", ReaderInkJson.write(strokes))
                     .put("recovered", recovered)
                 val atomic = AtomicFile(checkpointFile(book, id))
                 val stream = atomic.startWrite()
@@ -376,7 +376,7 @@ class ReaderLabActivity : AppCompatActivity() {
                 // bridge serialization and IndexedDB snapshots coalesce until the pen rests.
                 runOnUiThread { if (!isDestroyed) inkPublisher.offer(publication) {
                     val started = android.os.SystemClock.elapsedRealtimeNanos()
-                    val preview = LabInkView.preview(strokes, width, height)
+                    val preview = ReaderInkSurface.preview(strokes, width, height)
                     val output = ByteArrayOutputStream()
                     try { check(preview.compress(Bitmap.CompressFormat.PNG, 100, output)) }
                     finally { preview.recycle() }
@@ -393,7 +393,7 @@ class ReaderLabActivity : AppCompatActivity() {
         io.execute {
             val saved = runCatching { JSONObject(AtomicFile(checkpointFile(book, id)).openRead().bufferedReader().use { it.readText() }) }.getOrNull() ?: return@execute
             if (saved.optInt("revision") <= expectedRevision) return@execute
-            val decoded = runCatching { InkJson.read(saved.getJSONArray("strokes")) }
+            val decoded = runCatching { ReaderInkJson.read(saved.getJSONArray("strokes")) }
                 .onFailure { Log.e("ReaderLab", "checkpoint decode", it); report("Could not decode saved ink checkpoint") }
                 .getOrNull() ?: return@execute
             runOnUiThread {

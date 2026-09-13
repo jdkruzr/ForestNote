@@ -14,7 +14,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-internal fun awaitInkWork(view: LabInkView) {
+internal fun awaitInkWork(view: ReaderInkSurface) {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val deadline = SystemClock.elapsedRealtime() + 10000
     while (SystemClock.elapsedRealtime() < deadline) {
@@ -49,16 +49,16 @@ class LabInkWorkerTest {
             check(Looper.myLooper() == Looper.getMainLooper()); presentations++
         }
     }
-    private fun view(backend: Backend, executor: GateExecutor) = LabInkView(instrumentation.targetContext, backend, executor).apply {
+    private fun view(backend: Backend, executor: GateExecutor) = ReaderInkSurface(instrumentation.targetContext, backend, executor).apply {
         sliceEnd = 2400f; layout(0, 0, 1012, 243)
     }
     private fun stroke(id: String, y: Int, kind: BrushKind = BrushKind.FOUNTAIN) = Stroke(id = id,
         points = (100..9000 step 50).map { StrokePoint(it, y, 500, it.toLong()) }, brushKind = kind)
-    private fun capture(view: LabInkView) = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).also { view.draw(Canvas(it)) }
+    private fun capture(view: ReaderInkSurface) = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).also { view.draw(Canvas(it)) }
 
     @Test fun emptyCanvasReadinessNotifiesInputGateWithoutSchedulingHistoryWork() = main {
         val executor = GateExecutor(); val backend = Backend()
-        val view = LabInkView(instrumentation.targetContext, backend, executor)
+        val view = ReaderInkSurface(instrumentation.targetContext, backend, executor)
         val readiness = mutableListOf<Boolean>()
         view.workStateChanged = { readiness.add(view.canvasReady) }
         view.sliceEnd = 2400f; view.layout(0, 0, 1012, 243)
@@ -68,7 +68,7 @@ class LabInkWorkerTest {
     }
 
     @Test fun replayCoalescesAndRejectsOldInkAndGeometryWhileMainRemainsResponsive() {
-        val executor = GateExecutor(); val backend = Backend(); lateinit var view: LabInkView
+        val executor = GateExecutor(); val backend = Backend(); lateinit var view: ReaderInkSurface
         var initial = 0
         try {
             main {
@@ -97,7 +97,7 @@ class LabInkWorkerTest {
     }
 
     @Test fun erasesStayOrderedLockedAndDurableBeforeUnlockAndNeverPresentBehindMenus() {
-        val executor = GateExecutor(); val backend = Backend(); lateinit var view: LabInkView
+        val executor = GateExecutor(); val backend = Backend(); lateinit var view: ReaderInkSurface
         val events = mutableListOf<String>()
         try {
             main {
@@ -131,7 +131,7 @@ class LabInkWorkerTest {
     }
 
     @Test fun staleEraseCannotRemoveStrokesFromReplacementSession() {
-        val executor = GateExecutor(); val backend = Backend(); lateinit var view: LabInkView
+        val executor = GateExecutor(); val backend = Backend(); lateinit var view: ReaderInkSurface
         try {
             main {
                 view = view(backend, executor); view.strokes = mutableListOf(stroke("same-id", 700)); view.repaint()
@@ -148,7 +148,7 @@ class LabInkWorkerTest {
     }
 
     @Test fun hardwareErasePublishesWholeStrokesBeforeLiftAndKeepsInputDuringWorkerWork() {
-        val executor = GateExecutor(); val backend = Backend(); lateinit var view: LabInkView
+        val executor = GateExecutor(); val backend = Backend(); lateinit var view: ReaderInkSurface
         val events = mutableListOf<Boolean>()
         var beforeLastErase = 0
         try {

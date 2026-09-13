@@ -1,5 +1,11 @@
 # ForestNote Reader Lab
 
+Shared native components now live in `core/ink` (`ReaderInkSurface`, `ReaderPreviewBackend`,
+`readerPenParams`); their shared Android tests are in `core/ink/src/sharedReaderTest`.
+See [D38's integration checkpoint](../../docs/design-plans/2026-09-13-forestread-shared-ink-surface.md).
+The standalone lab retains its original temporary persistence; the gated FN reader/probe use
+the owner-bound shared repository path instead. Neither is production activation.
+
 Isolated EPUB/MOBI rendering and inline native-handwriting experiment. Android package
 `com.forestnote.readerlab` has its own private storage. It does not open the production
 ForestNote database, connect to Rhizome, or change UltraBridge.

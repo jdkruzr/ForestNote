@@ -1,4 +1,4 @@
-package com.forestnote.readerlab
+package com.forestnote.core.ink
 
 import android.content.Context
 import android.graphics.*
@@ -15,7 +15,7 @@ import kotlin.math.roundToInt
 import kotlin.math.ceil
 
 /** One visible slice of one persistent canvas. Offsets are in virtual units, never saved pixels. */
-internal class LabInkView(context: Context, private val backend: InkBackend,
+class ReaderInkSurface(context: Context, private val backend: InkBackend,
     private val inkExecutor: ExecutorService = Executors.newSingleThreadExecutor { task -> Thread(task, "ReaderLab/InkWorker") },
 ) : View(context), LiveHardwareEraserSink {
     val transform = PageTransform()
@@ -31,6 +31,11 @@ internal class LabInkView(context: Context, private val backend: InkBackend,
     var params = PenParams(Stroke.COLOR_BLACK, 7, 35, false)
     var tool: Tool = Tool.Pen
     var changed: (() -> Unit)? = null
+    /** Exact gesture deltas; consumers enqueue persistence without diffing a saved snapshot. */
+    var strokeCommitted: ((Stroke) -> Unit)? = null
+    var strokesErased: ((Set<String>) -> Unit)? = null
+    var inputEnabled: () -> Boolean = { true }
+    var eraseEnabled: Boolean = true
     var strokeState: ((Boolean) -> Unit)? = null
     var workStateChanged: (() -> Unit)? = null
     var workerError: ((String) -> Unit)? = null
@@ -44,33 +49,33 @@ internal class LabInkView(context: Context, private val backend: InkBackend,
     private var paintedGeometry: InkWorkerGeometry? = null
     private var paintedRevision = -1L
     private var paintedSession = -1L
-    internal var fullReplayCount = 0
+    var fullReplayCount = 0
         private set
-    internal var commitBitmapCopies = 0
+    var commitBitmapCopies = 0
         private set
     private fun geometry() = InkWorkerGeometry(width, height, canvasWidth, sliceStart, sliceEnd)
     private var replayBusy = false
     private var failedReplay: Pair<Long, InkWorkerGeometry>? = null
     private var eraseBusy = false
     private var eraseGesture = false
-    internal var hardwareEraseGesture = false
+    var hardwareEraseGesture = false
         private set
     private var eraseSession = false
     private var eraseInputSession = -1L
     private val queuedErase = mutableListOf<InkErasePath>()
-    internal val workPending get() = replayBusy || eraseBusy || queuedErase.isNotEmpty()
-    internal val canvasReady get() = bitmap != null && paintedSession == session && paintedRevision == inkRevision && paintedGeometry == configuredGeometry && configuredGeometry == geometry()
-    internal var replayThread = ""
+    val workPending get() = replayBusy || eraseBusy || queuedErase.isNotEmpty()
+    val canvasReady get() = bitmap != null && paintedSession == session && paintedRevision == inkRevision && paintedGeometry == configuredGeometry && configuredGeometry == geometry()
+    var replayThread = ""
         private set
-    internal var eraseThread = ""
+    var eraseThread = ""
         private set
-    private val matchedPreview get() = (backend as? LabPreviewBackend)?.matched == true
+    private val matchedPreview get() = (backend as? ReaderPreviewBackend)?.matched == true
     private val previewExecutor = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "ReaderLab/Preview") }
     private val mainHandler = Handler(Looper.getMainLooper())
     private var previewEpoch = 0
     private var previewBusy = false
     private var previewClosed = false
-    internal var previewPointCount = 0
+    var previewPointCount = 0
         private set
     private var previewFrames = 0
     private var worstPreviewUs = 0L
@@ -201,7 +206,7 @@ internal class LabInkView(context: Context, private val backend: InkBackend,
         invalidate()
     }
     /** One immutable snapshot in flight; new samples are coalesced until it finishes. No history replay. */
-    internal fun renderMatchedPreview() {
+    fun renderMatchedPreview() {
         if (previewBusy || previewClosed || width < 1 || height < 1) return
         val snapshot = builder?.toStroke() ?: return
         val background = bitmap ?: return
@@ -255,6 +260,7 @@ internal class LabInkView(context: Context, private val backend: InkBackend,
         this.tool = tool; this.params = penParams
     }
     override fun accept(sample: InkSample, phase: InkPhase) {
+        if(phase==InkPhase.DOWN && !inputEnabled()) return
         val x = sample.vx.coerceIn(0, canvasWidth)
         val localY = sample.vy.coerceIn(0, (sliceEnd - sliceStart).roundToInt())
         if (phase == InkPhase.DOWN) {
@@ -285,7 +291,7 @@ internal class LabInkView(context: Context, private val backend: InkBackend,
             backend.endStroke()
             if (!dirty.isEmpty) bitmap?.let { backend.commitInkStroke(it, location(), dirty) }
             Log.d("ReaderLab/Commit", "points=${completed.points.size} dirty=${dirty.width()}x${dirty.height()} canvas=${width}x$height copies=$commitBitmapCopies mainUs=${(SystemClock.elapsedRealtimeNanos() - commitStart) / 1000}")
-            inStroke = false; changed?.invoke(); strokeState?.invoke(false)
+            inStroke = false; strokeCommitted?.invoke(completed); changed?.invoke(); strokeState?.invoke(false)
         } else if (!backend.ownsInput()) {
             schedulePreview()
         }
@@ -296,12 +302,14 @@ internal class LabInkView(context: Context, private val backend: InkBackend,
         cancelPreview(); builder = null; inStroke = false; backend.endStroke(); strokeState?.invoke(false); invalidate()
     }
     override fun erase(samples: List<InkSample>, tool: Tool) {
+        if(!eraseEnabled || !inputEnabled()) return
         val path = samples.map { it.vx to (it.vy + sliceStart).roundToInt() }
         eraseAt(path)
     }
     override fun acceptHardwareEraser(sample: InkSample, phase: InkPhase) {
+        if(!eraseEnabled || !inputEnabled()) return
         if (phase == InkPhase.DOWN) {
-            if (workPending || !canvasReady || inStroke || previewClosed) return
+            if (!inputEnabled() || workPending || !canvasReady || inStroke || previewClosed) return
             erasePath.clear(); eraseGesture = true; hardwareEraseGesture = true
         }
         if (!hardwareEraseGesture || eraseInputSession != session && eraseSession) return
@@ -337,6 +345,7 @@ internal class LabInkView(context: Context, private val backend: InkBackend,
                 if (!previewClosed && epoch == session) result.onSuccess { ids ->
                     if (ids.isNotEmpty()) {
                         committedStrokes = committedStrokes.filterNot { it.id in ids }.toMutableList(); inkRevision++
+                        strokesErased?.invoke(ids)
                         changed?.invoke() // Authoritative edit/checkpoint precedes session unlock.
                         ensurePainted()
                         // Removing the final stroke paints a blank canvas synchronously;
@@ -364,10 +373,12 @@ internal class LabInkView(context: Context, private val backend: InkBackend,
         if (event.actionMasked == MotionEvent.ACTION_DOWN) Log.d("ReaderLab/Preview", "down tool=${event.getToolType(0)} source=${event.source} local=${event.x},${event.y} matched=$matchedPreview")
         val isPen = event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS || event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER
         if (!isPen) return false
+        if(!inputEnabled()) {if(inStroke) cancel();return true}
         val erasing = tool == Tool.StrokeEraser || event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER || event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY)
+        if(erasing && !eraseEnabled) return true
         // Direct Viwoods now feeds hardware erasing too; don't ingest duplicate MotionEvents.
         if (backend.ownsInput() && tool == Tool.Pen && (!erasing ||
-            (backend as? LabPreviewBackend)?.ownsHardwareErase == true)) return true
+            (backend as? ReaderPreviewBackend)?.ownsHardwareErase == true)) return true
         // Missing axes must remain null, not a fabricated zero that overrides fallback nib angles.
         fun axis(axis: Int, history: Int? = null): Float? = event.device?.getMotionRange(axis, event.source)?.let {
             if (history == null) event.getAxisValue(axis) else event.getHistoricalAxisValue(axis, history)

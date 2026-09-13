@@ -1,12 +1,12 @@
-package com.forestnote.readerlab
+package com.forestnote.core.ink
 
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.view.View
 import com.forestnote.core.ink.*
 
-/** Lab-only A/B switch. Production Boox routing and saved brush semantics are untouched. */
-internal class LabPreviewBackend(
+/** Explicit preview routing for the shared reader surface; ordinary writer routing is unchanged. */
+class ReaderPreviewBackend(
     private val native: InkBackend,
     private val canSwitch: Boolean = native is BooxInkBackend,
     private val vendorDirect: Boolean = native is ViwoodsBackend,

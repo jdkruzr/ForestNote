@@ -141,6 +141,12 @@ try {
       'app/notes/src/test/kotlin/com/forestnote/app/notes/ReaderLibraryAccessTest.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/ReaderHostView.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/ReaderResourcePolicy.kt',
+      'app/notes/src/main/kotlin/com/forestnote/app/notes/ReaderInkCodec.kt',
+      'app/notes/src/qualification/kotlin/com/forestnote/app/notes/ReaderInkQualificationActivity.kt',
+      ...['ReaderInkSurface','ReaderPreviewBackend','ReaderPenParams','ReaderInkJson','InkWorkerGeometry']
+        .map(name=>`core/ink/src/main/kotlin/com/forestnote/core/ink/${name}.kt`),
+      ...['LabInkViewTest','LabInkWorkerTest','LabPreviewTest']
+        .map(name=>`core/ink/src/sharedReaderTest/kotlin/com/forestnote/readerlab/${name}.kt`),
       'app/notes/src/test/kotlin/com/forestnote/app/notes/ReaderResourcePolicyTest.kt',
       'app/readerlab/src/main/assets/readerlab/shared-reader.html',
       'app/readerlab/src/main/assets/readerlab/shared-reader.js',

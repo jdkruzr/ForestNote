@@ -4,6 +4,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
+import com.forestnote.core.ink.BrushKind
 import com.forestnote.core.reader.*
 import io.rhizome.core.assetDigest
 import kotlinx.coroutines.*
@@ -225,6 +226,20 @@ class ReaderLibraryAccessTest {
             val append=async(start=CoroutineStart.UNDISPATCHED) {a.appendAnnotationStroke("append",session,input)}
             input.points.fill(0);append.await()
             assertContentEquals(expected,a.annotation("annotation")!!.strokes.single().columns["points"] as ByteArray)
+        } finally {s.shutdown()}
+    }
+
+    @Test fun nativeInkCodecRoundTripsEveryBrushAndDynamicsThroughSharedStorage()=runBlocking<Unit> {
+        val s=open(File(temp.root,"native-codec.db"))
+        try {
+            val a=s.readerLibraryForQualification(temp.root);val book=a.importBook("import",{bytes().inputStream()}).book.id
+            val session=a.createAnnotation("create","annotation",book,"session",anchor,10000,2000)
+            val originals=BrushKind.entries.map {kind ->Stroke(id=kind.wireId,
+                points=listOf(StrokePoint(100,200,400,1234567890123L,null,null),StrokePoint(120,230,650,1234567890133L,0.5f,-0.25f)),
+                brushKind=kind,brushSeed=-42)}
+            for(stroke in originals) a.appendAnnotationStroke(stroke.id,session,ReaderInkCodec.encode(stroke))
+            a.finishAnnotation("finish",session)
+            assertEquals(originals,a.annotation("annotation")!!.strokes.map(ReaderInkCodec::decode))
         } finally {s.shutdown()}
     }
 }

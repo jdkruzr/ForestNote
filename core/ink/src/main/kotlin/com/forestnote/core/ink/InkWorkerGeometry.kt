@@ -1,4 +1,4 @@
-package com.forestnote.readerlab
+package com.forestnote.core.ink
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -10,11 +10,11 @@ import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 /** renderSegment uses absolute screen pixels; commit/reconcile use bitmap-local bounds. */
-internal fun inkScreenBounds(width: Int, height: Int, location: IntArray) =
+fun inkScreenBounds(width: Int, height: Int, location: IntArray) =
     Rect(location[0], location[1], location[0] + width, location[1] + height)
 
 /** Immutable inputs; no Views, firmware objects or shared drawing state cross this boundary. */
-internal data class InkWorkerGeometry(val width: Int, val height: Int, val canvasWidth: Int, val start: Float, val end: Float) {
+data class InkWorkerGeometry(val width: Int, val height: Int, val canvasWidth: Int, val start: Float, val end: Float) {
     fun transform() = PageTransform().apply {
         val vh = (end - start).roundToInt().coerceAtLeast(1)
         updatePage(width, ceil(width.toDouble() * vh / canvasWidth).toInt(), canvasWidth, vh)
@@ -29,9 +29,9 @@ internal data class InkWorkerGeometry(val width: Int, val height: Int, val canva
     }
 }
 
-internal data class InkErasePath(val points: List<Pair<Int, Int>>, val radius: Int)
+data class InkErasePath(val points: List<Pair<Int, Int>>, val radius: Int)
 
-internal fun erasedStrokeIds(strokes: List<Stroke>, paths: List<InkErasePath>): Set<String> {
+fun erasedStrokeIds(strokes: List<Stroke>, paths: List<InkErasePath>): Set<String> {
     // Prepare segments once per path, not once per stroke (and not once per historical MOVE).
     val prepared = paths.map { it to it.points.zipWithNext() }
     return strokes.filter { stroke -> prepared.any { (path, segments) ->
