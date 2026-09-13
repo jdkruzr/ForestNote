@@ -30,9 +30,10 @@ class ReaderHostQualificationActivity:Activity() {
                     startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE);type="*/*"
                     },41)
-                },{backend?.refreshUiFrame(it)},{ReaderHostQualificationSession.rendered=it})
+                },{backend?.refreshUiFrame(it)},{ReaderHostQualificationSession.rendered=it},backend)
                 host=view;ReaderHostQualificationSession.view=view
                 setContentView(view)
+                if(resumed) view.resume()
                 if(resumed) owner.resumeReaderWork() else owner.pauseReaderWork()
             } catch(e:CancellationException) {throw e}
             catch(_:Exception) {setContentView(TextView(this@ReaderHostQualificationActivity).apply {text="Shared Reader Unavailable. Return To Library Setup."})}
@@ -54,8 +55,13 @@ class ReaderHostQualificationActivity:Activity() {
             catch(_:Exception) {android.widget.Toast.makeText(this@ReaderHostQualificationActivity,"Import Failed; Original File Preserved",android.widget.Toast.LENGTH_LONG).show()}
         }
     }
-    override fun onResume() {super.onResume();resumed=true;store?.resumeReaderWork()}
-    override fun onPause() {resumed=false;store?.pauseReaderWork();super.onPause()}
+    override fun onResume() {super.onResume();resumed=true;store?.resumeReaderWork();host?.resume()}
+    override fun onPause() {resumed=false;host?.pause();store?.pauseReaderWork();super.onPause()}
+    @Deprecated("Qualification guards the active document edit")
+    override fun onBackPressed() {
+        if(host?.editing==true) {android.widget.Toast.makeText(this,"Finish Or Cancel Writing First",android.widget.Toast.LENGTH_SHORT).show();return}
+        super.onBackPressed()
+    }
     override fun onDestroy() {
         ui.cancel();host?.let {ReaderHostQualificationSession.cleanup=it.dispose()}
         ReaderHostQualificationSession.view=null;backend?.release();super.onDestroy()

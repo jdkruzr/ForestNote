@@ -18,6 +18,8 @@ internal class ReaderAnnotationSession internal constructor(
     internal val owner:ReaderLibraryAccess,val id:String,val annotation:String,val book:String,
 )
 
+internal data class ReaderDocumentEdit(val queue:ReaderEditQueue,val metadata:String,val canvasY:Double)
+
 /** Disposable renderer input, never a new source of library truth. Release after closing
  * the renderer; a second lease allows navigation to prepare without deleting the old frame.
  */
@@ -38,6 +40,8 @@ internal class ReaderLibraryAccess(
     private val cacheGate=Mutex()
     private val editGate=Mutex()
     @Volatile private var editor:ReaderEditQueue?=null
+    @Volatile var documentEdit:ReaderDocumentEdit?=null
+        private set
     private val leases=mutableSetOf<PreparedReaderBook>()
     @Volatile var cacheCleanupFailures:Int=0
         private set
@@ -134,16 +138,43 @@ internal class ReaderLibraryAccess(
     /** One native editor per owner. Reattach to pending/error work instead of loading over it. */
     suspend fun editQueue(session:ReaderAnnotationSession):ReaderEditQueue = request {s ->
         owned(session)
+        editGate.withLock {createQueue(s,session)}
+    }
+    /** An explicit document tap starts a NEW contribution session. It never silently adopts
+     * an older unfinished session (whose Cancel could mask earlier handwriting).
+     * Only the owner-retained document attachment is resumed across View recreation.
+     */
+    suspend fun beginDocumentEdit(book:String,annotation:String,hash:String,command:String,start:Double):ReaderDocumentEdit = request {s ->
         editGate.withLock {
+            documentEdit?.let {
+                check(it.queue.session.book==book && it.queue.session.annotation==annotation) {"Finish the active document edit first"}
+                return@withLock it
+            }
+            check(s.books.open(book)?.deleted==false && s.projections.book(annotation)==book)
+            val projection=checkNotNull(s.projections.read(annotation))
+            check(projection.visible && projection.status==ProjectionStatus.READY && projection.inputHash==hash)
+            require(start.isFinite() && start>=0 && start<checkNotNull(projection.effectiveHeight))
+            check(editor?.state?.value?.settled!=false) {"Previous editor still has unsaved work"}
+            val metadata=ReaderAnnotationPresentation.metadata(projection).toString()
+            val session="document-$command"
+            s.edits.beginSession(command,session,annotation)
+            ReaderDocumentEdit(createQueue(s,boundSession(s,session)),metadata,start).also {documentEdit=it}
+        }
+    }
+    fun acknowledgeDocumentEdit(edit:ReaderDocumentEdit) {
+        check(edit.queue.state.value.terminalCommitted)
+        if(documentEdit===edit) documentEdit=null
+    }
+    private suspend fun createQueue(s:ReaderStorage,session:ReaderAnnotationSession):ReaderEditQueue {
             editor?.let {old ->
-                if(old.session.id==session.id && !old.state.value.sealed) return@withLock old
+                if(old.session.id==session.id && !old.state.value.sealed) return old
                 check(old.state.value.settled) {"Previous editor still has unsaved work"}
                 old.close()
             }
             check(s.edits.resumeSession(session.id)?.columns?.get("state")=="open") {"Session is terminal"}
             val projection=checkNotNull(s.projections.read(session.annotation))
             check(projection.status==ProjectionStatus.READY && projection.visible) {"Annotation is not ready for editing"}
-            ReaderEditQueue(session,projection.strokes.map(ReaderInkCodec::decode),{command,edit ->
+            return ReaderEditQueue(session,projection.strokes.map(ReaderInkCodec::decode),{command,edit ->
                 // Captured owner storage remains alive until queue.close drains this stream.
                 // No fresh public NotebookStore request is needed during owner shutdown.
                 when(edit) {
@@ -153,7 +184,6 @@ internal class ReaderLibraryAccess(
                     is ReaderQueuedEdit.End -> if(edit.cancel) s.edits.cancel(command,session.id) else s.edits.finish(command,session.id)
                 }
             }).also {editor=it}
-        }
     }
 
     /** Stream off-main and verify the complete cache copy before exposing it.

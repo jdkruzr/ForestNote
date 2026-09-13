@@ -36,7 +36,7 @@ export function createInkSlices(reader, rpc, current, report) {
         again = false; let painted = false;
         for (const [element, job] of desired) {
           if (element.dataset.sharedInkKey === job.key) continue;
-          const valid = () => element.isConnected && desired.get(element)?.key === job.key && current()?.token === job.token;
+          const valid = () => !reader.editingId && element.isConnected && desired.get(element)?.key === job.key && current()?.token === job.token;
           try {
             if (!valid()) continue;
             const tile = await rpc('inkSlice', job);
@@ -61,6 +61,7 @@ export function createInkSlices(reader, rpc, current, report) {
     } finally { running = false; }
   }
   function update({ slots }) {
+    if(reader.editingId) return; // Freeze existing document pixels while native ink owns its slice.
     const previous = desired; desired = new Map(); const book = current();
     if (book && reader.doc && !reader.opening && !reader.editingId) {
       const elements = [...reader.doc.querySelectorAll('[data-annotation]')];

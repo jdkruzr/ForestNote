@@ -159,6 +159,29 @@ class ReaderLibraryAccessTest {
         } finally {q?.close();s.shutdown()}
     }
 
+    @Test fun documentEditsAreBookScopedFreshSessionsAndRetainedUntilTerminalAcknowledgement()=runBlocking<Unit> {
+        val s=open(File(temp.root,"document-edit.db"))
+        try {
+            val a=s.readerLibraryForQualification(temp.root)
+            val book=a.importBook("book",{bytes().inputStream()}).book.id
+            val other=a.importBook("other",{bytes("Other").inputStream()}).book.id
+            val old=a.createAnnotation("create","note",book,"older-open",anchor,10000,1000)
+            a.appendAnnotationStroke("old",old,ink("old"))
+            val hash=a.annotation("note")!!.inputHash!!
+            assertFails {a.beginDocumentEdit(other,"note",hash,"wrong",0.0)}
+            assertFails {a.beginDocumentEdit(book,"note","stale","stale",0.0)}
+            val edit=a.beginDocumentEdit(book,"note",hash,"tap",0.0)
+            assertNotEquals(old.id,edit.queue.session.id)
+            edit.queue.append(checkNotNull(edit.queue.reserveGesture()),Stroke(id="new",points=listOf(StrokePoint(1,2,500,3))))
+            assertSame(edit,a.beginDocumentEdit(book,"note",hash,"recreated-view",0.0))
+            assertFails {a.acknowledgeDocumentEdit(edit)}
+            assertTrue(edit.queue.end(true));withTimeout(5000) {edit.queue.awaitSettled()}
+            assertEquals(listOf("old"),a.annotation("note")!!.strokes.map {it.id})
+            assertEquals(SessionState.OPEN,a.annotationSessionState(old.id))
+            a.acknowledgeDocumentEdit(edit);assertNull(a.documentEdit)
+        } finally {s.shutdown()}
+    }
+
     @Test fun boundedPagesAndLeasesCannotDeleteAnotherOwnersCache()=runBlocking<Unit> {
         val s=open(File(temp.root,"pages.db"));val other=open(File(temp.root,"other.db"))
         try {

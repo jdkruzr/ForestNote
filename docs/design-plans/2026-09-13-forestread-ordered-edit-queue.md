@@ -113,4 +113,7 @@ app `7daf9e337082c24fabc083a4d48f191360016391b157f1fd6e67590803c36479`,
 test `ae311bdbdc3e4df7f537d33836cc0ce48e35a50c360e144ec160279d7a8cb997`;
 installed hashes match. The closed interactive database remains `.dump`-identical to the six-stroke
 burst snapshot (`/tmp/forestread-d40-fountain-preserved.db`). Normal FN's package path/library hash
-remain unchanged. Physical judgment of the new fountain preview is the next handoff.
+remain unchanged. The user subsequently confirmed the fountain build is “looking excellent.”
+At the D41 baseline there are ten additional fountain strokes, sixteen strokes total, nineteen
+outbox rows / sequence nineteen, and the same open original session (`/tmp/forestread-d41-before.db`).
+The next attachment is [D41 in-document editing](2026-09-13-forestread-document-ink.md).

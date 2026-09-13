@@ -237,6 +237,11 @@ the headless result does not activate production integration.
    accepted work across View recreation and drains before owner closure. The separate drawing
    probe uses this path; pending RAM is not a process-death journal. Contextual in-document input,
    eraser reservation and compact editing controls remain next; production activation is still off.
+   **D41 in-document native input:** [slice attachment and session controls](2026-09-13-forestread-document-ink.md)
+   attaches the same native surface/ordered queue to existing visible handwriting regions, with
+   compact header Finish/Cancel, locked navigation, fresh contribution-scoped sessions and
+   owner-retained View recreation. New highlight/note creation, Penu/eraser/grow and Viwoods
+   acceptance remain next; this still does not activate the production reader.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

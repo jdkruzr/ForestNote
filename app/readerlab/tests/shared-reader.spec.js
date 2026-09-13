@@ -14,6 +14,11 @@ test('saved shared annotations compose into the book with native tiles and width
     window.calls = [];
     window.ForestRead = { postMessage(data) {
       const r = JSON.parse(data); calls.push(r); let result = null;
+      if(r.action==='editDetach' && window.failNextReadback) window.failAnnotations=true;
+      if(r.action==='annotations' && window.failAnnotations) {
+        window.failAnnotations=false;window.failNextReadback=false;
+        queueMicrotask(()=>ForestRead.onmessage({data:JSON.stringify({id:r.id,error:'Simulated Readback Failure'})}));return;
+      }
       if (r.action === 'list') result = { books: [{ id: 'a'.repeat(64), title: 'Shared Ink', ready: true }], next: null };
       if (r.action === 'open') result = { book: r.book, title: 'Shared Ink', token: 'lease', url: '/shared-ink.epub', mediaType: 'application/epub+zip' };
       if (r.action === 'annotations') result = { annotations: [{ id: 'note', status: 'READY', width: 10000, height: 6000, highlightPresent: false, hasInk: true, inputHash: 'canonical', anchor: { version: 1, section: 0, start: 0, end: 11, quote: 'Write here.' } }], next: null };
@@ -50,6 +55,25 @@ test('saved shared annotations compose into the book with native tiles and width
   state = await rendered(); expect(state.width).toBeLessThanOrEqual(360); expect(state.width / state.height).toBeCloseTo(state.naturalAspect, 2);
   const actions = await page.evaluate(() => calls.map(c => c.action));
   expect(actions.every(a => ['list', 'open', 'annotations', 'inkSlice', 'refresh', 'rendered', 'preferences'].includes(a))).toBe(true);
+  const beforeEdit=await page.locator('#reader').boundingBox();
+  await page.evaluate(()=>document.querySelector('foliate-paginator').getContents()[0].doc.querySelector('[data-annotation]').click());
+  await page.waitForFunction(()=>forestReadState().editAttached);
+  expect(await page.locator('#reader').boundingBox()).toEqual(beforeEdit);
+  for(const id of ['prev','next','library','contents','reading']) await expect(page.locator(`#${id}`)).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Finish Writing',exact:true})).toBeVisible();
+  const controls=await page.locator('#editControls').boundingBox();expect(controls.y+controls.height).toBeLessThanOrEqual(beforeEdit.y);
+  const index=await page.evaluate(()=>forestReadState().index);
+  await page.keyboard.press('ArrowRight');expect(await page.evaluate(()=>forestReadState().index)).toBe(index);
+  expect(await page.evaluate(()=>forestReadState().navigationLocked)).toBe(true);
+  await page.evaluate(()=>window.failNextReadback=true);
+  await page.getByRole('button',{name:'Cancel Edit',exact:true}).click();
+  await expect(page.locator('#status')).toHaveText('Simulated Readback Failure');
+  expect(await page.evaluate(()=>forestReadState().navigationLocked)).toBe(true);
+  await page.getByRole('button',{name:'Retry Ink Save',exact:true}).click();
+  await page.waitForFunction(()=>!forestReadState().editing && forestReadState().inkTiles===1);
+  expect(await page.evaluate(()=>calls.filter(c=>c.action==='editEnd').map(c=>c.cancel))).toEqual([true]);
+  expect(await page.evaluate(()=>calls.filter(c=>c.action==='editDetach').length)).toBe(1);
+  await expect(page.locator('#next')).toBeEnabled();
 });
 
 test('readback refuses oversized or cyclic listings and keeps pending states distinct from empty ink', async ({ page }) => {

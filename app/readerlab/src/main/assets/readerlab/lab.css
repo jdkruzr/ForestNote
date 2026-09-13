@@ -109,3 +109,7 @@ body.reattaching .menuLabel{display:none}body.reattaching #menu{width:var(--menu
 #importProgress{position:fixed;top:calc(var(--reader-toolbar-height) + var(--popup-anchor-gap));left:6px;margin:0;width:340px;max-width:calc(100vw - 12px);padding:0;border:var(--menu-border)}
 #importProgress .menuHeading{padding:0 var(--menu-heading-inset)}#importMessage{font-size:var(--menu-font-choice);white-space:pre-wrap;padding:0 10px;line-height:1.4}
 #importChoices{display:flex;flex-direction:column;gap:6px;padding:0 var(--menu-heading-inset) 8px}#addBundleNotes{border:var(--menu-border-strong);font-weight:600}
+/* Shared native editor replaces the header's controls without resizing the document viewport. */
+body[data-native-edit] header { position: relative; }
+body[data-native-edit] header > :not(#editControls) { visibility: hidden; }
+#editControls:not([hidden]) { position: absolute; inset: 0 auto 0 4px; display: flex; align-items: center; gap: 4px; background: white; }
