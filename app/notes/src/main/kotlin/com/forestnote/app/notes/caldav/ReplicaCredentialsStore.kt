@@ -42,6 +42,19 @@ class ReplicaCredentialsStore(private val backend: KeyValueBackend) {
         save(Record(library, replica, null, null))
     }
 
+    /** Only a private recovery reservation may retry an interrupted NEW DB install.
+     * An existing receipt must still be local-only and match both reserved IDs. */
+    internal fun claimReservedLocal(library: String, replica: String) = synchronized(backend.strictLock) {
+        val old = load(library)
+        if (old == null) claimLocal(library,replica)
+        else {
+            check(old.replica == replica && old.scope == null && old.credential == null) {
+                "Recovery reservation already bound or enrolled"
+            }
+            save(old)
+        }
+    }
+
     fun registration(library: String, replica: String): ReplicaRegistrationState? = synchronized(backend.strictLock) {
         val record = load(library) ?: return@synchronized null
         check(record.replica == replica) { "Private replica identity differs; recovery required" }

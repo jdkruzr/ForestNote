@@ -213,3 +213,31 @@ Installed D27 APK SHA-256 values, verified against the local pair:
 The same debug certificate is retained. The normal app path and original main library-file hash
 remain unchanged. No private-vault reset was performed; old v1 experimental records are preserved
 but are not automatically promoted into v2 ownership receipts. Use fresh qualification run IDs.
+
+## D28: Android recovery preparation
+
+[Design and remaining gates](../../design-plans/2026-09-12-forestread-android-recovery.md).
+The final Go run passes **14 standard phases** in `/tmp/forestread-device-Da7lXC/report.json`.
+The five additional phases cover all four explicit recovery reasons; actual read-only Android
+SQLite/WAL snapshots; drained queued ink; empty replacement identities with actual encrypted
+private ownership; and killed validated-snapshot/closed-fresh stages before publication followed
+by process-separated retry. Source files, archive hashes, manifest identity and interrupted stage
+bytes remain intact. Complete/missing/corrupt/gapped books are classified correctly. Unsupported
+and corrupt files survive inspection failure; archive inspection does not need private-vault access.
+
+The earlier `QshUed` and `3H7wcO` failures are retained and explained in the design note. No fixture
+cleanup, uninstall or credential reset was used to obtain the final passing result.
+
+Local checks pass **392 app + 287 format JVM tests**, four host-runner tests and main/qualification
+APK builds. `/tmp/forestread-stage-2-MNb1y8/report.json` records 186 headless Kotlin tests,
+61 process scenarios, Go race checks and eight byte-identical books; 175 source hashes match.
+
+Installed D28 APK SHA-256 values, checked against the local pair:
+
+- Qualification app: `7a0fb3fdbf9a6438c6ce012ca7797f50a12adc2a46c40f9c57807a77f0e62ee9`
+- Instrumentation: `0eb6a6284217e61e90da052115bd26ebc6b74814eedceb6b1be742fcb6a25765`
+
+Same debug certificate; the isolated app still lacks Internet/external-storage permissions.
+Normal `com.forestnote` APK path and main library-file hash remain unchanged from D23. No active
+library switch, production recovery UI, `/sdcard` migration, actual tablet TLS enrollment, public
+release-signed upgrade, physical power-loss or literal disk-full qualification is implied.

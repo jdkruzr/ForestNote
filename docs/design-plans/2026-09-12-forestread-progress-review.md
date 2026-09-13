@@ -155,6 +155,11 @@ the headless result does not activate production integration.
    a replaced owner. Production activation remains off. Next is the Android read-only recovery
    snapshot/fresh-library workflow and explicit setup UI, then disposable-host TLS enrollment
    qualification and known-prior-registry/mixed-transport activation.
+   **D28 recovery storage:** [read-only archives and fresh preparation](2026-09-12-forestread-android-recovery.md)
+   add a native no-bootstrap archive opener, exclusive recovery ownership, private operation
+   reservations and separate empty working replicas. The gated Android implementation preserves
+   source/pending history and interrupted stages; it does not switch the active library or merge
+   uncertain work. Setup/recovery UI, shared-storage routing and disposable-host tablet TLS are next.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

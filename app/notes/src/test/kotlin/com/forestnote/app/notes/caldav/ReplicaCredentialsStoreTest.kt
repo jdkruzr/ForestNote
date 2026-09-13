@@ -19,6 +19,18 @@ class ReplicaCredentialsStoreTest {
     }
     private val scope=ReplicaCredentialScope("https://ub.example/library","author","library-a","replica-a")
 
+    @Test fun reservedCreationRetriesOnlyExactLocalOwnershipAndNeverResetsEnrollment() {
+        val backend=Backend();val store=ReplicaCredentialsStore(backend)
+        store.claimReservedLocal(scope.library,scope.replica)
+        val before=backend.values.toMap()
+        store.claimReservedLocal(scope.library,scope.replica)
+        assertEquals(before,backend.values)
+        assertFails {store.claimReservedLocal(scope.library,"another-replica")}
+        val credential=store.prepareEnrollment(scope)
+        assertFails {store.claimReservedLocal(scope.library,scope.replica)}
+        assertEquals(credential.token,store.read(scope)!!.token)
+    }
+
     @Test fun missingStaysMissingAndPreparationIsDurableAndRetryStable() {
         val backend=Backend()
         val first=ReplicaCredentialsStore(backend)

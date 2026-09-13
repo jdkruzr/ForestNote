@@ -1,6 +1,22 @@
-# Stage 2 shared-library foundation (through D27)
+# Stage 2 shared-library foundation (through D28)
 
 Current status and remaining integration work: [2026-09-12 plan review](../../design-plans/2026-09-12-forestread-progress-review.md).
+
+## D28: Android read-only recovery and fresh preparation
+
+[D28](../../design-plans/2026-09-12-forestread-android-recovery.md) adds a native no-bootstrap
+archive inspector, exclusive recovery lease, operation-owned private manifests and separate empty
+working replicas with reserved identities and durable private ownership. Original history and
+interrupted stages are retained, never automatically merged or deleted. Production activation,
+active-library switching, shared-storage routing and setup/recovery UI remain gated.
+
+Go 6 II passes **14 phases**, including two recovery kills/restarts, in
+`/tmp/forestread-device-Da7lXC/report.json`. Android JVM checks pass **392 app + 287 format tests**;
+four host-runner tests pass. `/tmp/forestread-stage-2-MNb1y8/report.json` records 186 headless Kotlin
+tests, 61 process scenarios, Go race checks and eight byte-identical books. All 175 recorded source
+hashes match; the newly added Android recovery implementation has separate JVM/device evidence.
+Normal FN package/library data and production UB remain untouched. Next: explicit setup/recovery
+UI and selected-library routing, then real-tablet TLS against a disposable host and mixed activation.
 
 ## D27: Android enrollment and recovery gating
 

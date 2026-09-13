@@ -153,7 +153,12 @@ class NotebookRepository private constructor(
      * handle's transaction implementation is a pass-through. Publish the ONE
      * replacement adapter only after commit; failed installation preserves it.
      */
+    data class ReservedIdentity(val libraryId: String, val actor: String) {
+        init { require(listOf(libraryId,actor).all { it.matches(Regex("[0-9A-HJKMNP-TV-Z]{26}")) }) }
+    }
+
     fun <T> installStorageExtension(registry: Registry, policies: List<IncomingRowPolicy>,
+        reservedIdentity: ReservedIdentity? = null,
         install: (SqliteHandle, SqliteStorageAdapter, String, String) -> T): T {
         check(!closed && !extensionInstalled) { "Storage extension already installed or library closed" }
         check(settings().syncEnabled != true && syncSiteId() == null) { "Mixed-library sync activation is not qualified yet" }
@@ -167,11 +172,12 @@ class NotebookRepository private constructor(
         var candidate: SqliteStorageAdapter? = null
         val result = db.transactionWithResult {
             handle.execute("CREATE TABLE IF NOT EXISTS forestnote_library_identity(id INTEGER PRIMARY KEY CHECK(id=0),library_id TEXT NOT NULL)")
-            handle.execute("INSERT OR IGNORE INTO forestnote_library_identity VALUES(0,?)",listOf(Ulid.generate(clock())))
+            handle.execute("INSERT OR IGNORE INTO forestnote_library_identity VALUES(0,?)",listOf(reservedIdentity?.libraryId ?: Ulid.generate(clock())))
             val libraryId=handle.query("SELECT library_id FROM forestnote_library_identity WHERE id=0") {it.getString("library_id")!!}.single()
             val combined=Registry(ForestNoteRegistry.registry.tables+registry.tables)
             val adapter=SqliteStorageAdapter(handle,combined,clock,incomingPolicies=policies)
-            val actor=runBlocking { adapter.localAuthorId() ?: adapter.siteId() } ?: Ulid.generate(clock())
+            val actor=runBlocking { adapter.localAuthorId() ?: adapter.siteId() } ?: reservedIdentity?.actor ?: Ulid.generate(clock())
+            check(reservedIdentity == null || reservedIdentity == ReservedIdentity(libraryId,actor)) { "Recovery identity reservation mismatch" }
             install(handle,adapter,actor,libraryId).also { candidate=adapter }
         }
         syncStore=requireNotNull(candidate)
@@ -242,6 +248,20 @@ class NotebookRepository private constructor(
             }
             require(Regex("[A-Za-z0-9_-]{1,64}").matches(runId)) { "Invalid qualification run ID" }
             return openAndroidDatabase(app, "reader-qualification-$runId.db", System::currentTimeMillis, true)
+        }
+
+        /** Only NEW recovery stages; archives and published working files never use
+         * this bootstrap entry point. Production routing remains gated off. */
+        fun openRecoveryStageForQualification(context: Context, file: File): NotebookRepository {
+            val app=context.applicationContext
+            check(app.packageName=="com.forestnote.qualification" &&
+                app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0)
+            val root=File(app.filesDir,"reader-recovery").canonicalFile
+            check(file.canonicalFile==file.absoluteFile && file.parentFile.parentFile==root &&
+                file.name.matches(Regex("working-[0-9a-f-]{36}\\.stage")) && !file.exists()) {
+                "New isolated recovery stage required"
+            }
+            return openAndroidDatabase(ExternalStorageContext(app,file.parentFile),file.name,System::currentTimeMillis,true)
         }
 
         private fun openAndroidDatabase(dbContext: Context, filename: String, now: () -> Long,

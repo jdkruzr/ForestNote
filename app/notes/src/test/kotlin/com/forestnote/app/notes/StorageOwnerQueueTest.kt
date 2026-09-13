@@ -14,6 +14,23 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.*
 
 class StorageOwnerQueueTest {
+    @Test fun recoveryExcludesReplacementReservationsUntilItsOwnRelease() {
+        val owner=StorageOwnerQueue()
+        val old=owner.reserve()
+        val recovery=owner.reserveRecovery()
+        assertFailsWith<IllegalStateException> {owner.reserve()}
+        assertFailsWith<IllegalStateException> {owner.reserveRecovery()}
+        old.release(null)
+        recovery.awaitPreviousClose()
+        assertFailsWith<IllegalStateException> {owner.reserve()}
+        recovery.release(null)
+        owner.reserve().also {it.awaitPreviousClose();it.release(null)}
+        recovery.release(null) // idempotent; cannot release a later reservation
+        val failed=owner.reserveRecovery()
+        failed.release(IllegalStateException("uncertain close"))
+        assertFailsWith<ExecutionException> {owner.reserve().awaitPreviousClose()}
+    }
+
     @get:Rule val temp = TemporaryFolder()
     private fun opened(store: NotebookStore): Result<Unit> {
         val result = CompletableFuture<Result<Unit>>()

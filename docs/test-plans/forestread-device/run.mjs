@@ -8,6 +8,11 @@ import {randomUUID} from 'node:crypto';
 export const target = 'com.forestnote.qualification';
 const runner = `${target}.test/androidx.test.runner.AndroidJUnitRunner`;
 const testClass = 'com.forestnote.app.notes.ReaderDeviceQualificationTest';
+const crashVerifiers = new Map([
+    ['crash-install','verify-crash'],
+    ['recovery-kill-snapshot','recovery-verify-snapshot'],
+    ['recovery-kill-fresh','recovery-verify-fresh'],
+]);
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 
 export function parseOptions(args) {
@@ -65,7 +70,9 @@ export async function run(options) {
         }
         report.fingerprint=(await call(['getprop','ro.build.fingerprint'])).output.trim();
         const phases=options['--phase-set']==='upgrade' ? ['upgrade-verify'] :
-            ['smoke','sleep-wake','handoff','enrollment-seed','enrollment-verify','seed','verify','crash-install','verify-crash'];
+            ['smoke','sleep-wake','handoff','enrollment-seed','enrollment-verify',
+                'recovery','recovery-kill-snapshot','recovery-verify-snapshot','recovery-kill-fresh','recovery-verify-fresh',
+                'seed','verify','crash-install','verify-crash'];
         for(const phase of phases) {
             const stopped=await call(['am','force-stop',target]);
             if(stopped.code!==0 || stopped.timedOut) throw new Error('Could not stop the isolated test process');
@@ -74,13 +81,18 @@ export async function run(options) {
                 '-e','runId',report.runId,'-e','invocation',report.invocation,'-e','phase',phase,runner]);
             await writeFile(join(dir,`${phase}.log`),result.output,{flag:'wx'});
             report.phases.push({phase,code:result.code,signal:result.signal,timedOut:result.timedOut,
-                status:phase==='crash-install' ? 'awaiting-rollback-verification' : passed(result) ? 'passed' : 'failed'});
-            if(result.timedOut || (phase!=='crash-install' && !passed(result))) throw new Error(`${phase} failed; see ${dir}`);
+                status:crashVerifiers.has(phase) ? 'awaiting-restart-verification' : passed(result) ? 'passed' : 'failed'});
+            if(result.timedOut || (!crashVerifiers.has(phase) && !passed(result))) throw new Error(`${phase} failed; see ${dir}`);
             // An arbitrary crash is never enough: verify-crash checks the durable
             // armed marker, a different process, rollback, preserved ink and retry.
         }
-        const crash=report.phases.find(p=>p.phase==='crash-install');
-        if(crash) crash.status='verified-by-restart';
+        for(const [crashPhase,verifyPhase] of crashVerifiers) {
+            const crash=report.phases.find(p=>p.phase===crashPhase);
+            if(crash) {
+                if(!report.phases.some(p=>p.phase===verifyPhase && p.status==='passed')) throw new Error(`${crashPhase} lacks restart proof`);
+                crash.status='verified-by-restart';
+            }
+        }
         report.status='passed';
     } catch(error) {
         report.status='failed';report.error=error.message;throw error;

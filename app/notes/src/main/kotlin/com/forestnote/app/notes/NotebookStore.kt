@@ -111,6 +111,8 @@ class NotebookStore(
     /** Internal qualification only; no production factory or UI enables this yet. */
     private val qualifyReaderStorage: Boolean = false,
     private val closeRepository: (NotebookRepository) -> Unit = { it.close() },
+    /** Supplied only by an operation-owned, private recovery reservation. */
+    private val recoveryIdentity: NotebookRepository.ReservedIdentity? = null,
 ) {
     // Written and read only on the executor thread, so no synchronization is needed.
     private var repo: NotebookRepository? = null
@@ -140,12 +142,15 @@ class NotebookStore(
                 try {
                     if(qualifyReaderStorage) {
                         val newIdentity = !opened.hasSharedLibraryIdentity()
-                        val attached=opened.installStorageExtension(ReaderSchema.registry,listOf(ReaderIncomingPolicy())) { db,adapter,actor,libraryId ->
+                        val attached=opened.installStorageExtension(ReaderSchema.registry,listOf(ReaderIncomingPolicy()),recoveryIdentity) { db,adapter,actor,libraryId ->
                             val storage = ReaderStorage.attachOnWriter(db,writerDispatcher,actor,adapter)
                             // Private ownership must be durable before the new DB identity commits.
                             // Failure rolls the database transaction back; an orphan private receipt
                             // after process loss never licenses a copied/existing library identity.
-                            if (newIdentity) secureCredentials?.replicas?.claimLocal(libraryId, actor)
+                            if (newIdentity) {
+                                if (recoveryIdentity == null) secureCredentials?.replicas?.claimLocal(libraryId, actor)
+                                else requireNotNull(secureCredentials).replicas.claimReservedLocal(libraryId,actor)
+                            }
                             storage to libraryId
                         }
                         // Publish/start only after commit, never while installation can roll back.

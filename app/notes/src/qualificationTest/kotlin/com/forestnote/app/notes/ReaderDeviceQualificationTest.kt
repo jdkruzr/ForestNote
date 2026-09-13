@@ -13,6 +13,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.core.app.ActivityScenario
 import com.forestnote.app.notes.caldav.*
 import com.forestnote.app.notes.enrollment.*
+import com.forestnote.app.notes.recovery.*
 import com.forestnote.core.format.NotebookRepository
 import com.forestnote.core.ink.Stroke
 import com.forestnote.core.ink.StrokePoint
@@ -22,6 +23,7 @@ import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import org.junit.Test
 import java.util.UUID
+import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -77,6 +79,11 @@ class ReaderDeviceQualificationTest {
                 "handoff" -> closeHandoff()
                 "enrollment-seed" -> enrollmentSeed()
                 "enrollment-verify" -> enrollmentVerify()
+                "recovery" -> recovery()
+                "recovery-kill-snapshot" -> recoveryKill("snapshot")
+                "recovery-verify-snapshot" -> recoveryVerify("snapshot")
+                "recovery-kill-fresh" -> recoveryKill("fresh")
+                "recovery-verify-fresh" -> recoveryVerify("fresh")
                 "seed" -> seed()
                 "verify" -> verifyRestart()
                 "crash-install" -> crashInstall()
@@ -85,6 +92,144 @@ class ReaderDeviceQualificationTest {
                 else -> error("Unknown qualification phase: $phase")
             }
         }
+    }
+
+    private suspend fun recovery() {
+        val id="${runId}_recovery"
+        val owner=StorageOwnerQueue()
+        val secrets=credentials()
+        check(!database(id).exists())
+        val original=NotebookStore.createOwned(owner,repoProvider={NotebookRepository.openIsolatedQualification(context,id)},
+            poster={it.run()},secureCredentials=secrets,qualifyReaderStorage=true)
+        val identity=original.readerIdentity()
+        original.save(Stroke(points=listOf(StrokePoint(51,52,500,0))))
+        original.withReader {it.setDeleted("recovery",LifecycleTarget.BOOK,"b".repeat(64),true)}
+        val pending=history(id)
+        // Also prove that a save accepted immediately before recovery is drained.
+        original.save(Stroke(points=listOf(StrokePoint(53,54,500,0))))
+        val service=LibraryRecoveryCoordinator.forQualification(context,owner,secrets)
+        val first=service.prepare(database(id),"${runId}_COPY",LibraryRecoveryPolicy.Reason.COPY,original) {
+            check(Looper.myLooper()!=Looper.getMainLooper())
+            check(runCatching {owner.reserve()}.isFailure) {"Activity replacement escaped recovery lease"}
+        }
+        check(first.archive.inspection.strokes==2L && first.archive.inspection.pending==3L)
+        check(first.identity.libraryId!=identity.first && first.identity.actor!=identity.second)
+        check(first.archive.inspection.identity?.libraryId==identity.first)
+        check(history(id)!=pending)
+        val before=RecoveryFiles.digest(database(id))
+        val identities=mutableSetOf(first.identity)
+        for(reason in LibraryRecoveryPolicy.Reason.entries) {
+            val prepared=service.prepare(database(id),"${runId}_${reason.name}",reason)
+            if(reason!=LibraryRecoveryPolicy.Reason.COPY) check(identities.add(prepared.identity))
+            check(prepared==service.prepare(database(id),"${runId}_${reason.name}",reason))
+            check(prepared.archive.inspection.pending==3L && prepared.archive.inspection.strokes==2L)
+            check(prepared.requiresEnrollment && prepared.reconciliation=="not_reconciled")
+            check(secrets.replicas.registration(prepared.identity.libraryId,prepared.identity.actor)==ReplicaRegistrationState.LOCAL_ONLY)
+            val fresh=AndroidRecoveryDatabase().inspect(prepared.working)
+            check(fresh.pending==0L && fresh.strokes==0L && fresh.books.isEmpty())
+        }
+        check(RecoveryFiles.digest(database(id))==before)
+        // Archive inspection still works with unavailable private credentials and source.
+        val inaccessible=SecureCredentialsStore(object:KeyValueBackend {
+            override fun getString(key:String):String?=error("No private access during inspection")
+            override fun putString(key:String,value:String):Unit=error("No writes")
+            override fun remove(key:String):Unit=error("No deletion")
+            override fun readStrict(key:String):String?=error("Vault unavailable")
+            override fun putDurably(key:String,value:String):Boolean=error("No private writes")
+        })
+        val offline=LibraryRecoveryCoordinator.forQualification(context,StorageOwnerQueue(),inaccessible)
+        check(offline.inspect(first.archive.file)==first.archive)
+        check(RecoveryFiles.digest(first.archive.file)==first.archive.sha256)
+        recoveryWal(id)
+        instrumentation.sendStatus(0,Bundle().apply {
+            putString("recovery","four explicit reasons; empty fresh replicas; archive and queued ink preserved; read-only WAL snapshot")
+        })
+    }
+
+    private fun recoveryWal(id: String) {
+        // Deliberately keep a real synthetic SQLite WAL open. Never an FN repository
+        // alongside this connection; normal source owner above has fully closed.
+        val source=database(id).canonicalFile
+        SQLiteDatabase.openDatabase(source.path,null,SQLiteDatabase.OPEN_READWRITE).use { live ->
+            check(live.enableWriteAheadLogging())
+            live.rawQuery("PRAGMA wal_autocheckpoint=0",null).use {check(it.moveToFirst() && it.getInt(0)==0)}
+            live.execSQL("CREATE TABLE recovery_wal_probe(id INTEGER PRIMARY KEY, value BLOB)")
+            live.execSQL("INSERT INTO recovery_wal_probe VALUES(1,?)",arrayOf(byteArrayOf(0,1,2,-1)))
+            for((index,label) in listOf("complete","missing","corrupt","gap").withIndex()) {
+                val bytes=byteArrayOf(index.toByte(),5,6)
+                val asset=io.rhizome.core.assetDigest(bytes)
+                live.execSQL("INSERT INTO reader_book(id,asset_id,byte_length,media_type,metadata_json) VALUES(?,?,?,?,'{}')",
+                    arrayOf(label,asset,bytes.size,"application/epub+zip"))
+                if(label!="missing") live.execSQL("INSERT INTO rhizome_asset_chunk(asset_id,chunk_index,sha256,bytes) VALUES(?,?,?,?)",
+                    arrayOf(asset,if(label=="gap") 1 else 0,if(label=="corrupt") "0".repeat(64) else asset,bytes))
+            }
+            check(File(source.path+"-wal").length()>0)
+            val before=RecoveryFiles.digest(source)
+            val wal=RecoveryFiles.digest(File(source.path+"-wal"))
+            val target=File(context.filesDir,"$id-wal-snapshot.db").canonicalFile
+            val db=AndroidRecoveryDatabase()
+            db.snapshot(source,target)
+            val inspected=db.inspect(target)
+            check(inspected.pending==3L && inspected.books.size==4)
+            check(inspected.books.filter {it.complete}.map {it.id}==listOf("complete"))
+            SQLiteDatabase.openDatabase(target.path,null,SQLiteDatabase.OPEN_READONLY).use { snapshot ->
+                snapshot.rawQuery("SELECT value FROM recovery_wal_probe WHERE id=1",null).use {
+                    check(it.moveToFirst() && it.getBlob(0).contentEquals(byteArrayOf(0,1,2,-1)))
+                }
+                check(runCatching {snapshot.execSQL("DELETE FROM stroke")}.isFailure)
+            }
+            check(RecoveryFiles.digest(source)==before && RecoveryFiles.digest(File(source.path+"-wal"))==wal)
+            SQLiteDatabase.openDatabase(target.path,null,SQLiteDatabase.OPEN_READWRITE).use {it.version+=1}
+            val unsupported=RecoveryFiles.digest(target)
+            check(runCatching {db.inspect(target)}.isFailure)
+            check(RecoveryFiles.digest(target)==unsupported)
+            val corrupt=File(context.filesDir,"$id-corrupt.db").canonicalFile
+            check(!corrupt.exists());corrupt.writeText("not a SQLite database")
+            val corruptHash=RecoveryFiles.digest(corrupt)
+            check(runCatching {db.inspect(corrupt)}.isFailure)
+            check(corrupt.exists() && RecoveryFiles.digest(corrupt)==corruptHash)
+        }
+    }
+
+    private suspend fun recoveryKill(checkpoint:String) {
+        val id="${runId}_rc_$checkpoint"
+        check(!database(id).exists())
+        val s=store(id)
+        s.save(Stroke(points=listOf(StrokePoint(61,62,500,0))))
+        val identity=s.readerIdentity()
+        s.shutdown()
+        val before=RecoveryFiles.digest(database(id))
+        LibraryRecoveryCoordinator.forQualification(context,StorageOwnerQueue(),credentials())
+            .prepare(database(id),id,LibraryRecoveryPolicy.Reason.HISTORICAL_RESTORE) {
+                if(it==checkpoint) {
+                    val dir=File(context.filesDir,"reader-recovery/$id")
+                    saveEvidence(id,buildJsonObject {
+                        put("invocation",invocation);put("process",processNonce);put("checkpoint",checkpoint)
+                        put("source",before);put("library",identity.first);put("replica",identity.second)
+                        put("manifest",File(dir,"request.json").readText())
+                        put("stages",JsonObject(dir.listFiles()!!.filter {f->f.extension=="stage"}.associate {f->f.name to JsonPrimitive(RecoveryFiles.digest(f))}))
+                    })
+                    Process.killProcess(Process.myPid())
+                    error("Expected isolated process death")
+                }
+            }
+        error("Recovery checkpoint was not reached")
+    }
+
+    private suspend fun recoveryVerify(checkpoint:String) {
+        val id="${runId}_rc_$checkpoint"
+        val evidence=loadEvidence(id)
+        check(evidence.getValue("invocation").jsonPrimitive.content==invocation && evidence.getValue("process").jsonPrimitive.content!=processNonce)
+        check(evidence.getValue("checkpoint").jsonPrimitive.content==checkpoint)
+        val dir=File(context.filesDir,"reader-recovery/$id")
+        check(File(dir,"request.json").readText()==evidence.getValue("manifest").jsonPrimitive.content)
+        val service=LibraryRecoveryCoordinator.forQualification(context,StorageOwnerQueue(),credentials())
+        val prepared=service.prepare(database(id),id,LibraryRecoveryPolicy.Reason.HISTORICAL_RESTORE)
+        check(prepared==service.prepare(database(id),id,LibraryRecoveryPolicy.Reason.HISTORICAL_RESTORE))
+        check(prepared.archive.inspection.strokes==1L && prepared.archive.inspection.pending==1L)
+        check(prepared.identity.libraryId!=evidence.getValue("library").jsonPrimitive.content && prepared.identity.actor!=evidence.getValue("replica").jsonPrimitive.content)
+        check(RecoveryFiles.digest(database(id))==evidence.getValue("source").jsonPrimitive.content)
+        for((name,hash) in evidence.getValue("stages").jsonObject) check(RecoveryFiles.digest(File(dir,name))==hash.jsonPrimitive.content)
     }
 
     private suspend fun enrollmentSeed() {
