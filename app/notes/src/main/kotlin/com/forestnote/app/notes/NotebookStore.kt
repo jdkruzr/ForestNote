@@ -123,7 +123,7 @@ class NotebookStore(
     // Its worker is joined before the final driver-close task is submitted.
     private val writerDispatcher = persistenceExecutor.asCoroutineDispatcher()
     @Volatile private var readerRuntime: ReaderRuntime? = null
-    private var mixedSync: MixedSyncCoordinator? = null
+    @Volatile private var mixedSync: MixedSyncCoordinator? = null
     private val lifecycleLock = Any()
     private var readerForeground = false
     private var closing = false
@@ -145,7 +145,8 @@ class NotebookStore(
                         val newIdentity = !opened.hasSharedLibraryIdentity()
                         val attached=opened.installStorageExtension(ReaderSchema.registry,listOf(ReaderIncomingPolicy()),recoveryIdentity,
                             allowEnabledShared=true) { db,adapter,actor,libraryId ->
-                            val storage = ReaderStorage.attachOnWriter(db,writerDispatcher,actor,adapter)
+                            val storage = ReaderStorage.attachOnWriter(db,writerDispatcher,actor,adapter,
+                                onLocalCommit={opened.afterWriterCommit {mixedSync?.localChanged(references=true)}})
                             // Private ownership must be durable before the new DB identity commits.
                             // Failure rolls the database transaction back; an orphan private receipt
                             // after process loss never licenses a copied/existing library identity.
@@ -157,6 +158,7 @@ class NotebookStore(
                                 com.forestnote.app.notes.caldav.ReplicaRegistrationState.ENROLLED) {"Enabled shared library requires private enrollment; recovery required"}
                             storage to libraryId
                         }
+                        opened.localCommitListener={mixedSync?.localChanged()}
                         // Publish/start only after commit, never while installation can roll back.
                         synchronized(lifecycleLock) {
                             if (!closing) readerRuntime=ReaderRuntime(attached.first,attached.second).also {
@@ -194,10 +196,11 @@ class NotebookStore(
         return block(runtime.storage)
     }
     fun resumeReaderWork() = synchronized(lifecycleLock) {
-        if (!closing) { readerForeground=true; readerRuntime?.resume() }
+        if (!closing) { readerForeground=true; readerRuntime?.resume();mixedSync?.foregroundChanged(true) }
     }
     fun pauseReaderWork() = synchronized(lifecycleLock) {
         readerForeground=false; readerRuntime?.pause()
+        mixedSync?.foregroundChanged(false)
     }
     internal suspend fun readerWorkStatus(): String = onDb { requireNotNull(readerRuntime).status.value }
     internal suspend fun readerIdentity(): Pair<String,String> = onDb {
@@ -216,6 +219,11 @@ class NotebookStore(
             credentials = requireNotNull(secureCredentials).replicas,
             transport = transport,
         )
+
+    /** Internal lab gate only. One coordinator per owner, including competing callers. */
+    internal fun foregroundSyncForQualification(server:String,account:String):ForegroundSyncDriver = synchronized(lifecycleLock) {
+        mixedSyncForQualification().foregroundFor(server,account).also {it.foreground(readerForeground)}
+    }
 
     /** Internal lab gate only. One coordinator per owner, including competing callers. */
     internal fun mixedSyncForQualification(

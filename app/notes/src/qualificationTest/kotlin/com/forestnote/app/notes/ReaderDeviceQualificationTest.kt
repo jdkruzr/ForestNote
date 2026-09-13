@@ -73,7 +73,7 @@ class ReaderDeviceQualificationTest {
     @Test fun qualification() = runBlocking<Unit> {
         check(context.packageName == "com.forestnote.qualification") { "Refusing non-isolated target" }
         check(Looper.myLooper() != Looper.getMainLooper())
-        withTimeout(if(args.getString("phase")?.let {it.startsWith("assets-") || it=="sleep-wake-manual"}==true) 180_000 else 45_000) {
+        withTimeout(if(args.getString("phase")?.let {it.startsWith("assets-") || it=="foreground-seed" || it=="sleep-wake-manual"}==true) 180_000 else 45_000) {
             when(val phase=args.getString("phase") ?: "smoke") {
                 "smoke" -> smoke()
                 "sleep-wake" -> sleepWake()
@@ -89,6 +89,7 @@ class ReaderDeviceQualificationTest {
                 "mixed-reopen" -> MixedTransportQualification(context,args,runId,invocation,processNonce).reopen(false)
                 "mixed-revoked" -> MixedTransportQualification(context,args,runId,invocation,processNonce).reopen(true)
                 "assets-seed" -> MixedTransportQualification(context,args,runId,invocation,processNonce).seed(true)
+                "foreground-seed" -> MixedTransportQualification(context,args,runId,invocation,processNonce).foregroundSeed()
                 "assets-pull" -> MixedTransportQualification(context,args,runId,invocation,processNonce).pull(true)
                 "assets-reopen" -> MixedTransportQualification(context,args,runId,invocation,processNonce).reopen(false,true)
                 "assets-revoked" -> MixedTransportQualification(context,args,runId,invocation,processNonce).reopen(true,true)

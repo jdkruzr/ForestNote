@@ -198,6 +198,13 @@ the headless result does not activate production integration.
    sleep/wake follow-up now passes with the user's normal unlock, 0–6 ms lifecycle hooks and no
    main-thread disk violations; neither the screen lock nor normal FN data was changed.
    Foreground lifecycle driving and reader UI attachment remain next, with production gates off.
+   **D34 foreground driver:** [shared-owner lifecycle and commit signals](2026-09-13-forestread-foreground-sync.md)
+   add one coalescing trigger layer over Rhizome's scheduler. Actual Activity pause/resume and
+   recreation on the Go 10.3 II now drive idle ink and a paused real-book import through HTTPS,
+   with all five chunks round-tripped intact, one active row request and no hook disk I/O.
+   Production activation and physical Android network callbacks remain off; the test explicitly
+   signals its ADB-carried route. Next: gated reader UI/import/status attachment and native
+   lifecycle/network wiring, then cross-device rendering/pen acceptance and rollout gates.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

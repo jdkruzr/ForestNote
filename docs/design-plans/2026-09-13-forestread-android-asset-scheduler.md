@@ -80,6 +80,9 @@ step carries that ink, and inject corrupt download bytes after reopening a parti
 
 ## Next
 
+Follow-up: [D34 foreground driving](2026-09-13-forestread-foreground-sync.md) implements the
+driver and qualifies it on the Go 10.3 II; production UI/network attachment remains gated.
+
 Attach bounded foreground lifecycle driving and coalesced edit/import wake-ups to this same owner;
 respect idle deadlines/backoff, pause/resume and shutdown without competing loops or UI-thread I/O.
 Then connect reader UI/import/status to the shared repositories. Production enrollment, uncertain

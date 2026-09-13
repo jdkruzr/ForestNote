@@ -83,6 +83,43 @@ class MixedSyncStoreTest {
             assertIs<MixedSyncOutcome.NotReady>(c.exchange("https://other.invalid","author"));assertTrue(t.requests.isEmpty())
         } finally {s.shutdown()}
     }
+
+    @Test fun foregroundOwnerAutomaticallyDrainsCommittedInkAndPausedImports()=runBlocking<Unit> {
+        val file=File(temp.root,"foreground.db");val s=open(file)
+        val remote=open(File(temp.root,"foreground-remote.db"));val t=Transport()
+        suspend fun settled(d:ForegroundSyncDriver) = withTimeout(8000) {
+            while(d.status.value !is ForegroundSyncStatus.Waiting || sql(file,"SELECT * FROM rhizome_outbox").isNotEmpty()) delay(10)
+        }
+        try {
+            enroll(s);val access=remote.withReader {it.assets}
+            s.mixedSyncForQualification({_,_->t},assetTransport={_,_->access},policy=TransferPolicy(pollMillis=30_000))
+            val d=s.foregroundSyncForQualification(server,"author")
+            assertSame(d,s.foregroundSyncForQualification(server,"author"))
+            assertFailsWith<IllegalStateException> {s.foregroundSyncForQualification("https://other.invalid","author")}
+            s.resumeReaderWork();delay(50);assertTrue(t.requests.isEmpty())
+            d.online(true);settled(d)
+            val ink=Stroke(points=listOf(StrokePoint(81,82,500,0)))
+            s.save(ink);s.readerIdentity();settled(d)
+            assertTrue(t.requests.any {r ->r.ops.any {it.pk==ink.id}})
+            s.pauseReaderWork()
+            withTimeout(3000) {while(d.status.value!=ForegroundSyncStatus.Paused) delay(10)}
+            val count=t.requests.size
+            val book=publish(s,ByteArray(ASSET_CHUNK_BYTES*2+11) {it.toByte()})
+            delay(100);assertEquals(count,t.requests.size)
+            assertTrue(sql(file,"SELECT * FROM rhizome_outbox").isNotEmpty())
+            s.resumeReaderWork()
+            withTimeout(8000) {
+                while(true) {
+                    val ready=try {access.describe(book.id).state==AssetState.READY}
+                        catch(e:AssetException) {if(e.status!=404) throw e;false}
+                    if(ready) break
+                    delay(10)
+                }
+            }
+            settled(d);assertTrue(t.requests.any {r ->r.ops.any {it.table=="reader_book"}})
+            s.shutdown();assertEquals(ForegroundSyncStatus.Closed,d.status.value)
+        } finally {s.shutdown();remote.shutdown()}
+    }
     @Test fun pullFirstJoinKeepsOfflineVersionsAndReopensWithoutRebackfill()=runBlocking<Unit> {
         val file=File(temp.root,"join.db");val s=open(file);val t=Transport();val identity=s.readerIdentity()
         try {
@@ -120,6 +157,27 @@ class MixedSyncStoreTest {
         withContext(Dispatchers.IO) {closed.get(5,java.util.concurrent.TimeUnit.SECONDS)}
         assertEquals(before,sql(file,"SELECT * FROM rhizome_outbox"))
         assertEquals(listOf(listOf("0")),sql(file,"SELECT cursor FROM rhizome_sync_state"))
+    }
+
+    @Test fun foregroundPauseAndShutdownJoinSlowRequestWithoutLosingAcceptedInk()=runBlocking<Unit> {
+        val file=File(temp.root,"foreground-close.db");val s=open(file);val t=Transport();enroll(s)
+        val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>()
+        t.block={entered.complete(Unit);withContext(NonCancellable) {release.await()}}
+        try {
+            s.mixedSyncForQualification({_,_->t})
+            val d=s.foregroundSyncForQualification(server,"author")
+            d.online(true);s.resumeReaderWork();withTimeout(5000) {entered.await()}
+            s.save(Stroke(points=listOf(StrokePoint(91,92,500,0))));withTimeout(2000) {s.readerIdentity()}
+            val before=sql(file,"SELECT * FROM rhizome_outbox")
+            repeat(50) {s.pauseReaderWork();s.resumeReaderWork()}
+            delay(100);assertEquals(1,t.requests.size)
+            val closed=s.shutdownAsync();delay(50);assertFalse(closed.isDone)
+            release.complete(Unit)
+            withContext(Dispatchers.IO) {closed.get(5,java.util.concurrent.TimeUnit.SECONDS)}
+            assertEquals(ForegroundSyncStatus.Closed,d.status.value)
+            assertEquals(before,sql(file,"SELECT * FROM rhizome_outbox"))
+            assertEquals(listOf(listOf("0")),sql(file,"SELECT cursor FROM rhizome_sync_state"))
+        } finally {release.complete(Unit);s.shutdown()}
     }
 
     @Test fun writerHookFailureRollsBackReceiptAckAndProvenanceTogether()=runBlocking<Unit> {

@@ -17,6 +17,7 @@ class ReaderStorage private constructor(
     internal val sync: SqliteStorageAdapter,
     val assets: SqliteAssetStore,
     internal val clock: () -> Long,
+    private val onLocalCommit: () -> Unit,
 ) {
     val books = ReaderRepository(this)
     val imports = ReaderImportRepository(this)
@@ -50,7 +51,8 @@ class ReaderStorage private constructor(
          * owner and the experimental factory above, not an activation decision.
          */
         fun attachOnWriter(db: SqliteHandle, writer: CoroutineDispatcher, actor: String,
-            adapter: SqliteStorageAdapter, clock: () -> Long = System::currentTimeMillis): ReaderStorage {
+            adapter: SqliteStorageAdapter, clock: () -> Long = System::currentTimeMillis,
+            onLocalCommit: () -> Unit = {}): ReaderStorage {
             site(actor)
             ReaderSchema.install(db)
             // Never invent chronology for unversioned experimental rows.
@@ -65,7 +67,7 @@ class ReaderStorage private constructor(
             // DDL executes inline within the owner's transaction; dispatching back
             // to its single writer from runBlocking would deadlock.
             runBlocking { SqliteAssetStore(db, Dispatchers.Unconfined).createSchema() }
-            return ReaderStorage(db, writer, actor, adapter, SqliteAssetStore(db,writer), clock)
+            return ReaderStorage(db, writer, actor, adapter, SqliteAssetStore(db,writer), clock,onLocalCommit)
         }
     }
 
@@ -76,7 +78,8 @@ class ReaderStorage private constructor(
             assetDigest(json(listOf(operation, args)).toString().toByteArray(Charsets.UTF_8))
         }
         return withContext(dispatcher) {
-            db.transaction {
+            var committed=false
+            val result=db.transaction {
                 val enabledSite = runBlocking { sync.siteId() }
                 require(enabledSite == null || enabledSite == actor) { "Reader actor differs from enabled sync site" }
                 val previous = db.query("SELECT fingerprint,result FROM reader_command WHERE id=?", listOf(id)) {
@@ -88,9 +91,14 @@ class ReaderStorage private constructor(
                 } else {
                     val result = body()
                     db.execute("INSERT INTO reader_command VALUES(?,?,?)", listOf(id, fingerprint, result))
+                    committed=true
                     result
                 }
             }
+            // A wake hint cannot roll back a committed command or make it appear failed.
+            // Inbox receipts, projections and idempotent command retries do not emit it.
+            if(committed) runCatching {onLocalCommit()}
+            result
         }
     }
 

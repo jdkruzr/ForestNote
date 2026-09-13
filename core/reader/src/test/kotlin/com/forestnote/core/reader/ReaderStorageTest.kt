@@ -80,6 +80,23 @@ class ReaderStorageTest {
     private val anchor = VersionedJson("""{"version":1,"section":0,"start":0,"end":4,"quote":"text","prefix":"","suffix":""}""")
     private fun ink(id: String = "stroke-uuid") = sampleInk(id)
 
+    @Test fun localWakeOnlyFollowsNewCommittedCommands()=runBlocking<Unit> {
+        Library(File(temp.root,"notifications.db")).use {lib ->
+            var wakes=0;var throwFromListener=false
+            val s=lib.onWriter {ReaderStorage.attachOnWriter(lib.db,lib.writer,lib.actor,lib.s.sync,
+                onLocalCommit={wakes++;if(throwFromListener) error("observer failed")})}
+            val target="a".repeat(64)
+            s.setDeleted("delete",LifecycleTarget.BOOK,target,true);assertEquals(1,wakes)
+            s.setDeleted("delete",LifecycleTarget.BOOK,target,true);assertEquals(1,wakes)
+            assertFails {s.setDeleted("delete",LifecycleTarget.BOOK,target,false)};assertEquals(1,wakes)
+            assertFails {s.command("rollback","fixture",emptyList()) {error("rollback")}};assertEquals(1,wakes)
+            s.books.list();s.projections.read("absent");assertEquals(1,wakes)
+            throwFromListener=true
+            s.setDeleted("restore",LifecycleTarget.BOOK,target,false);assertEquals(2,wakes)
+            s.setDeleted("restore",LifecycleTarget.BOOK,target,false);assertEquals(2,wakes)
+        }
+    }
+
     @Test fun installIsAdditiveIdempotentAndKeepsWriterContextAndUserVersion() = runBlocking<Unit> {
         Library(File(temp.root, "library.db"), initialize = false).use { lib ->
             lib.sql("CREATE TABLE notebook(id TEXT PRIMARY KEY,name TEXT)")

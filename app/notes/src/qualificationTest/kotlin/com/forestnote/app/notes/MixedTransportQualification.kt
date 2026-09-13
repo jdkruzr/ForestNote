@@ -3,6 +3,9 @@ package com.forestnote.app.notes
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.os.Bundle
+import androidx.lifecycle.Lifecycle
+import androidx.test.core.app.ActivityScenario
+import androidx.test.platform.app.InstrumentationRegistry
 import com.forestnote.app.notes.caldav.*
 import com.forestnote.app.notes.enrollment.*
 import com.forestnote.app.notes.recovery.*
@@ -22,6 +25,7 @@ import java.util.zip.ZipOutputStream
 import java.util.zip.ZipEntry
 import java.net.*
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.HttpsURLConnection
 
 /** Real bounded HTTPS against a disposable UB, with two private replicas of one author's library.
@@ -105,6 +109,73 @@ internal class MixedTransportQualification(private val context:Context,private v
             if(!page.hasMore) return
         }
         error("Mixed fixture did not converge")
+    }
+    suspend fun foregroundSeed() {
+        check(!file(id+"_a").exists())
+        val s=open(id+"_a");var activity:ActivityScenario<StorageQualificationActivity>?=null
+        val requests=AtomicInteger();val active=AtomicInteger();val maximum=AtomicInteger()
+        suspend fun settled(d:ForegroundSyncDriver) = withTimeout(120_000) {
+            while(d.status.value !is ForegroundSyncStatus.Waiting ||
+                rows(file(id+"_a"),"SELECT COUNT(*) FROM rhizome_outbox").single().single()!="0") {
+                check(d.status.value !is ForegroundSyncStatus.Blocked) {"Foreground blocked: ${d.status.value}"}
+                delay(50)
+            }
+        }
+        try {
+            val identity=s.readerIdentity();ink(s);enroll(s)
+            s.mixedSyncForQualification({target,token ->
+                val native=HttpUrlTransport(target.server+"/sync/v1","Bearer $token",openConnection=::connect)
+                object:BoundedRowTransport by native {
+                    override suspend fun capabilities():CapabilityOutcome {
+                        requests.incrementAndGet()
+                        val count=active.incrementAndGet();maximum.getAndUpdate {maxOf(it,count)}
+                        return try {native.capabilities()} finally {active.decrementAndGet()}
+                    }
+                    override suspend fun postBounded(request:SyncRequest,limits:RowLimits):SyncOutcome {
+                        requests.incrementAndGet()
+                        val count=active.incrementAndGet();maximum.getAndUpdate {maxOf(it,count)}
+                        return try {native.postBounded(request,limits)} finally {active.decrementAndGet()}
+                    }
+                }
+            },RowLimits(maxOps=2,targetPageBytes=2048),assetTransport={target,token ->
+                HttpAssetTransport(target.server+"/sync/assets/v1","Bearer $token",openConnection=::connect)
+            },policy=TransferPolicy(pollMillis=30_000))
+            val d=s.foregroundSyncForQualification(server,account)
+            StorageQualificationSession.store=s;StorageQualificationSession.closeOnDestroy=false
+            StorageQualificationSession.diskViolations.set(0);StorageQualificationSession.timings.clear()
+            activity=ActivityScenario.launch(StorageQualificationActivity::class.java)
+            withTimeout(10_000) {while(d.status.value!=ForegroundSyncStatus.Offline) delay(20)}
+            check(requests.get()==0)
+            // This is route availability, not a claim about Android Wi-Fi callbacks.
+            d.online(true);settled(d)
+            val idle=requests.get();delay(500);check(requests.get()==idle)
+            ink(s);settled(d);check(requests.get()>idle) // Post-commit wake, no manual step.
+            activity.moveToState(Lifecycle.State.CREATED)
+            withTimeout(10_000) {while(d.status.value!=ForegroundSyncStatus.Paused) delay(20)}
+            val paused=requests.get()
+            val book=s.withReader {r ->r.imports.importBook("real-book",context.cacheDir,
+                {File(context.cacheDir,"asset-$run.epub").inputStream()})}
+            check(book.id==args.getString("bookHash") && book.byteLength>2L*ASSET_CHUNK_BYTES)
+            delay(500);check(requests.get()==paused)
+            check(rows(file(id+"_a"),"SELECT COUNT(*) FROM rhizome_outbox").single().single()!="0")
+            activity.moveToState(Lifecycle.State.RESUMED);settled(d)
+            val remote=HttpAssetTransport(server+"/sync/assets/v1","Bearer "+checkNotNull(secrets.replicas.read(
+                ReplicaCredentialScope(server,account,identity.first,identity.second))).token,openConnection=::connect)
+            withTimeout(120_000) {while(remote.describe(book.id).state!=AssetState.READY) delay(250)}
+            repeat(50) {s.pauseReaderWork();s.resumeReaderWork()}
+            activity.recreate();settled(d)
+            check(s.foregroundSyncForQualification(server,account)===d && s.readerIdentity()==identity)
+            check(maximum.get()==1 && StorageQualificationSession.diskViolations.get()==0)
+            InstrumentationRegistry.getInstrumentation().sendStatus(0,Bundle().apply {
+                putString("foreground_max_active_row_requests",maximum.get().toString())
+                putString("lifecycle_disk_violations","0")
+                putString("lifecycle_hook_ms",StorageQualificationSession.timings.toString())
+            })
+            save(buildJsonObject {
+                put("invocation",invocation);put("process",process);put("sourceActor",identity.second);put("book",book.id)
+                put("versions",rows(file(id+"_a"),"SELECT tbl,pk,site_id,op_seq,op_ts FROM rhizome_row_meta ORDER BY tbl,pk").toString())
+            })
+        } finally {activity?.close();s.shutdown();StorageQualificationSession.store=null}
     }
     suspend fun seed(assets:Boolean=false) {
         check(!file(id+"_a").exists())

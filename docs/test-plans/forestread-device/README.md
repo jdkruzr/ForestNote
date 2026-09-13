@@ -508,3 +508,41 @@ Only the test APK changed: installed/local SHA-256
 The lab app hash remains `5fa41cd8115664818095c51b5f1194fd11a89f966f8c2910b36c2d1af7b5cc21`.
 Normal FN's package and main-library hash are unchanged. Prior suite results retain their original
 test-APK provenance; they were not rerun on this test-only change.
+
+## D34: foreground shared-library driving
+
+[Design and checkpoint](../../design-plans/2026-09-13-forestread-foreground-sync.md).
+The opt-in network lab now has a single owner-bound driver; production activation remains off.
+
+```sh
+node docs/test-plans/forestread-device/foreground-run.mjs \
+  --serial dfef8c1 --ub-repo /home/jtd/ultrabridge --route adb-proxy \
+  --book '/absolute/path/to/book.epub'
+```
+
+Start with the screen unlocked. The first phase uses actual Activity pause/resume/recreation:
+no sync before route availability, post-commit idle-ink wake, a real import while paused, then
+automatic metadata/chunk upload on resume. There are no manual `step()` calls on that source.
+The remaining three phases retain D33's partial receiver, process/server restart, verified export
+and revoked-token refusal. The route signal is explicit; Android Wi-Fi callbacks and Doze are
+not qualified by this test. No screen-lock, trust or production-library changes are made.
+
+Go 10.3 II report `/tmp/forestread-https-BbKYPI/report.json`: **4/4**, all 22 source hashes match,
+five original chunks transferred exactly once each way, maximum active row requests 1, Activity
+hook durations 0 ms and no main-thread disk violations. Metadata-only **4/4** also passes at
+`/tmp/forestread-https-CywIdT/report.json` (16 matching sources); enrollment-only **5/5** passes
+at `/tmp/forestread-https-b6DhSv/report.json` (9 matching sources).
+
+The certificate-matched in-place lab app SHA-256 is
+`47565b8a5440fbd47e915a5827160b77568b12fffa1f781267ba3c3bb9db5ab7`; test APK is
+`a9b8d9a7a4b0bb817f712467c47c3bd262545f1858880f36c6d5f3492ebb9286`.
+The separate prior secure sleep/wake result is historical, not rerun by this foreground suite.
+
+Awake-only regression: **21/21**, `/tmp/forestread-device-5dDrg8/report.json`; its report explicitly
+defers `sleep-wake`. Normal FN's package and main-file hash remain unchanged, the lab setup screen
+is restored, and ADB reverse mappings are empty. The D34 checkpoint contains **410 app + 294 format
+JVM tests** and **12 host tests**; those counts are separate from the device phases.
+
+Final headless regression: `/tmp/forestread-stage-2-4Qkhqi/report.json`, **190 Kotlin tests**,
+61 process scenarios, eight unchanged originals, Go race/parity checks and 182 matching source
+hashes. The pending 47-case acceptance adapter remains distinct from these executed regressions.

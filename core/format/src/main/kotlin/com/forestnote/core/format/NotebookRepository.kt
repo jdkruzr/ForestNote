@@ -1619,7 +1619,17 @@ class NotebookRepository private constructor(
             val author=syncStore.localAuthorId()
             if(author==null) syncStore.capture(table, pk) else syncStore.captureAuthored(table,pk,author)
         }
+        // SQLDelight defers nested afterCommit hooks to the successful outer transaction.
+        // Never wake on rollback or a relayed receipt; this is only the local-authoring seam.
+        val listener=localCommitListener
+        if(listener!=null) afterWriterCommit(listener)
     }
+
+    /** Writer-thread registration; notification is a nonblocking hint, never persistence. */
+    var localCommitListener:(()->Unit)?=null
+
+    /** Also adapts extension-domain wake hints to any enclosing SQLDelight transaction. */
+    fun afterWriterCommit(action:()->Unit) {db.transaction {afterCommit {runCatching {action()}}}}
 
     // -- Sync send side ----------------------------------------------------------
     //

@@ -43,16 +43,31 @@ internal class MixedSyncCoordinator(
     private val mutex=Mutex()
     private data class Scheduler(val target:ReplicaCredentialScope,val tokenHash:String,val worker:SharedLibrarySync)
     private var scheduler:Scheduler?=null
+    @Volatile private var foregroundDriver:ForegroundSyncDriver?=null
+    private var foregroundTarget:Pair<String,String>?=null
+    @Volatile private var closing=false
+
+    @Synchronized fun foregroundFor(server:String,account:String):ForegroundSyncDriver {
+        check(!closing)
+        val target=server to account
+        check(foregroundTarget==null || foregroundTarget==target) {"Foreground sync target changed; close the owner first"}
+        return foregroundDriver ?: ForegroundSyncDriver({signals -> request(server,account,true,signals)}).also {
+            foregroundTarget=target;foregroundDriver=it
+        }
+    }
+    fun foregroundChanged(active:Boolean) {foregroundDriver?.foreground(active)}
+    fun localChanged(references:Boolean=false) {foregroundDriver?.changed(references)}
 
     suspend fun exchange(server:String,account:String):MixedSyncOutcome = request(server,account,false)
     suspend fun step(server:String,account:String):MixedSyncOutcome = request(server,account,true)
 
-    private suspend fun request(server:String,account:String,assets:Boolean):MixedSyncOutcome {
-        val request=scope.async { mutex.withLock { exchangeOnce(server,account,assets) } }
-        return try {request.await()} finally {request.cancel()}
+    private suspend fun request(server:String,account:String,assets:Boolean,signals:SyncWake=SyncWake()):MixedSyncOutcome {
+        if(closing) throw CancellationException("Mixed sync owner is closing")
+        val request=scope.async { mutex.withLock { exchangeOnce(server,account,assets,signals) } }
+        return try {request.await()} finally {withContext(NonCancellable) {request.cancelAndJoin()}}
     }
 
-    private suspend fun exchangeOnce(server:String,account:String,assets:Boolean):MixedSyncOutcome {
+    private suspend fun exchangeOnce(server:String,account:String,assets:Boolean,signals:SyncWake):MixedSyncOutcome {
         val original=identity()
         val target=ReplicaCredentialScope(server,account,original.first,original.second)
         val key=try {
@@ -88,6 +103,9 @@ internal class MixedSyncCoordinator(
                 SharedLibrarySync(scheduledRows,storage.requiredAssets,storage.assets,
                     assetTransport(target,key.token),queue,policy).also {scheduler=Scheduler(target,key.tokenHash,it)}
             }
+            if(signals.retry) worker.resume()
+            if(signals.references) worker.referencesChanged()
+            if(signals.metadata) worker.metadataChanged()
             return MixedSyncOutcome.Scheduled(worker.step())
         }
         return MixedSyncOutcome.Exchanged(exchangeRows(session))
@@ -103,5 +121,8 @@ internal class MixedSyncCoordinator(
         return exchanged
     }
 
-    suspend fun close() {lifetime.cancelAndJoin()}
+    suspend fun close() {
+        val foreground=synchronized(this) {closing=true;foregroundDriver}
+        foreground?.close();lifetime.cancelAndJoin()
+    }
 }

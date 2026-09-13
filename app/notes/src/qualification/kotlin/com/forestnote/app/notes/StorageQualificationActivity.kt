@@ -10,7 +10,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /** Test-only real Activity. Instrumentation can retain a store across recreation or
  * exercise the production asynchronous close on destruction. No editor,
- * ink backend, external library, network or automatic store creation lives here.
+ * ink backend, external library or automatic store creation lives here. An explicitly
+ * configured qualification store may also exercise its foreground network driver.
  */
 class StorageQualificationActivity : Activity() {
     override fun onCreate(state: Bundle?) {
