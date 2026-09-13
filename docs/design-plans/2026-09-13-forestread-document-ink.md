@@ -117,4 +117,8 @@ not rerun for this correction. In-place app SHA-256
 `6ecca4cec8b43bbf7202134bf37f98395b8223eac56fa2856330fcd5f5947c28`.
 The interactive database remains `.dump`-identical after testing
 (`/tmp/forestread-d41-refresh-preserved.db`); normal FN's package path/library hash are unchanged.
-Physical confirmation of the single-refresh transition remains the next handoff.
+The user subsequently confirms **“one dignified flash.”** The second finished document session
+adds six strokes / 371 points; the older sessions are unchanged. The stopped-library snapshot
+`/tmp/forestread-d42-before.db` passes integrity checking with 26 strokes / 2,790 points and
+33 outbox rows / maximum sequence 33. Physical single-refresh acceptance is complete.
+Continue with [D42 selection creation](2026-09-13-forestread-shared-selection.md).

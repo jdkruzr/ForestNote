@@ -5,6 +5,7 @@ import io.rhizome.core.isAssetDigest
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.*
 import java.io.File
 import java.io.InputStream
 import java.security.DigestOutputStream
@@ -135,6 +136,45 @@ internal class ReaderLibraryAccess(
     suspend fun cancelAnnotation(command:String,session:ReaderAnnotationSession) = request {s ->owned(session);s.edits.cancel(command,session.id)}
 
     fun existingEditQueue(session:String):ReaderEditQueue? = editor?.takeIf {it.session.id==session && !it.state.value.sealed}
+    /** Stable selection intent, retried with the same command and arguments. A new box uses
+     * its creation session so Cancel masks the box; a saved highlight gets a fresh session
+     * whose height contribution can be cancelled without removing the highlight. */
+    suspend fun commitSelection(book:String,command:String,anchor:VersionedJson,height:Long,
+        existing:String?=null,hash:String?=null):String = request {s -> editGate.withLock {
+        require(command.matches(Regex("[a-zA-Z0-9-]{1,80}")))
+        require(height in 0..10_000_000 && (existing!=null || height<=10000))
+        val json=Json.parseToJsonElement(anchor.raw).jsonObject
+        require(json["version"]?.jsonPrimitive?.intOrNull==1)
+        val start=json["start"]?.jsonPrimitive?.longOrNull ?: -1
+        require(start>=0 && (json["end"]?.jsonPrimitive?.longOrNull ?: -1)>start)
+        require((json["section"]?.jsonPrimitive?.longOrNull ?: -1)>=0)
+        for(key in listOf("quote","prefix","suffix")) require(json[key]?.jsonPrimitive?.isString==true)
+        require(json.getValue("quote").jsonPrimitive.content.isNotEmpty() && anchor.raw.length<=16000)
+        check(s.books.open(book)?.deleted==false) {"Book unavailable"}
+        val annotation=existing ?: "selection-$command"
+        val session="selection-session-$command"
+        documentEdit?.let {check(it.queue.session.id==session) {"Finish the active document edit first"}}
+        check(editor?.state?.value?.settled!=false || documentEdit?.queue===editor) {"Previous editor still has unsaved work"}
+        if(existing==null) {
+            s.edits.createAnnotation("selection-create-$command",annotation,book,session,anchor,10000,height)
+        } else {
+            require(height>0 && s.projections.book(annotation)==book)
+            val oldSession=s.edits.resumeSession(session)
+            if(oldSession==null) {
+                val projection=checkNotNull(s.projections.read(annotation))
+                check(projection.visible && projection.status==ProjectionStatus.READY && projection.inputHash==hash && projection.effectiveHeight==0L) {"Highlight changed; reopen it"}
+            }
+            s.edits.beginSession("selection-begin-$command",session,annotation)
+            s.edits.setProperty("selection-height-$command",session,AnnotationProperty.HEIGHT,VersionedJson("""{"version":1,"height":$height}"""))
+        }
+        if(height==0L) s.edits.finish("selection-finish-$command",session)
+        documentEdit?.let {return@withLock it.metadata}
+        val projection=checkNotNull(s.projections.read(annotation))
+        check(projection.visible && projection.status==ProjectionStatus.READY)
+        val metadata=ReaderAnnotationPresentation.metadata(projection).toString()
+        if(height>0) documentEdit=ReaderDocumentEdit(createQueue(s,boundSession(s,session)),metadata,0.0)
+        metadata
+    }}
     /** One native editor per owner. Reattach to pending/error work instead of loading over it. */
     suspend fun editQueue(session:ReaderAnnotationSession):ReaderEditQueue = request {s ->
         owned(session)

@@ -106,6 +106,14 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
                 JSONObject.NULL
             }
             "preferences" -> {check(!editing);library.applyPreferences(request.getString("book"),VersionedJson(request.getJSONObject("value").toString()));JSONObject.NULL}
+            "selectionCommit" -> {
+                checkNotNull(inkBackend) {"Native editor unavailable"}
+                val book=checkNotNull(books[request.getString("token")]).snapshot.book.id
+                JSONObject(library.commitSelection(book,request.getString("command"),
+                    VersionedJson(request.getJSONObject("anchor").toString()),request.getLong("height"),
+                    if(request.isNull("existing")) null else request.getString("existing"),
+                    if(request.isNull("inputHash")) null else request.getString("inputHash")))
+            }
             "editBegin" -> {
                 checkNotNull(inkBackend) {"Native editor unavailable"}
                 val token=request.getString("token");val book=checkNotNull(books[token]).snapshot.book.id

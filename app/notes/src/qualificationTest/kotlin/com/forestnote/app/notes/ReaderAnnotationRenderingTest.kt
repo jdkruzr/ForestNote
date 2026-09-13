@@ -184,6 +184,80 @@ class ReaderAnnotationRenderingTest {
         }
     }
 
+    @Test fun selectedTextCreatesSharedHighlightsAndCancellableNativeWriting()=runBlocking<Unit> {
+        val id="selection-${UUID.randomUUID()}"
+        val store=NotebookStore(repoProvider={NotebookRepository.openIsolatedQualification(context,id)},
+            executor=Executors.newSingleThreadExecutor(),poster={it.run()},qualifyReaderStorage=true)
+        var activity:ActivityScenario<ReaderHostQualificationActivity>?=null
+        suspend fun js(expression:String):String=withContext(Dispatchers.Main) {
+            val result=CompletableDeferred<String>()
+            checkNotNull(ReaderHostQualificationSession.view).web.evaluateJavascript(expression) {result.complete(it)}
+            withTimeout(10000) {result.await()}
+        }
+        suspend fun waitFor(expression:String)=withTimeout(45000) {while(js(expression)!="true") delay(50)}
+        suspend fun select() {
+            js("""(()=>{const d=document.querySelector('foliate-paginator').getContents()[0].doc,r=d.createRange();
+                r.selectNodeContents(d.querySelector('p'));d.getSelection().removeAllRanges();d.getSelection().addRange(r);
+                d.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true;})()""")
+            waitFor("!document.getElementById('selection').hidden && document.querySelectorAll('#draftHighlight span').length>0")
+        }
+        suspend fun nativeReady()=withTimeout(15000) {while(true) {
+            var ready=false
+            instrumentation.runOnMainSync {ReaderHostQualificationSession.view?.documentInk?.ink?.let {ready=it.canvasReady && !it.workPending && it.inputEnabled()}}
+            if(ready) break
+            delay(50)
+        }}
+        try {
+            val access=store.readerLibraryForQualification(context.cacheDir)
+            val book=access.importBook("import",{fixture().inputStream()}).book.id
+            ReaderHostQualificationSession.store=store
+            activity=ActivityScenario.launch(ReaderHostQualificationActivity::class.java)
+            withTimeout(15000) {while(ReaderHostQualificationSession.view==null) delay(50)}
+            waitFor("typeof forestReadOpen==='function'")
+            js("forestReadOpen(${JSONObject.quote(book)}); true")
+            waitFor("forestReadState().book && !forestReadState().opening")
+            val bounds=js("JSON.stringify(document.getElementById('reader').getBoundingClientRect())")
+            select()
+            assertEquals(bounds,js("JSON.stringify(document.getElementById('reader').getBoundingClientRect())"))
+            js("document.getElementById('cancel').click(); true")
+            assertTrue(access.annotations(book).ids.isEmpty())
+            select();js("document.getElementById('highlight').click(); true")
+            waitFor("document.getElementById('status').textContent.startsWith('Highlight Saved')")
+            val highlight=access.annotations(book).ids.single()
+            assertEquals(0L,access.annotation(highlight)!!.effectiveHeight)
+            js("document.querySelector('foliate-paginator').getContents()[0].doc.querySelector('[data-lab-highlight]').click(); true")
+            waitFor("document.getElementById('savedHighlightOptions').open")
+            js("document.getElementById('writeSavedHighlight').click(); true")
+            waitFor("forestReadState().editAttached");nativeReady()
+            val conversion=checkNotNull(access.documentEdit)
+            assertEquals(highlight,conversion.queue.session.annotation)
+            activity.recreate()
+            withTimeout(15000) {while(ReaderHostQualificationSession.view==null) delay(50)}
+            waitFor("typeof forestReadState==='function' && forestReadState().editAttached");nativeReady()
+            assertSame(conversion,access.documentEdit)
+            js("document.getElementById('cancelInk').click(); true")
+            waitFor("!forestReadState().editing")
+            assertEquals(0L,access.annotation(highlight)!!.effectiveHeight)
+            select();js("document.getElementById('write').click(); true")
+            waitFor("forestReadState().editAttached");nativeReady()
+            val fresh=checkNotNull(access.documentEdit)
+            assertNotEquals(highlight,fresh.queue.session.annotation)
+            assertEquals(bounds,js("JSON.stringify(document.getElementById('reader').getBoundingClientRect())"))
+            instrumentation.runOnMainSync {
+                val surface=ReaderHostQualificationSession.view!!.documentInk!!.ink
+                surface.begin(Tool.Pen,surface.params)
+                surface.accept(InkSample(2000,200,500,0),InkPhase.DOWN);surface.accept(InkSample(4000,500,700,1),InkPhase.UP)
+            }
+            js("document.getElementById('finishInk').click(); true")
+            waitFor("!forestReadState().editing && forestReadState().inkTiles>0")
+            assertEquals(SessionState.FINISHED,access.annotationSessionState(fresh.queue.session.id))
+            assertEquals(1,access.annotation(fresh.queue.session.annotation)!!.strokes.size)
+        } finally {
+            activity?.close();ReaderHostQualificationSession.cleanup?.join()
+            ReaderHostQualificationSession.store=null;store.shutdown()
+        }
+    }
+
     private fun fixture():ByteArray=ByteArrayOutputStream().also {out ->ZipOutputStream(out).use {zip ->
         for((name,text) in linkedMapOf(
             "mimetype" to "application/epub+zip",

@@ -85,6 +85,84 @@ test('saved shared annotations compose into the book with native tiles and width
   await expect(page.locator('#next')).toBeEnabled();
 });
 
+test('shared selections preview live, keep header bounds, retry stable intents and reopen accepted highlights', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 640 });
+  await page.addInitScript(() => {
+    window.calls = []; window.rows = []; window.receipts = {}; window.failSelectionReply = true;
+    indexedDB.open = () => { throw Error('No Browser Database'); };
+    window.ForestRead = { postMessage(data) {
+      const r = JSON.parse(data); calls.push(r); let result = null;
+      if (r.action === 'refresh') r.selectionChrome = document.body.hasAttribute('data-shared-selection');
+      if (r.action === 'list') result = { books: [{ id: 'a'.repeat(64), title: 'Select Me', ready: true }] };
+      if (r.action === 'open') result = { book: r.book, title: 'Select Me', token: 'lease', url: '/readerlab/fixtures/unpleasant.epub', mediaType: 'application/epub+zip' };
+      if (r.action === 'annotations') result = { annotations: rows, next: null };
+      if (r.action === 'selectionCommit') {
+        result = receipts[r.command];
+        if (!result) {
+          result = { id: r.existing ?? r.command, anchor: r.anchor, height: r.height, width: 10000, inputHash: r.command, hasInk: false, status: 'READY', highlightPresent: true };
+          receipts[r.command] = result; rows = rows.filter(a => a.id !== result.id); rows.push(result);
+          if (r.height) window.activeEdit = { id: result.id, existing: r.existing };
+        }
+        if (failSelectionReply) {
+          failSelectionReply = false;
+          queueMicrotask(() => ForestRead.onmessage({ data: JSON.stringify({ id: r.id, error: 'Lost Selection Reply' }) })); return;
+        }
+      }
+      if (r.action === 'editEnd' && r.cancel) {
+        if (activeEdit.existing) rows = rows.map(a => a.id === activeEdit.id ? { ...a, height: 0 } : a);
+        else rows = rows.filter(a => a.id !== activeEdit.id);
+      }
+      queueMicrotask(() => ForestRead.onmessage({ data: JSON.stringify({ id: r.id, result }) }));
+    } };
+  });
+  await page.goto('http://127.0.0.1:4173/readerlab/shared-reader.html');
+  await page.getByRole('button', { name: 'Select Me', exact: true }).click();
+  await page.waitForFunction(() => forestReadState().book && !forestReadState().opening);
+  const bounds = await page.locator('#reader').boundingBox();
+  const select = () => page.evaluate(async () => {
+    const { TextIndex } = await import('/readerlab/anchors.js');
+    const doc = document.querySelector('foliate-paginator').getContents()[0].doc;
+    const index = new TextIndex(doc), start = index.text.indexOf('Paragraph');
+    const selection = doc.getSelection(); selection.removeAllRanges(); selection.addRange(index.range(start, start + 11));
+    doc.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  });
+  await select();
+  await expect(page.locator('#draftHighlight span').first()).toBeVisible();
+  await expect(page.locator('#startHandle')).toBeVisible();
+  await expect(page.locator('#endHandle')).toBeVisible();
+  expect(await page.locator('#reader').boundingBox()).toEqual(bounds);
+  await expect(page.locator('#next')).toBeDisabled();
+  const fillWidth = await page.locator('#draftHighlight').evaluate(el => [...el.children].reduce((n, c) => n + c.getBoundingClientRect().width, 0));
+  await page.locator('#boundaryMenu').click(); await page.locator('#endLater').click();
+  expect(await page.locator('#draftHighlight').evaluate(el => [...el.children].reduce((n, c) => n + c.getBoundingClientRect().width, 0))).toBeGreaterThan(fillWidth);
+  await page.keyboard.press('Escape');
+  await page.locator('#cancel').click();
+  expect(await page.evaluate(() => calls.filter(c => c.action === 'selectionCommit').length)).toBe(0);
+  await select(); await page.locator('#highlight').click();
+  await expect(page.locator('#status')).toContainText('Lost Selection Reply');
+  await expect(page.locator('#cancel')).toBeDisabled();
+  await page.locator('#retrySelection').click();
+  await expect(page.locator('#status')).toContainText('Highlight Saved');
+  expect(await page.evaluate(() => calls.filter(c => c.action === 'refresh').at(-1).selectionChrome)).toBe(false);
+  const commands = await page.evaluate(() => calls.filter(c => c.action === 'selectionCommit').map(c => c.command));
+  expect(commands).toHaveLength(2); expect(new Set(commands).size).toBe(1);
+  expect(await page.evaluate(() => rows.length)).toBe(1);
+  await page.evaluate(() => document.querySelector('foliate-paginator').getContents()[0].doc.querySelector('[data-lab-highlight]').click());
+  await expect(page.locator('#savedHighlightOptions')).toBeVisible();
+  expect(await page.locator('#reader').boundingBox()).toEqual(bounds);
+  await page.locator('#writeSavedHighlight').click();
+  await page.waitForFunction(() => forestReadState().editAttached);
+  expect(await page.locator('#reader').boundingBox()).toEqual(bounds);
+  await page.locator('#cancelInk').click();
+  await page.waitForFunction(() => !forestReadState().editing);
+  expect(await page.evaluate(() => forestReadState().annotations.map(a => a.height))).toEqual([0]);
+  await select(); await page.locator('#write').click();
+  await page.waitForFunction(() => forestReadState().editAttached);
+  await page.locator('#cancelInk').click();
+  await page.waitForFunction(() => !forestReadState().editing);
+  expect(await page.evaluate(() => forestReadState().annotations.map(a => a.height))).toEqual([0]);
+});
+
 test('readback refuses oversized or cyclic listings and keeps pending states distinct from empty ink', async ({ page }) => {
   await page.goto('http://127.0.0.1:4173/readerlab/index.html');
   const result = await page.evaluate(async () => {

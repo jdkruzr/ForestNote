@@ -182,6 +182,51 @@ class ReaderLibraryAccessTest {
         } finally {s.shutdown()}
     }
 
+    @Test fun selectionIntentsRetryWithoutReauthoringAndCancelTheRightContribution()=runBlocking<Unit> {
+        val file=File(temp.root,"selections.db");val s=open(file)
+        try {
+            val a=s.readerLibraryForQualification(temp.root)
+            val book=a.importBook("import",{bytes().inputStream()}).book.id
+            val other=a.importBook("other",{bytes("Other").inputStream()}).book.id
+            val metadata=a.commitSelection(book,"highlight",anchor,0)
+            assertNull(a.documentEdit)
+            assertEquals(SessionState.FINISHED,a.annotationSessionState("selection-session-highlight"))
+            val history=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            assertEquals(metadata,a.commitSelection(book,"highlight",anchor,0))
+            assertEquals(history,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            assertFails {a.commitSelection(book,"highlight",anchor,1000)}
+            assertFails {a.commitSelection(book,"bad",VersionedJson("""{"version":1}"""),1000)}
+            val hash=a.annotation("selection-highlight")!!.inputHash!!
+            assertFails {a.commitSelection(other,"foreign",anchor,1000,"selection-highlight",hash)}
+            assertFails {a.commitSelection(book,"stale",anchor,1000,"selection-highlight","stale")}
+            a.commitSelection(book,"convert",anchor,1000,"selection-highlight",hash)
+            val convert=checkNotNull(a.documentEdit)
+            a.commitSelection(book,"convert",anchor,1000,"selection-highlight",hash)
+            assertSame(convert,a.documentEdit)
+            assertEquals(1000L,a.annotation("selection-highlight")!!.effectiveHeight)
+            assertTrue(convert.queue.end(true));assertTrue(convert.queue.awaitSettled().terminalCommitted)
+            a.acknowledgeDocumentEdit(convert)
+            assertTrue(a.annotation("selection-highlight")!!.visible)
+            assertEquals(0L,a.annotation("selection-highlight")!!.effectiveHeight)
+            a.commitSelection(book,"new",anchor,1000)
+            val fresh=checkNotNull(a.documentEdit)
+            val newHistory=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            a.commitSelection(book,"new",anchor,1000)
+            assertSame(fresh,a.documentEdit)
+            assertEquals(newHistory,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            assertFails {a.commitSelection(book,"second",anchor,0)}
+            assertTrue(fresh.queue.end(true));assertTrue(fresh.queue.awaitSettled().terminalCommitted)
+            a.acknowledgeDocumentEdit(fresh)
+            assertFalse(a.annotation("selection-new")!!.visible)
+            a.commitSelection(book,"finish",anchor,1000)
+            val finish=checkNotNull(a.documentEdit)
+            finish.queue.append(checkNotNull(finish.queue.reserveGesture()),Stroke(id="new-stroke",points=listOf(StrokePoint(40,100,500,0)),penWidthMin=1,penWidthMax=3))
+            assertTrue(finish.queue.end(false));assertTrue(finish.queue.awaitSettled().terminalCommitted)
+            a.acknowledgeDocumentEdit(finish)
+            assertEquals(listOf("new-stroke"),a.annotation("selection-finish")!!.strokes.map {it.id})
+        } finally {s.shutdown()}
+    }
+
     @Test fun boundedPagesAndLeasesCannotDeleteAnotherOwnersCache()=runBlocking<Unit> {
         val s=open(File(temp.root,"pages.db"));val other=open(File(temp.root,"other.db"))
         try {

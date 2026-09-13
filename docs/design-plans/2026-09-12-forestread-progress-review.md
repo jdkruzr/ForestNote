@@ -242,6 +242,10 @@ the headless result does not activate production integration.
    compact header Finish/Cancel, locked navigation, fresh contribution-scoped sessions and
    owner-retained View recreation. New highlight/note creation, Penu/eraser/grow and Viwoods
    acceptance remain next; this still does not activate the production reader.
+   **D42 selected-text creation:** [shared highlights and new writing regions](2026-09-13-forestread-shared-selection.md)
+   now use the same repositories/queue and compact, portable selection UI. Accepted highlights
+   reopen for writing; Cancel distinguishes new-box creation from editing an earlier highlight.
+   Penu/eraser/grow, saved-boundary adjustment and annotation browsing/search UI remain next.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 
