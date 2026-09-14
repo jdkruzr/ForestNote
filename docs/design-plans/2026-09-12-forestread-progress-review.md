@@ -330,8 +330,10 @@ the headless result does not activate production integration.
    **D63 recognition capability:** [shared status and Retry](2026-09-14-forestread-recognition-settings.md)
    adds a common Settings menu and an observer of the existing reader-recognition worker.
    Structured phases are localized at the native/HTML boundary. Language/model management
-   and owner-managed sync/recovery navigation remain separate; next refresh the Boox-to-UB
-   disposable real-book round trip while Viwoods is deferred until tomorrow.
+   and owner-managed sync/recovery navigation remain separate. The refreshed Boox-to-UB
+   disposable real-book/annotation round trip passes 4/4 with unchanged user ink; Viwoods
+   is deferred until tomorrow. The user's compact writer-toolbar styling question is
+   recorded there as a proposal, not an implemented redesign.
    **Queued internationalization:** [shared UI resource extraction](2026-09-14-forestread-internationalization.md)
    records the user's request to replace inline chrome strings with a standard resource
    scheme, including the HTML reader boundary, plurals, accessibility and pseudo-locale

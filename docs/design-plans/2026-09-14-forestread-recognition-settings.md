@@ -51,11 +51,36 @@ Installed qualification updates use the existing matching certificate, without u
 - App SHA-256: `cc39c9849b6e00fd0d55e5bbe828e95494791e77dc329a9fa1dbcb5268886c2b`.
 - Test SHA-256: `98476cc118837917f7237dc49a18304cb00ebc0554cdd0ab869d909b6b9dd2ea`.
 
+### Refreshed Boox / UltraBridge boundary
+
+`annotation-run.mjs --serial dfef8c1 --ub-repo /home/jtd/ultrabridge --route adb-proxy`
+with the existing 1,114,354-byte Shadow Order EPUB passes **4/4** at
+`/tmp/forestread-https-j165Pg/report.json`. FN revision `1be7016`, UB revision `023d4f5`;
+both installed APKs match the hashes above and all 38 recorded FN source hashes match.
+Foreground upload, partial receive, process/server restart, renderer handoff, synthetic
+annotation projection/session ownership and revoked-device refusal pass. Chunk indices
+0–4 are transferred exactly once in each direction. The original book hash remains
+`833a66675c39d26d821b9fef572a171905577dae95a626ca7bf63adf9d5c488a`.
+
+This uses Android's normal TLS validation over the explicit ADB carrier to a fresh
+disposable UB fixture, not direct Wi-Fi qualification or the live server. It does not
+claim physical pen or Viwoods coverage. Fixture processes/mappings are cleaned up;
+only the temporary on-device input-book copy is removed, with the original and host
+evidence retained. Interactive data stays byte-identical (46/51 strokes), the normal
+FN hash stays unchanged, and the isolated setup screen is restored.
+
 ## Next boundary
 
-Continue on Boox with a fresh real-book/annotation round trip through the disposable
-UltraBridge fixture. This brings current client rendering and the existing UB storage
-contract together without touching the live service. Shared enrollment, sync policy/
-history and backup/recovery navigation still need owner-managed capabilities; do not
+The fresh real-book/annotation round trip now joins current client rendering and the
+existing UB storage contract without touching the live service. Shared enrollment,
+sync policy/history and backup/recovery navigation still need owner-managed capabilities; do not
 borrow legacy Settings controls that could activate the normal library accidentally.
 Integrated Viwoods qualification is deferred to the user's next available day.
+
+The user also asked how to adopt the new style in the writer's toolbar without losing
+canvas. Proposed, not implemented here: retain one slim top row; share border/corner/
+selected-state tokens but use writer-specific compact dimensions; replace tiny stacked
+labels with side-by-side labels where space allows; group controls and move secondary
+actions into an overlay menu on narrow hosts. Breakpoints should use available logical
+width, not raw panel pixels. Do not enlarge hitboxes into the canvas, alter saved page
+geometry or weaken dismissal-only contact handling. No toolbar redesign is claimed.
