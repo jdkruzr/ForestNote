@@ -72,7 +72,7 @@ Matching-certificate in-place updates only; no uninstall or production activatio
 Before/after automated tests, the interactive database stays byte-identical. After
 visual navigation into Canvas Fit Check, both complete stroke-table dumps still match:
 **46 writer / 51 reader strokes**, SQLite integrity `ok`. Normal FN retains SHA-256
-`23c9904722e978eaac813eb53f3a65f7e59785a53b73c9c7d4fa45a63bc691`.
+`23c9904722e978eaac813ebef53f3a65f7e59785a53b73c9c7d4fa45a63bc691`.
 `eraser-final.png` shows the separated Clear action and selected eraser; `canvas-fit-final.png`
 shows the full-width existing page with Fountain selected, no menu, and the slim bar.
 Initial firmware-backed screen captures omitted the canvas; a tool-switch reconciliation
