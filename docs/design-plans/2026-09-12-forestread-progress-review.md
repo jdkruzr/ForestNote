@@ -317,6 +317,11 @@ the headless result does not activate production integration.
    applies shared styling to the native writer while preserving all historical preset
    transforms. Per-pen exact widths persist through the same owner. Continue shared
    Settings ownership/resource extraction; physical Penu ink feel remains a device check.
+   The user's follow-up changes outside contact to dismissal-only, with visible pen
+   choice borders; firmware stays paused through lift before the next stroke can begin.
+   **D61 Settings resources:** [presentation extraction and ownership boundary](2026-09-14-forestread-settings-resources.md)
+   moves the existing Settings layout/dynamic chrome into Android resources and adds
+   plural/format guards. Shared Settings navigation/capability wiring remains next.
    **Queued internationalization:** [shared UI resource extraction](2026-09-14-forestread-internationalization.md)
    records the user's request to replace inline chrome strings with a standard resource
    scheme, including the HTML reader boundary, plurals, accessibility and pseudo-locale

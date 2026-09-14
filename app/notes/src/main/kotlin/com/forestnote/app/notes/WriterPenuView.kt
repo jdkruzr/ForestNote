@@ -73,10 +73,10 @@ internal class WriterPenuView(context:Context,
                     val choice=button(context.getString(PenUiLabels.name(pen))) {pickPen(pen);sync()}.apply {
                         tag="writerPen:${pen.name}";maxLines=2;gravity=Gravity.START or Gravity.CENTER_VERTICAL
                     }
-                    pens[pen]=choice;row.addView(choice,LayoutParams(0,-2,1f))
+                    pens[pen]=choice;row.addView(choice,LayoutParams(0,-2,1f).apply {marginEnd=gap/2})
                 }
                 repeat(columns-pair.size) {row.addView(android.view.View(context),LayoutParams(0,1,1f))}
-                addView(row,LayoutParams(-1,-2))
+                addView(row,LayoutParams(-1,-2).apply {topMargin=gap/2;bottomMargin=gap/2})
             }
         }
         sync()
@@ -86,7 +86,7 @@ internal class WriterPenuView(context:Context,
         if(number.text.toString()!=width().toString()) number.setText(width().toString())
         for((pen,choice) in pens) {
             choice.isSelected=pen==variant()
-            LibrarySurfaceStyle.action(choice,primary=choice.isSelected,outlined=false,compact=true)
+            LibrarySurfaceStyle.action(choice,primary=choice.isSelected,outlined=true,compact=true)
             choice.gravity=Gravity.START or Gravity.CENTER_VERTICAL
         }
         for((level,choice) in presets) {

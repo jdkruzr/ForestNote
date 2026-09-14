@@ -32,3 +32,11 @@ coverage, and does not require choosing additional languages now.
 Actual language packs and a language-picker policy can follow the extraction; neither
 is implicitly required by this request. Production activation, PDF and document text
 translation are separate work.
+
+## Started
+
+- D60: native writer Penu labels and accessibility text in `penu.xml`.
+- [D61](2026-09-14-forestread-settings-resources.md): existing Settings layout and dynamic
+  presentation in `settings.xml`, with plural/format tests and incremental source guards.
+- Reader HTML dictionary, locale-aware model language names, pseudo-locales/RTL and
+  remaining native surfaces are still open. No full-app localization claim yet.

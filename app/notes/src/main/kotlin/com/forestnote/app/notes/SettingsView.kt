@@ -123,7 +123,7 @@ class SettingsView {
         val pitchButtons = SettingsFormLogic.pitchPresetsMm.mapIndexed { i, mm ->
             RadioButton(view.context).apply {
                 id = PITCH_ID_BASE + i
-                text = "$mm mm"
+                text = context.getString(R.string.settings_pitch_mm, mm)
                 textSize = 15f
                 minHeight = (44 * resources.displayMetrics.density).toInt()
                 setPadding(paddingLeft + 4, paddingTop, paddingRight + 32, paddingBottom)
@@ -313,7 +313,7 @@ class SettingsView {
             val u = syncUserInput.text?.toString().orEmpty().trim()
             val p = syncPassInput.text?.toString().orEmpty()
             secureCreds?.setSyncCreds(SyncCredentials(u, p))
-            Toast.makeText(view.context, "Sync credentials saved", Toast.LENGTH_SHORT).show()
+            Toast.makeText(view.context, R.string.settings_sync_saved, Toast.LENGTH_SHORT).show()
         }
         // Interval is a non-negative integer; blank/invalid commits as 0 (= off).
         wireUrl(syncIntervalInput) { s, v -> s.copy(syncIntervalMinutes = v.toIntOrNull()?.coerceAtLeast(0) ?: 0) }
@@ -321,17 +321,17 @@ class SettingsView {
         transcriptionSaveBtn.setOnClickListener {
             val config = liveTranscriptionConfig()
             saveTranscriptionConfig(config)
-            Toast.makeText(view.context, "Transcription settings saved", Toast.LENGTH_SHORT).show()
+            Toast.makeText(view.context, R.string.settings_transcription_saved, Toast.LENGTH_SHORT).show()
         }
         transcriptionTestBtn.setOnClickListener {
             val config = liveTranscriptionConfig()
             if (!config.isComplete) {
-                Toast.makeText(view.context, "Choose a provider and enter its base URL and model.", Toast.LENGTH_LONG).show()
+                Toast.makeText(view.context, R.string.settings_transcription_incomplete, Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
             saveTranscriptionConfig(config)
             val s = scope ?: return@setOnClickListener
-            Toast.makeText(view.context, "Testing without uploading a page…", Toast.LENGTH_SHORT).show()
+            Toast.makeText(view.context, R.string.settings_testing_without_page, Toast.LENGTH_SHORT).show()
             s.launch {
                 val result = TranscriptionClient(
                     OkHttpClient.Builder()
@@ -340,9 +340,9 @@ class SettingsView {
                         .build(),
                 ).test(config)
                 result.fold(
-                    onSuccess = { Toast.makeText(view.context, "Endpoint connection ok", Toast.LENGTH_LONG).show() },
+                    onSuccess = { Toast.makeText(view.context, R.string.settings_endpoint_ok, Toast.LENGTH_LONG).show() },
                     onFailure = { e ->
-                        Toast.makeText(view.context, "Endpoint test failed: ${e.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(view.context, view.context.getString(R.string.settings_endpoint_failed, e.message ?: view.context.getString(R.string.settings_unknown_error)), Toast.LENGTH_LONG).show()
                     },
                 )
             }
@@ -357,7 +357,7 @@ class SettingsView {
             val u = caldavUserInput.text?.toString().orEmpty().trim()
             val p = caldavPassInput.text?.toString().orEmpty()
             secureCreds?.setCaldavCreds(CalDavCredentials(url, u, p))
-            Toast.makeText(view.context, "CalDAV credentials saved", Toast.LENGTH_SHORT).show()
+            Toast.makeText(view.context, R.string.settings_caldav_saved, Toast.LENGTH_SHORT).show()
         }
         caldavTestBtn.setOnClickListener { onTestCalDavConnection(view) }
         // Retention is a non-negative integer; blank/invalid commits as 0 (= never).
@@ -381,7 +381,7 @@ class SettingsView {
         val versionName = runCatching {
             ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
         }.getOrNull().orEmpty()
-        tv.text = if (versionName.isNotBlank()) "ForestNote $versionName" else "ForestNote"
+        tv.text = if (versionName.isNotBlank()) tv.context.getString(R.string.settings_app_version, versionName) else tv.context.getString(R.string.settings_app_name)
     }
 
     /**
@@ -432,16 +432,13 @@ class SettingsView {
             setPadding(0, 6, 0, 6)
         }
         val summary = TextView(ctx).apply {
-            text = buildString {
-                append(row.summary.ifBlank { "(empty)" })
-                when (row.status) {
-                    CalDavOutboxStatus.Pending -> {
-                        if (row.attempts > 0) append("  ·  retries: ${row.attempts}")
-                    }
-                    CalDavOutboxStatus.Failed -> {
-                        append("  ·  ${row.lastError ?: "failed"}")
-                    }
-                }
+            val title = row.summary.ifBlank { ctx.getString(R.string.settings_empty_task) }
+            text = when (row.status) {
+                CalDavOutboxStatus.Pending -> if (row.attempts > 0)
+                    ctx.resources.getQuantityString(R.plurals.settings_task_retries, row.attempts, title, row.attempts)
+                    else title
+                CalDavOutboxStatus.Failed -> ctx.getString(R.string.settings_task_failed, title,
+                    row.lastError ?: ctx.getString(R.string.settings_failed))
             }
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             textSize = 14f
@@ -456,18 +453,18 @@ class SettingsView {
         // Failed rows get Retry + Delete; pending rows get Cancel only.
         if (row.status == CalDavOutboxStatus.Failed) {
             rowView.addView(Button(ctx).apply {
-                text = "Retry"
+                setText(R.string.settings_retry)
                 setOnClickListener {
                     store?.retryCalDavOutboxEntry(row.id) { caldavDrainer?.drainNow() }
                 }
             })
             rowView.addView(Button(ctx).apply {
-                text = "Delete"
+                setText(R.string.settings_delete)
                 setOnClickListener { store?.deleteCalDavOutboxEntry(row.id) }
             })
         } else {
             rowView.addView(Button(ctx).apply {
-                text = "Cancel"
+                setText(R.string.settings_cancel)
                 setOnClickListener { store?.deleteCalDavOutboxEntry(row.id) }
             })
         }
@@ -515,7 +512,7 @@ class SettingsView {
         val user = userField?.text?.toString().orEmpty()
         val pass = passField?.text?.toString().orEmpty()
         if (url.isBlank() || user.isBlank() || pass.isBlank()) {
-            Toast.makeText(view.context, "Fill in URL, username, and password first.", Toast.LENGTH_LONG).show()
+            Toast.makeText(view.context, R.string.settings_connection_incomplete, Toast.LENGTH_LONG).show()
             return
         }
         val creds = CalDavCredentials(collectionUrl = url, username = user, password = pass)
@@ -523,7 +520,7 @@ class SettingsView {
         // just tested (matches the user's mental model of "Test = verify-and-save").
         secureCreds?.setCaldavCreds(creds)
         val s = scope ?: return
-        Toast.makeText(view.context, "Testing…", Toast.LENGTH_SHORT).show()
+        Toast.makeText(view.context, R.string.settings_testing, Toast.LENGTH_SHORT).show()
         s.launch {
             val outcome = withContext(Dispatchers.IO) {
                 runCatching {
@@ -556,15 +553,15 @@ class SettingsView {
                 onSuccess = { code ->
                     val msg = when {
                         // 207 Multi-Status = the canonical PROPFIND success; 200 just in case.
-                        code == 207 || code == 200 -> "Connection ok (HTTP $code)"
-                        code == 401 || code == 403 -> "Auth failed (HTTP $code) — check username/password."
-                        code == 404 -> "Not found (HTTP 404) — check the collection URL."
-                        else -> "Server responded with HTTP $code"
+                        code == 207 || code == 200 -> ctx.getString(R.string.settings_connection_ok, code)
+                        code == 401 || code == 403 -> ctx.getString(R.string.settings_auth_failed, code)
+                        code == 404 -> ctx.getString(R.string.settings_collection_not_found)
+                        else -> ctx.getString(R.string.settings_http_response, code)
                     }
                     Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
                 },
                 onFailure = { t ->
-                    Toast.makeText(ctx, "Not reachable: ${t.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(ctx, ctx.getString(R.string.settings_not_reachable, t.message ?: ctx.getString(R.string.settings_unknown_error)), Toast.LENGTH_LONG).show()
                 },
             )
         }
@@ -586,13 +583,13 @@ class SettingsView {
             // Same rationale as the Download spinner: synchronously place a "Loading…"
             // line so the section isn't blank during the per-language check pass.
             container.removeAllViews()
-            container.addView(TextView(ctx).apply { text = "Loading…" })
+            container.addView(TextView(ctx).apply { setText(R.string.settings_loading) })
             s.launch {
                 val installed = mm.installedLanguages()
                 container.removeAllViews()
                 if (installed.isEmpty()) {
                     val empty = TextView(ctx).apply {
-                        text = "No recognition models installed."
+                        setText(R.string.settings_no_models)
                         setPadding(0, 0, 0, 0)
                     }
                     container.addView(empty)
@@ -608,21 +605,21 @@ class SettingsView {
                         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                     }
                     val del = Button(ctx).apply {
-                        text = "Delete"
+                        setText(R.string.settings_delete)
                         setOnClickListener {
                             AlertDialog.Builder(ctx)
-                                .setTitle("Delete model")
-                                .setMessage("Remove the ${RecognitionModelManager.displayName(lang)} recognition model from this device?")
-                                .setPositiveButton("Delete") { _, _ ->
+                                .setTitle(R.string.settings_delete_model)
+                                .setMessage(ctx.getString(R.string.settings_delete_model_confirm, RecognitionModelManager.displayName(lang)))
+                                .setPositiveButton(R.string.settings_delete) { _, _ ->
                                     s.launch {
                                         val r = mm.delete(lang)
                                         if (r.isFailure) {
-                                            showError(ctx, "Could not delete model.", r.exceptionOrNull())
+                                            showError(ctx, ctx.getString(R.string.settings_delete_model_failed), r.exceptionOrNull())
                                         }
                                         refresh()
                                     }
                                 }
-                                .setNegativeButton("Cancel", null)
+                                .setNegativeButton(R.string.settings_cancel, null)
                                 .show()
                         }
                     }
@@ -640,7 +637,7 @@ class SettingsView {
             // pass can take a beat on a cold MLKit init, and without feedback the
             // tap feels lost. Dismissed as soon as the picker is ready to render.
             val checking = AlertDialog.Builder(ctx)
-                .setTitle("Checking installed models…")
+                .setTitle(R.string.settings_checking_models)
                 .setCancelable(false)
                 .create()
             checking.show()
@@ -652,20 +649,20 @@ class SettingsView {
                 val available = RecognitionModelManager.SUPPORTED_LANGS.filterNot { it in installed }
                 if (available.isEmpty()) {
                     AlertDialog.Builder(ctx)
-                        .setTitle("All models installed")
-                        .setMessage("Every supported language is already downloaded.")
-                        .setPositiveButton("OK", null)
+                        .setTitle(R.string.settings_all_models_installed)
+                        .setMessage(R.string.settings_all_models_description)
+                        .setPositiveButton(android.R.string.ok, null)
                         .show()
                     return@launch
                 }
                 val labels = available.map { RecognitionModelManager.displayName(it) }.toTypedArray()
                 AlertDialog.Builder(ctx)
-                    .setTitle("Download model")
+                    .setTitle(R.string.settings_download_model_title)
                     .setItems(labels) { _, which ->
                         val lang = available[which]
                         val progress = AlertDialog.Builder(ctx)
-                            .setTitle("Downloading…")
-                            .setMessage(RecognitionModelManager.displayName(lang) + " recognition model")
+                            .setTitle(R.string.settings_downloading)
+                            .setMessage(ctx.getString(R.string.settings_recognition_model_name, RecognitionModelManager.displayName(lang)))
                             .setCancelable(false)
                             .create()
                         progress.show()
@@ -673,12 +670,12 @@ class SettingsView {
                             val r = mm.download(lang)
                             try { progress.dismiss() } catch (_: Throwable) {}
                             if (r.isFailure) {
-                                showError(ctx, "Download failed.", r.exceptionOrNull())
+                                showError(ctx, ctx.getString(R.string.settings_download_failed), r.exceptionOrNull())
                             }
                             refresh()
                         }
                     }
-                    .setNegativeButton("Cancel", null)
+                    .setNegativeButton(R.string.settings_cancel, null)
                     .show()
             }
         }
@@ -689,8 +686,8 @@ class SettingsView {
     private fun showError(ctx: android.content.Context, title: String, e: Throwable?) {
         AlertDialog.Builder(ctx)
             .setTitle(title)
-            .setMessage(e?.message ?: "Unknown error.")
-            .setPositiveButton("OK", null)
+            .setMessage(e?.message ?: ctx.getString(R.string.settings_unknown_error))
+            .setPositiveButton(android.R.string.ok, null)
             .show()
     }
 

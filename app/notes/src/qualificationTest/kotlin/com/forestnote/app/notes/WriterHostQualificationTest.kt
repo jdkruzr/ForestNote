@@ -273,6 +273,35 @@ class WriterHostQualificationTest {
                 BooxInkBackend::class.java.getDeclaredField("inputSuspended").apply {isAccessible=true}.get(backend)==false
             }}
             assertEquals(listOf(saved),ink())
+            // Both finger and stylus contacts outside a chooser are dismissal-only.
+            for(toolType in listOf(android.view.MotionEvent.TOOL_TYPE_FINGER,android.view.MotionEvent.TOOL_TYPE_STYLUS)) {
+                withContext(Dispatchers.Main) {writer.findViewById<View>(R.id.cell_fountain).performClick()}
+                waitUntil("Modal Penu Focus") {withContext(Dispatchers.Main) {popup().contentView.hasWindowFocus()}}
+                val opened=withContext(Dispatchers.Main) {popup()}
+                val down=android.os.SystemClock.uptimeMillis()
+                val y=context.resources.displayMetrics.heightPixels*.75f
+                fun send(action:Int,x:Float) {
+                    val properties=android.view.MotionEvent.PointerProperties().apply {this.id=0;this.toolType=toolType}
+                    val coords=android.view.MotionEvent.PointerCoords().apply {this.x=x;this.y=y;pressure=.5f;size=1f}
+                    val event=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,1,
+                        arrayOf(properties),arrayOf(coords),0,0,1f,1f,0,0,
+                        if(toolType==android.view.MotionEvent.TOOL_TYPE_STYLUS) android.view.InputDevice.SOURCE_STYLUS else android.view.InputDevice.SOURCE_TOUCHSCREEN,0)
+                    try {assertTrue(instrumentation.uiAutomation.injectInputEvent(event,true))} finally {event.recycle()}
+                }
+                send(android.view.MotionEvent.ACTION_DOWN,80f);delay(100)
+                send(android.view.MotionEvent.ACTION_MOVE,130f);delay(100)
+                withContext(Dispatchers.Main) {
+                    assertTrue("Chooser must retain the dismissal contact until UP",opened.isShowing)
+                    if(backend is BooxInkBackend) assertEquals(true,
+                        BooxInkBackend::class.java.getDeclaredField("inputSuspended").apply {isAccessible=true}.get(backend))
+                }
+                send(android.view.MotionEvent.ACTION_UP,180f)
+                waitUntil("Dismissed After Contact") {withContext(Dispatchers.Main) {!opened.isShowing && writer.hasWindowFocus()}}
+                if(backend is BooxInkBackend) waitUntil("Firmware Armed For Next Contact") {withContext(Dispatchers.Main) {
+                    BooxInkBackend::class.java.getDeclaredField("inputSuspended").apply {isAccessible=true}.get(backend)==false
+                }}
+                assertEquals(listOf(saved),ink())
+            }
         } finally {
             withContext(Dispatchers.Main) {
                 ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<WriterHostQualificationActivity>().forEach {it.finish()}

@@ -590,7 +590,6 @@ open class MainActivity : Activity() {
             toolBarRoot,
             isEInk,
             settingsPopupsEnabled = true,
-            firmwareOwnsInput = { backend.ownsInput() },
         ) { tool ->
             // A pen-VARIANT pick re-selects the already-active Pen tool (ToolSelectionLogic
             // .selectPenVariant → selectTool(Pen)), so this fires even when nothing changed; gate the
@@ -610,12 +609,10 @@ open class MainActivity : Activity() {
             // variant re-selection stays cheap. No-op on Viwoods/Generic.
             if (backend.requiresInputSurface() && toolChanged) drawView.refreshPanelForUi()
         }
-        // Firmware chooser coexistence: suspend only for the one layout frame before PopupWindow has
-        // measurable bounds, then carve out exactly the popup and resume live ink everywhere else.
-        // A page pen-down is therefore BOTH a complete first stroke and a draw-to-dismiss signal —
-        // Android no longer consumes the beginning of that stroke merely to close the chooser.
+        // Menus are modal: firmware remains suspended until the chooser and its dismissal
+        // contact are gone. The next fresh contact is the first one allowed to write.
         toolBar.onPopupVisibilityChanged = { open ->
-            if (backend.ownsInput()) {
+            if (backend.usesFirmwareInk()) {
                 if (open) backend.setInputSuspended(true)
                 else {
                     backend.setOverlayExcludeScreenRect(null)
@@ -624,12 +621,12 @@ open class MainActivity : Activity() {
             }
         }
         toolBar.onPopupBoundsChanged = { bounds ->
-            if (backend.ownsInput()) {
+            if (backend.usesFirmwareInk()) {
                 backend.setOverlayExcludeScreenRect(bounds)
-                if (bounds != null) backend.setInputSuspended(false)
             }
         }
-        backend.setOnFirmwarePenDown { toolBar.dismissOpenPopup() }
+        // Choosers consume the outside contact through UP before rearming firmware.
+        // Do not turn a dismiss gesture into the first stroke of the next ink session.
         // Propagate pen-variant choice to the canvas (affects width/colour/compositing).
         // Switching variant brings that variant's remembered width level forward (A10).
         toolBar.setOnPenVariantSelected { variant ->

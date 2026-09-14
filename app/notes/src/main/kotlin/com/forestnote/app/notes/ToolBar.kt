@@ -29,16 +29,14 @@ class ToolBar(
     private val root: View,
     private val isEInk: Boolean,
     private val settingsPopupsEnabled: Boolean = true,
-    private val firmwareOwnsInput: () -> Boolean = { false },
     private val onToolSelected: (Tool) -> Unit
 ) {
     /** Fired when a settings PopupWindow opens (true) / dismisses (false). */
     var onPopupVisibilityChanged: ((Boolean) -> Unit)? = null
 
     /**
-     * Screen-space bounds of the showing popup, or null once dismissed. Firmware-input hosts carve
-     * out exactly this rectangle while leaving the rest of the canvas live; that lets a pen-down on
-     * the page dismiss the chooser AND remain the first complete ink stroke.
+     * Screen-space bounds of the showing popup, or null once dismissed. Geometry is
+     * presentation metadata, not permission to resume firmware while a menu is open.
      */
     var onPopupBoundsChanged: ((Rect?) -> Unit)? = null
 
@@ -97,6 +95,23 @@ class ToolBar(
     private fun showTrackedPopup(popup: PopupWindow, anchor: View) {
         openPopup = popup
         onPopupVisibilityChanged?.invoke(true)
+        // A chooser is modal for the entire contact, not just its first DOWN. Keep
+        // firmware paused and prevent PopupWindow's default outside-DOWN dismissal
+        // from rearming it while the stylus is still touching the page.
+        var dismissContact = false
+        popup.setTouchInterceptor { view, event ->
+            if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
+                dismissContact = event.x < 0 || event.y < 0 || event.x >= view.width || event.y >= view.height
+            }
+            if (dismissContact) {
+                if (event.actionMasked == android.view.MotionEvent.ACTION_UP ||
+                    event.actionMasked == android.view.MotionEvent.ACTION_CANCEL) {
+                    dismissContact = false
+                    popup.dismiss()
+                }
+                true
+            } else false
+        }
         val pageRoot=root.rootView
         var lastBounds:Rect?=null
         var keyboardSuspended=false
@@ -138,12 +153,11 @@ class ToolBar(
             publishBounds()
         }
         popup.showAsDropDown(anchor)
-        // PopupWindow has real screen geometry only after showAsDropDown/layout. Keep firmware input
-        // suspended for this tiny setup window; MainActivity resumes it as soon as this rect arrives.
+        // Geometry is available after layout, but firmware stays suspended throughout the chooser.
         popup.contentView.post {publishBounds()}
     }
 
-    /** Dismiss the active chooser, if any (used by firmware draw-to-dismiss pen-down). */
+    /** Dismiss the active chooser, if any (host teardown/navigation only). */
     fun dismissOpenPopup() {
         openPopup?.dismiss()
     }

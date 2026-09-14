@@ -26,8 +26,9 @@ No SQL schema, reader storage, Rhizome contract or production activation changes
 Popup geometry tracking now follows layout changes. While the IME is visible, firmware
 input is suspended entirely rather than excluding only the popup rectangle. After the
 keyboard leaves, popup exclusion or normal input resumes. Dismissal hides the IME and
-does not trust stale insets from a detached popup. Ordinary outside-pen draw-to-dismiss
-behavior remains in place; physical pen feel still needs human verification.
+does not trust stale insets from a detached popup. The initial D60 build retained an
+outside-pen stroke while dismissing; the user confirmed it worked but explicitly changed
+the desired interaction. The revision below supersedes that behavior.
 
 ## Qualification evidence
 
@@ -56,7 +57,35 @@ Installed candidate app SHA-256:
 Test APK: `0c8691e25ec459303920536b2b3f7ced2f1635bf19cdb214dfe4b2624d562d27`.
 Certificate-matched in-place upgrades only; no uninstall/data clear.
 
-## Next
+## User revision: visible choices and dismissal-only contacts
+
+Every pen choice now has an outlined rounded frame with spacing between choices; the
+selected choice keeps its black fill. Native writer pen, text and eraser choosers are
+modal for the entire contact. Their touch interceptor consumes an outside DOWN/MOVE
+through UP/CANCEL, then dismisses; firmware remains paused throughout. No ink is accepted
+from the dismissal gesture. The next fresh contact can draw. This is not merely deleting
+a previewed stroke after saving it. The former firmware draw-to-dismiss callback is no
+longer wired by MainActivity.
+
+Resume checks use `usesFirmwareInk`, not `ownsInput`: Viwoods dynamically stops reporting
+input ownership while suspended, so the latter would prevent it from ever resuming.
+This is code-level Viwoods coverage; integrated physical Viwoods testing remains open.
+
+`native-modal.log` passes the focused writer/row tests, including injected finger and
+stylus contacts, suspension until lift, unchanged ink and subsequent rearming. The
+user's physical test stroke is retained: the interactive library now has 40 writer
+strokes, not 39. Do not remove human ink to restore an old test count.
+
+Final revision: `build-modal-final2.log` passes normal/qualification builds and 486 app
+JVM tests (including the Settings guards). `native-modal-full.log` passes **47 Go tests**
+in 71.149 seconds. Before/after revision-test databases are byte-identical, including
+the human test stroke; normal FN hash is unchanged. The installed app matches SHA-256
+`573e9c8a2dcd727077690b320e270edd88de406338e193d3aec64c08dc21379c`;
+test APK is `f7405dd60cdce298af286ef711392e031531ca8f86df16e7f3d9c2c59cb557f5`.
+Those artifacts include D61 Settings resource extraction. Physical verification of
+the revised dismissal-only behavior is the next human check.
+
+## Remaining work
 
 Shared Settings must separate local preferences from owner-held credentials,
 enrollment, backup/restore and network actions before attaching them to the shelf.

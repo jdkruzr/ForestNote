@@ -27,7 +27,7 @@
             android:id="@+id/btn_settings_back"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="←  Library"
+            android:text="@string/settings_back_library"
             android:textColor="@color/black"
             android:textSize="18sp"
             android:padding="8dp" />
@@ -37,7 +37,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:gravity="center"
-            android:text="Settings"
+            android:text="@string/settings_title"
             android:textColor="@color/black"
             android:textSize="18sp"
             android:textStyle="bold" />
@@ -68,9 +68,9 @@
             android:paddingBottom="32dp">
 
             <!-- ===== Editor ===== -->
-            <TextView style="@style/SettingsSection" android:text="Editor" />
+            <TextView style="@style/SettingsSection" android:text="@string/settings_editor" />
 
-            <TextView style="@style/SettingsLabel" android:text="Default page template" />
+            <TextView style="@style/SettingsLabel" android:text="@string/settings_default_page_template" />
 
             <RadioGroup
                 android:id="@+id/rg_template"
@@ -78,10 +78,10 @@
                 android:layout_height="wrap_content"
                 android:orientation="horizontal">
 
-                <RadioButton android:id="@+id/rb_template_blank" style="@style/SettingsRadio" android:text="Blank" />
-                <RadioButton android:id="@+id/rb_template_dot" style="@style/SettingsRadio" android:text="Dot" />
-                <RadioButton android:id="@+id/rb_template_ruled" style="@style/SettingsRadio" android:text="Ruled" />
-                <RadioButton android:id="@+id/rb_template_grid" style="@style/SettingsRadio" android:text="Grid" />
+                <RadioButton android:id="@+id/rb_template_blank" style="@style/SettingsRadio" android:text="@string/settings_blank" />
+                <RadioButton android:id="@+id/rb_template_dot" style="@style/SettingsRadio" android:text="@string/settings_dot" />
+                <RadioButton android:id="@+id/rb_template_ruled" style="@style/SettingsRadio" android:text="@string/settings_ruled" />
+                <RadioButton android:id="@+id/rb_template_grid" style="@style/SettingsRadio" android:text="@string/settings_grid" />
             </RadioGroup>
 
             <!-- Pitch row: shown only when template != Blank; buttons added in code. -->
@@ -91,7 +91,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <TextView style="@style/SettingsLabel" android:text="Pitch" />
+                <TextView style="@style/SettingsLabel" android:text="@string/settings_pitch" />
 
                 <HorizontalScrollView
                     android:layout_width="match_parent"
@@ -107,9 +107,9 @@
             </LinearLayout>
 
             <!-- ===== Startup ===== -->
-            <TextView style="@style/SettingsSection" android:text="Startup" />
+            <TextView style="@style/SettingsSection" android:text="@string/settings_startup" />
 
-            <TextView style="@style/SettingsLabel" android:text="When the app opens" />
+            <TextView style="@style/SettingsLabel" android:text="@string/settings_when_the_app_opens" />
 
             <RadioGroup
                 android:id="@+id/rg_start_view"
@@ -117,8 +117,8 @@
                 android:layout_height="wrap_content"
                 android:orientation="horizontal">
 
-                <RadioButton android:id="@+id/rb_start_last" style="@style/SettingsRadio" android:text="Last notebook" />
-                <RadioButton android:id="@+id/rb_start_library" style="@style/SettingsRadio" android:text="Library" />
+                <RadioButton android:id="@+id/rb_start_last" style="@style/SettingsRadio" android:text="@string/settings_last_notebook" />
+                <RadioButton android:id="@+id/rb_start_library" style="@style/SettingsRadio" android:text="@string/settings_library" />
             </RadioGroup>
 
             <CheckBox
@@ -128,17 +128,17 @@
                 android:minHeight="44dp"
                 android:textSize="15sp"
                 android:textColor="@color/black"
-                android:text="Pre-fill new-notebook names with timestamp (YYYYMMDD_HHMMSS)" />
+                android:text="@string/settings_prefill_timestamp" />
 
             <!-- ===== Local data ===== -->
-            <TextView style="@style/SettingsSection" android:text="Local data" />
+            <TextView style="@style/SettingsSection" android:text="@string/settings_local_data" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:textColor="@color/gray_dark"
                 android:textSize="13sp"
-                android:text="Backups contain notebooks and app settings. Passwords are never included." />
+                android:text="@string/settings_backup_description" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -150,18 +150,18 @@
                     android:id="@+id/btn_backup_library"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Create backup…" />
+                    android:text="@string/settings_create_backup" />
 
                 <Button
                     android:id="@+id/btn_restore_library"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="12dp"
-                    android:text="Restore backup…" />
+                    android:text="@string/settings_restore_backup" />
             </LinearLayout>
 
             <!-- ===== Sync ===== -->
-            <TextView style="@style/SettingsSection" android:text="Sync" />
+            <TextView style="@style/SettingsSection" android:text="@string/settings_sync" />
 
             <CheckBox
                 android:id="@+id/check_sync_enabled"
@@ -170,29 +170,29 @@
                 android:minHeight="44dp"
                 android:textSize="15sp"
                 android:textColor="@color/black"
-                android:text="Enable network sync (off means this device stays local-only)" />
+                android:text="@string/settings_sync_enabled" />
 
-            <TextView style="@style/SettingsLabel" android:text="Sync server URL" />
+            <TextView style="@style/SettingsLabel" android:text="@string/settings_sync_server_url" />
             <EditText
                 android:id="@+id/input_sync_url"
                 style="@style/SettingsInput"
-                android:hint="https://…"
+                android:hint="@string/settings_hint_https"
                 android:inputType="textUri"
                 android:imeOptions="actionDone" />
 
-            <TextView style="@style/SettingsLabel" android:text="Username" />
+            <TextView style="@style/SettingsLabel" android:text="@string/settings_username" />
             <EditText
                 android:id="@+id/input_sync_username"
                 style="@style/SettingsInput"
-                android:hint="username"
+                android:hint="@string/settings_hint_username"
                 android:inputType="text"
                 android:imeOptions="actionDone" />
 
-            <TextView style="@style/SettingsLabel" android:text="Password" />
+            <TextView style="@style/SettingsLabel" android:text="@string/settings_password" />
             <EditText
                 android:id="@+id/input_sync_password"
                 style="@style/SettingsInput"
-                android:hint="password"
+                android:hint="@string/settings_hint_password"
                 android:inputType="textPassword"
                 android:imeOptions="actionDone" />
 
@@ -200,14 +200,14 @@
                 android:id="@+id/btn_sync_save"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Save credentials"
+                android:text="@string/settings_save_credentials"
                 android:layout_marginTop="8dp" />
 
-            <TextView style="@style/SettingsLabel" android:text="Auto-sync every N minutes (0 = off)" />
+            <TextView style="@style/SettingsLabel" android:text="@string/settings_sync_interval" />
             <EditText
                 android:id="@+id/input_sync_interval"
                 style="@style/SettingsInput"
-                android:hint="15"
+                android:hint="@string/settings_hint_sync_interval"
                 android:inputType="number"
                 android:imeOptions="actionDone" />
 
@@ -218,17 +218,17 @@
                 android:minHeight="44dp"
                 android:textSize="15sp"
                 android:textColor="@color/black"
-                android:text="Sync when returning to Library (only if there are unsynced changes)" />
+                android:text="@string/settings_sync_on_close" />
 
             <!-- ===== Full-page transcription ===== -->
-            <TextView style="@style/SettingsSection" android:text="Full-page transcription" />
+            <TextView style="@style/SettingsSection" android:text="@string/settings_full_page_transcription" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:textColor="@color/gray_dark"
                 android:textSize="13sp"
-                android:text="Optional and manual. ForestNote uploads a page only when you tap Run endpoint; selection recognition remains on-device." />
+                android:text="@string/settings_transcription_description" />
 
             <RadioGroup
                 android:id="@+id/rg_transcription_provider"
@@ -240,17 +240,17 @@
                 <RadioButton
                     android:id="@+id/rb_transcription_off"
                     style="@style/SettingsRadio"
-                    android:text="Off (local-only)" />
+                    android:text="@string/settings_off_local_only" />
 
                 <RadioButton
                     android:id="@+id/rb_transcription_openai"
                     style="@style/SettingsRadio"
-                    android:text="OpenAI-compatible" />
+                    android:text="@string/settings_openai_compatible" />
 
                 <RadioButton
                     android:id="@+id/rb_transcription_anthropic"
                     style="@style/SettingsRadio"
-                    android:text="Anthropic-compatible" />
+                    android:text="@string/settings_anthropic_compatible" />
             </RadioGroup>
 
             <LinearLayout
@@ -259,27 +259,27 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <TextView style="@style/SettingsLabel" android:text="Base URL" />
+                <TextView style="@style/SettingsLabel" android:text="@string/settings_base_url" />
                 <EditText
                     android:id="@+id/input_transcription_base_url"
                     style="@style/SettingsInput"
-                    android:hint="https://api.example/v1"
+                    android:hint="@string/settings_hint_transcription_url"
                     android:inputType="textUri"
                     android:imeOptions="actionNext" />
 
-                <TextView style="@style/SettingsLabel" android:text="Vision-capable model" />
+                <TextView style="@style/SettingsLabel" android:text="@string/settings_vision_capable_model" />
                 <EditText
                     android:id="@+id/input_transcription_model"
                     style="@style/SettingsInput"
-                    android:hint="model identifier"
+                    android:hint="@string/settings_hint_model_identifier"
                     android:inputType="text"
                     android:imeOptions="actionNext" />
 
-                <TextView style="@style/SettingsLabel" android:text="API key (optional for local endpoints)" />
+                <TextView style="@style/SettingsLabel" android:text="@string/settings_transcription_api_key" />
                 <EditText
                     android:id="@+id/input_transcription_api_key"
                     style="@style/SettingsInput"
-                    android:hint="stored encrypted; not included in backups"
+                    android:hint="@string/settings_hint_encrypted_key"
                     android:inputType="textPassword"
                     android:imeOptions="actionDone" />
 
@@ -293,14 +293,14 @@
                         android:id="@+id/btn_transcription_save"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Save" />
+                        android:text="@string/settings_save" />
 
                     <Button
                         android:id="@+id/btn_transcription_test"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="12dp"
-                        android:text="Test endpoint" />
+                        android:text="@string/settings_test_endpoint" />
                 </LinearLayout>
             </LinearLayout>
 
@@ -309,9 +309,9 @@
                  populated programmatically by SettingsView with a row per installed
                  language plus a Delete affordance. The Download button opens an
                  AlertDialog with a language picker. -->
-            <TextView style="@style/SettingsSection" android:text="Recognition models" />
+            <TextView style="@style/SettingsSection" android:text="@string/settings_recognition_models" />
 
-            <TextView style="@style/SettingsLabel" android:text="Installed languages" />
+            <TextView style="@style/SettingsLabel" android:text="@string/settings_installed_languages" />
             <LinearLayout
                 android:id="@+id/container_recognition_models"
                 android:layout_width="match_parent"
@@ -322,7 +322,7 @@
                 android:id="@+id/btn_download_recognition_model"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Download model…"
+                android:text="@string/settings_download_model"
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="16dp" />
 
@@ -331,7 +331,7 @@
                  appear after recognition when all three fields below are non-blank.
                  Credentials are stored in EncryptedSharedPreferences via SecureCredentialsStore,
                  NOT in the Settings JSON blob (which previously held only the URL). -->
-            <TextView style="@style/SettingsSection" android:text="Calendar (CalDAV tasks)" />
+            <TextView style="@style/SettingsSection" android:text="@string/settings_calendar_caldav_tasks" />
 
             <!-- Feature 2: the to-do → source-page back-links (the forestnote:// native URL
                  and the https web link) only resolve end-to-end when the CalDAV server is
@@ -344,13 +344,13 @@
                 android:textSize="12sp"
                 android:paddingTop="2dp"
                 android:paddingBottom="4dp"
-                android:text="Note: to-do → note links open the source page only when this is an UltraBridge server. Other CalDAV servers still store the task, but the back-links won't resolve." />
+                android:text="@string/settings_caldav_links_description" />
 
-            <TextView style="@style/SettingsLabel" android:text="Collection URL" />
+            <TextView style="@style/SettingsLabel" android:text="@string/settings_collection_url" />
             <EditText
                 android:id="@+id/input_caldav_url"
                 style="@style/SettingsInput"
-                android:hint="https://nc.example.com/remote.php/dav/calendars/USER/tasks/"
+                android:hint="@string/settings_hint_caldav_url"
                 android:inputType="textUri"
                 android:imeOptions="actionDone" />
 
@@ -360,21 +360,21 @@
                 android:textColor="@color/gray_dark"
                 android:textSize="12sp"
                 android:paddingTop="2dp"
-                android:text="iCloud: caldav.icloud.com (use an app-specific password)" />
+                android:text="@string/settings_icloud_description" />
 
-            <TextView style="@style/SettingsLabel" android:text="Username" />
+            <TextView style="@style/SettingsLabel" android:text="@string/settings_username" />
             <EditText
                 android:id="@+id/input_caldav_username"
                 style="@style/SettingsInput"
-                android:hint="username"
+                android:hint="@string/settings_hint_username"
                 android:inputType="text"
                 android:imeOptions="actionDone" />
 
-            <TextView style="@style/SettingsLabel" android:text="Password" />
+            <TextView style="@style/SettingsLabel" android:text="@string/settings_password" />
             <EditText
                 android:id="@+id/input_caldav_password"
                 style="@style/SettingsInput"
-                android:hint="password"
+                android:hint="@string/settings_hint_password"
                 android:inputType="textPassword"
                 android:imeOptions="actionDone" />
 
@@ -382,14 +382,14 @@
                 android:id="@+id/btn_caldav_save"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Save credentials"
+                android:text="@string/settings_save_credentials"
                 android:layout_marginTop="8dp" />
 
             <Button
                 android:id="@+id/btn_caldav_test"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Test connection"
+                android:text="@string/settings_test_connection"
                 android:layout_marginTop="8dp" />
 
             <!-- Offline-queue UI: populated by SettingsView from
@@ -399,7 +399,7 @@
             <TextView
                 android:id="@+id/label_caldav_queued"
                 style="@style/SettingsLabel"
-                android:text="Queued tasks"
+                android:text="@string/settings_queued_tasks"
                 android:paddingTop="16dp"
                 android:visibility="gone" />
 
@@ -413,23 +413,23 @@
                 android:id="@+id/btn_caldav_drain_now"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Drain now"
+                android:text="@string/settings_drain_now"
                 android:layout_marginTop="4dp"
                 android:visibility="gone" />
 
             <!-- ===== Recycle Bin ===== -->
-            <TextView style="@style/SettingsSection" android:text="Recycle Bin" />
+            <TextView style="@style/SettingsSection" android:text="@string/settings_recycle_bin" />
 
-            <TextView style="@style/SettingsLabel" android:text="Auto-empty after N days (0 = never)" />
+            <TextView style="@style/SettingsLabel" android:text="@string/settings_recycle_retention" />
             <EditText
                 android:id="@+id/input_bin_retention_days"
                 style="@style/SettingsInput"
-                android:hint="0"
+                android:hint="@string/settings_hint_retention"
                 android:inputType="number"
                 android:imeOptions="actionDone" />
 
             <!-- ===== Debug ===== -->
-            <TextView style="@style/SettingsSection" android:text="Debug" />
+            <TextView style="@style/SettingsSection" android:text="@string/settings_debug" />
 
             <CheckBox
                 android:id="@+id/check_viwoods_native_preview"
@@ -439,7 +439,7 @@
                 android:textSize="15sp"
                 android:textColor="@color/black"
                 android:visibility="gone"
-                android:text="Use fastest Viwoods ink (recommended)" />
+                android:text="@string/settings_viwoods_preview" />
 
             <CheckBox
                 android:id="@+id/check_debug_logs"
@@ -448,13 +448,13 @@
                 android:minHeight="44dp"
                 android:textSize="15sp"
                 android:textColor="@color/black"
-                android:text="Write debug logs to /sdcard/Download" />
+                android:text="@string/settings_debug_logs" />
 
             <!-- ===== About =====
                  Text is set in code from packageManager.getPackageInfo(...).versionName so it
                  can never drift from the manifest. Sits at the bottom so it doesn't crowd
                  actionable rows. -->
-            <TextView style="@style/SettingsSection" android:text="About" />
+            <TextView style="@style/SettingsSection" android:text="@string/settings_about" />
 
             <TextView
                 android:id="@+id/text_app_version"

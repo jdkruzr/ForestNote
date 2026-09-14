@@ -1,0 +1,104 @@
+<resources>
+    <!-- Settings chrome only. Stored enum keys, credentials and user data are not translated. -->
+    <string name="settings_back_library">←  Library</string>
+    <string name="settings_title">Settings</string>
+    <string name="settings_editor">Editor</string>
+    <string name="settings_default_page_template">Default page template</string>
+    <string name="settings_blank">Blank</string>
+    <string name="settings_dot">Dot</string>
+    <string name="settings_ruled">Ruled</string>
+    <string name="settings_grid">Grid</string>
+    <string name="settings_pitch">Pitch</string>
+    <string name="settings_startup">Startup</string>
+    <string name="settings_when_the_app_opens">When the app opens</string>
+    <string name="settings_last_notebook">Last notebook</string>
+    <string name="settings_library">Library</string>
+    <string name="settings_prefill_timestamp">Pre-fill new-notebook names with timestamp (YYYYMMDD_HHMMSS)</string>
+    <string name="settings_local_data">Local data</string>
+    <string name="settings_backup_description">Backups contain notebooks and app settings. Passwords are never included.</string>
+    <string name="settings_create_backup">Create backup…</string>
+    <string name="settings_restore_backup">Restore backup…</string>
+    <string name="settings_sync">Sync</string>
+    <string name="settings_sync_enabled">Enable network sync (off means this device stays local-only)</string>
+    <string name="settings_sync_server_url">Sync server URL</string>
+    <string name="settings_hint_https" translatable="false">https://…</string>
+    <string name="settings_username">Username</string>
+    <string name="settings_hint_username">username</string>
+    <string name="settings_password">Password</string>
+    <string name="settings_hint_password">password</string>
+    <string name="settings_save_credentials">Save credentials</string>
+    <string name="settings_sync_interval">Auto-sync every N minutes (0 = off)</string>
+    <string name="settings_hint_sync_interval" translatable="false">15</string>
+    <string name="settings_sync_on_close">Sync when returning to Library (only if there are unsynced changes)</string>
+    <string name="settings_full_page_transcription">Full-page transcription</string>
+    <string name="settings_transcription_description">Optional and manual. ForestNote uploads a page only when you tap Run endpoint; selection recognition remains on-device.</string>
+    <string name="settings_off_local_only">Off (local-only)</string>
+    <string name="settings_openai_compatible">OpenAI-compatible</string>
+    <string name="settings_anthropic_compatible">Anthropic-compatible</string>
+    <string name="settings_base_url">Base URL</string>
+    <string name="settings_hint_transcription_url" translatable="false">https://api.example/v1</string>
+    <string name="settings_vision_capable_model">Vision-capable model</string>
+    <string name="settings_hint_model_identifier">model identifier</string>
+    <string name="settings_transcription_api_key">API key (optional for local endpoints)</string>
+    <string name="settings_hint_encrypted_key">stored encrypted; not included in backups</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_test_endpoint">Test endpoint</string>
+    <string name="settings_recognition_models">Recognition models</string>
+    <string name="settings_installed_languages">Installed languages</string>
+    <string name="settings_download_model">Download model…</string>
+    <string name="settings_calendar_caldav_tasks">Calendar (CalDAV tasks)</string>
+    <string name="settings_caldav_links_description">Note: to-do → note links open the source page only when this is an UltraBridge server. Other CalDAV servers still store the task, but the back-links won\'t resolve.</string>
+    <string name="settings_collection_url">Collection URL</string>
+    <string name="settings_hint_caldav_url" translatable="false">https://nc.example.com/remote.php/dav/calendars/USER/tasks/</string>
+    <string name="settings_icloud_description">iCloud: caldav.icloud.com (use an app-specific password)</string>
+    <string name="settings_test_connection">Test connection</string>
+    <string name="settings_queued_tasks">Queued tasks</string>
+    <string name="settings_drain_now">Drain now</string>
+    <string name="settings_recycle_bin">Recycle Bin</string>
+    <string name="settings_recycle_retention">Auto-empty after N days (0 = never)</string>
+    <string name="settings_hint_retention" translatable="false">0</string>
+    <string name="settings_debug">Debug</string>
+    <string name="settings_viwoods_preview">Use fastest Viwoods ink (recommended)</string>
+    <string name="settings_debug_logs">Write debug logs to /sdcard/Download</string>
+    <string name="settings_about">About</string>
+    <string name="settings_pitch_mm">%1$d mm</string>
+    <string name="settings_sync_saved">Sync credentials saved</string>
+    <string name="settings_transcription_saved">Transcription settings saved</string>
+    <string name="settings_transcription_incomplete">Choose a provider and enter its base URL and model.</string>
+    <string name="settings_testing_without_page">Testing without uploading a page…</string>
+    <string name="settings_endpoint_ok">Endpoint connection OK</string>
+    <string name="settings_endpoint_failed">Endpoint test failed: %1$s</string>
+    <string name="settings_caldav_saved">CalDAV credentials saved</string>
+    <string name="settings_app_name" translatable="false">ForestNote</string>
+    <string name="settings_app_version" translatable="false">ForestNote %1$s</string>
+    <string name="settings_empty_task">(empty)</string>
+    <string name="settings_task_failed">%1$s · %2$s</string>
+    <string name="settings_failed">failed</string>
+    <plurals name="settings_task_retries">
+        <item quantity="one">%1$s · %2$d retry</item>
+        <item quantity="other">%1$s · %2$d retries</item>
+    </plurals>
+    <string name="settings_retry">Retry</string>
+    <string name="settings_delete">Delete</string>
+    <string name="settings_cancel">Cancel</string>
+    <string name="settings_connection_incomplete">Fill in URL, username, and password first.</string>
+    <string name="settings_testing">Testing…</string>
+    <string name="settings_connection_ok">Connection OK (HTTP %1$d)</string>
+    <string name="settings_auth_failed">Auth failed (HTTP %1$d) — check username/password.</string>
+    <string name="settings_collection_not_found">Not found (HTTP 404) — check the collection URL.</string>
+    <string name="settings_http_response">Server responded with HTTP %1$d</string>
+    <string name="settings_not_reachable">Not reachable: %1$s</string>
+    <string name="settings_loading">Loading…</string>
+    <string name="settings_no_models">No recognition models installed.</string>
+    <string name="settings_delete_model">Delete Model</string>
+    <string name="settings_delete_model_confirm">Remove the %1$s recognition model from this device?</string>
+    <string name="settings_delete_model_failed">Could not delete model.</string>
+    <string name="settings_checking_models">Checking Installed Models…</string>
+    <string name="settings_all_models_installed">All Models Installed</string>
+    <string name="settings_all_models_description">Every supported language is already downloaded.</string>
+    <string name="settings_download_model_title">Download Model</string>
+    <string name="settings_downloading">Downloading…</string>
+    <string name="settings_recognition_model_name">%1$s recognition model</string>
+    <string name="settings_download_failed">Download failed.</string>
+    <string name="settings_unknown_error">Unknown error.</string>
+</resources>
