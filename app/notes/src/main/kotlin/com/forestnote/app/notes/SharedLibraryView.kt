@@ -20,6 +20,7 @@ internal class SharedLibraryView(
     private val onOpenBook:(String,Boolean)->Unit,private val onImport:()->Unit,
     private val onClose:()->Unit,private val notebookCallbacks:LibraryView.Callbacks?=null,
     private val onBookChanged:(String,Boolean,String?)->Unit={_,_,_->},
+    private val onOpenNotebook:((String)->Unit)?=null,
 ):LinearLayout(context) {
     private val state=books.libraryUi
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
@@ -88,20 +89,21 @@ internal class SharedLibraryView(
         shelfButtons.forEach {(key,b)->b.isSelected=key==shelf;b.setTypeface(null,if(key==shelf) 1 else 0)}
         if(shelf==SharedLibraryState.Shelf.BOOKS) restoreBookPosition(generation)
         if(shelf==SharedLibraryState.Shelf.NOTEBOOKS && !notebooks.isShowing) {
-            fun notice() {Toast.makeText(context,R.string.shared_library_writer_pending,Toast.LENGTH_LONG).show()}
+            fun notice() {Toast.makeText(context,if(onOpenNotebook==null) R.string.shared_library_writer_pending else R.string.shared_writer_management_pending,Toast.LENGTH_LONG).show()}
             val callbacks=notebookCallbacks ?: LibraryView.Callbacks(
-                onOpenNotebook={notice()},onNotebookProperties={notice()},onNewNotebook={notice()},onNewFolder={notice()},
+                onOpenNotebook={card->onOpenNotebook?.invoke(card.id) ?: notice()},onNotebookProperties={notice()},onNewNotebook={notice()},onNewFolder={notice()},
                 onFolderProperties={notice()},onOpenSettings={notice()},onOpenRecycleBin={notice()},onSyncNow={notice()},
                 onOpenSearch={notice()},onBulkMove={notice()},onBulkExport={notice()},onBulkDelete={notice()})
             if(notebookCallbacks==null) {
                 val content=LinearLayout(context).apply {orientation=VERTICAL}
-                content.addView(TextView(context).apply {text=context.getString(R.string.shared_library_writer_pending);textSize=12f;setPadding(pixels(8),pixels(4),pixels(8),pixels(4))})
+                if(onOpenNotebook==null) content.addView(TextView(context).apply {text=context.getString(R.string.shared_library_writer_pending);textSize=12f;setPadding(pixels(8),pixels(4),pixels(8),pixels(4))})
                 val shelfHost=FrameLayout(context);content.addView(shelfHost,LayoutParams(-1,0,1f));notebookHost.addView(content)
                 notebooks.show(shelfHost,store,callbacks,state.notebooks,readOnly=true)
             } else notebooks.show(notebookHost,store,callbacks,state.notebooks)
         }
     }
     fun changed() {load(true)}
+    fun notebookChanged() {if(notebooks.isShowing) notebooks.reload()}
     private fun load(reset:Boolean,delayMillis:Long=0,preserveScroll:Boolean=false) {
         fetch?.cancel();val epoch=++generation
         if(reset) {after=null;scanned=0;shown=0;rows.removeAllViews();if(!preserveScroll) {restoreScroll=false;state.bookScroll=0;scroll.scrollTo(0,0)}}

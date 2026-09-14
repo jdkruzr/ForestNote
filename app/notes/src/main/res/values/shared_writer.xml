@@ -1,0 +1,4 @@
+<resources>
+    <string name="shared_writer_unavailable">Shared Writer Unavailable. Return To Library Setup.</string>
+    <string name="shared_writer_management_pending">Notebook Management In The Shared Library Comes Next.</string>
+</resources>

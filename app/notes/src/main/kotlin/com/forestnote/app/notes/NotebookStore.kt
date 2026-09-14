@@ -212,6 +212,10 @@ class NotebookStore(
         readerForeground=false; readerRuntime?.pause();readerLibrary?.pauseRecognition()
         mixedSync?.foregroundChanged(false)
     }
+    /** Wake only a driver already configured by the owner. Never discover creds or enroll here. */
+    internal fun wakeExistingSharedSync() = synchronized(lifecycleLock) {
+        if (!closing) mixedSync?.localChanged()
+    }
     internal suspend fun readerWorkStatus(): String = onDb { requireNotNull(readerRuntime).status.value }
     internal suspend fun readerIdentity(): Pair<String,String> = onDb {
         requireNotNull(readerRuntime).let { it.libraryId to it.storage.actor }

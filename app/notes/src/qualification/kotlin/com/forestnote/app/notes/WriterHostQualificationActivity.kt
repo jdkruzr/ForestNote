@@ -1,0 +1,16 @@
+package com.forestnote.app.notes
+
+/** Uses the actual writer, but never its production database factory or legacy sync driver.
+ * If Android restores this screen without its process owner, fail closed to Library Setup. */
+class WriterHostQualificationActivity : MainActivity() {
+    internal override val requiresWriterAttachment = true
+    internal override fun writerAttachment(): WriterAttachment? {
+        check(packageName == "com.forestnote.qualification")
+        val notebook = intent.getStringExtra(NOTEBOOK)?.takeIf { it.isNotBlank() } ?: return null
+        val store = ReaderHostQualificationSession.store
+            ?: runCatching { SetupQualificationSession.host?.readerStore() }.getOrNull()
+            ?: return null
+        return WriterAttachment(store, notebook)
+    }
+    companion object { const val NOTEBOOK = "notebook" }
+}

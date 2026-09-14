@@ -271,6 +271,10 @@ the headless result does not activate production integration.
    approved switch, reused browse-only notebook shelf and book search/import/availability/actions
    against that same owner. Real writer-editor attachment and its callbacks remain next; neither
    this qualified surface nor its reader integration enables production storage.
+   **D48 writer attachment:** [real notebook editor borrowing that owner](2026-09-13-forestread-shared-writer-attachment.md)
+   opens from the shared shelf, saves normal writer ink to the same database/outbox, and returns
+   without shutting down the owner or starting legacy sync. Notebook-management callback extraction,
+   writer Penu adoption and full shared navigation polish remain next; production stays gated.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

@@ -23,6 +23,7 @@
         <activity android:name=".StorageQualificationActivity" android:exported="false" />
         <activity android:name=".ReaderHostQualificationActivity" android:exported="false" android:windowSoftInputMode="adjustNothing" />
         <activity android:name=".ReaderInkQualificationActivity" android:exported="false" />
+        <activity android:name=".WriterHostQualificationActivity" android:exported="false" android:windowSoftInputMode="adjustNothing" />
         <activity android:name=".MainActivity" android:enabled="false" android:exported="false"
             tools:replace="android:exported" />
     </application>

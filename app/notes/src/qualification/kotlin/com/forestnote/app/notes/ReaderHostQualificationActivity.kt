@@ -16,6 +16,7 @@ class ReaderHostQualificationActivity:Activity() {
     private var store:NotebookStore?=null
     private var backend:InkBackend?=null
     private var resumed=false
+    private var launchingWriter=false
     private var libraryView:SharedLibraryView?=null
     private lateinit var content:android.widget.FrameLayout
     override fun onCreate(state:Bundle?) {
@@ -60,7 +61,15 @@ class ReaderHostQualificationActivity:Activity() {
                     if(deleted) recreate() // Dispose the now-trashed render lease; return to the same shelf.
                     else host?.web?.evaluateJavascript("window.forestReadLibraryTitle?.(${org.json.JSONObject.quote(book)},${org.json.JSONObject.quote(title)})",null)
                 }
-            }).also {content.addView(it)}
+            },onOpenNotebook=if(ReaderHostQualificationSession.store==null || ReaderHostQualificationSession.writer) ({notebook ->
+                if(!launchingWriter && host?.editing!=true) {
+                    launchingWriter=true
+                    libraryView?.remember()
+                    backend?.setInputSuspended(true)
+                    startActivity(Intent(this,WriterHostQualificationActivity::class.java)
+                        .putExtra(WriterHostQualificationActivity.NOTEBOOK,notebook))
+                }
+            }) else null).also {content.addView(it)}
         }
         libraryView?.visibility=android.view.View.VISIBLE
         libraryView?.post {libraryView?.takeIf {it.visibility==android.view.View.VISIBLE}?.let {backend?.refreshUiFrame(it)}}
@@ -85,7 +94,11 @@ class ReaderHostQualificationActivity:Activity() {
             catch(_:Exception) {android.widget.Toast.makeText(this@ReaderHostQualificationActivity,"Import Failed; Original File Preserved",android.widget.Toast.LENGTH_LONG).show()}
         }
     }
-    override fun onResume() {super.onResume();resumed=true;store?.resumeReaderWork();host?.resume()}
+    override fun onResume() {
+        super.onResume();resumed=true
+        if(launchingWriter) libraryView?.notebookChanged()
+        launchingWriter=false;store?.resumeReaderWork();host?.resume()
+    }
     override fun onPause() {resumed=false;libraryView?.remember();host?.pause();store?.pauseReaderWork();super.onPause()}
     @Deprecated("Qualification guards the active document edit")
     override fun onBackPressed() {
@@ -101,6 +114,7 @@ class ReaderHostQualificationActivity:Activity() {
 }
 internal object ReaderHostQualificationSession {
     @Volatile var sharedLibrary=false
+    @Volatile var writer=false
     @Volatile var refreshes:Int=0
     @Volatile var store:NotebookStore?=null
     @Volatile var view:ReaderHostView?=null

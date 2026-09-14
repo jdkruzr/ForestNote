@@ -88,14 +88,21 @@ import java.util.concurrent.TimeUnit
  * - onResume: re-acquire WritingBufferQueue, reset bitmap
  * - onDestroy: drain + shut down the store, release backend
  */
-class MainActivity : Activity() {
+open class MainActivity : Activity() {
+    internal open fun writerAttachment(): WriterAttachment? = null
+    internal open val requiresWriterAttachment: Boolean = false
+    private var attachment: WriterAttachment? = null
+    private var writerForeground = false
+    private var deferredAttachedNotebook: String? = null
+    private fun attachedWriterMayPaint() = attachment == null ||
+        (writerForeground && !isFinishing && !isDestroyed)
     private lateinit var drawView: DrawView
     private lateinit var backend: InkBackend
     private lateinit var store: NotebookStore
     // UltraBridge sync (Phase 5). Main-scoped so status collection can touch views directly; the
     // engine's network/DB work hops to IO / the store's executor internally.
     private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private lateinit var syncController: SyncController
+    private var syncController: SyncController? = null
     private lateinit var fileLogger: FileLogger
     private lateinit var toolBar: ToolBar
     private lateinit var pageIndicator: TextView
@@ -204,6 +211,12 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        attachment = writerAttachment()
+        if (requiresWriterAttachment && attachment == null) {
+            setContentView(TextView(this).apply { setText(R.string.shared_writer_unavailable) })
+            finish()
+            return
+        }
         installCrashHandler()
 
         // Read the cached "start in Library" preference SYNCHRONOUSLY before anything
@@ -214,8 +227,8 @@ class MainActivity : Activity() {
         // worst case (user just toggled and the cache is stale) is a one-launch lag
         // that self-corrects from the write-back below.
         val launchPrefs = getSharedPreferences(LAUNCH_PREFS, MODE_PRIVATE)
-        val cachedStartLibrary = launchPrefs.getString(KEY_START_VIEW, StartView.LAST_NOTEBOOK.name) ==
-            StartView.LIBRARY.name
+        val cachedStartLibrary = attachment == null &&
+            launchPrefs.getString(KEY_START_VIEW, StartView.LAST_NOTEBOOK.name) == StartView.LIBRARY.name
 
         // Detect and initialize backend
         val detection = BackendDetector.detect(this)
@@ -260,7 +273,7 @@ class MainActivity : Activity() {
         // is granted RIGHT NOW: it decides whether the store lands on /sdcard/ForestNote or falls
         // back to private storage, and lets onResume re-open at /sdcard once the user grants it.
         hadAllFilesAccessAtOpen = hasAllFilesAccess()
-        store = NotebookStore.create(this, secureCreds)
+        store = attachment?.store ?: NotebookStore.create(this, secureCreds)
         store.openingResult { result ->
             if (result.isFailure && !isFinishing && !isDestroyed) {
                 libraryOpenFailed = true
@@ -275,7 +288,7 @@ class MainActivity : Activity() {
                     .show()
             }
         }
-        syncController = SyncController(
+        syncController = if (attachment != null) null else SyncController(
             store, syncScope,
             log = { fileLogger.log("Sync", it) },
             secureCreds = secureCreds,
@@ -285,7 +298,7 @@ class MainActivity : Activity() {
             recognizer = recognizer,
             modelManager = modelManager,
             scope = syncScope,
-            requestSync = { syncController.syncNow() },
+            requestSync = { requestWriterSync() },
         )
         // Offline CalDAV queue. The drainer owns the network side of the outbox;
         // NotebookStore owns the durable side. Resume()/pause()/shutdown() in
@@ -306,6 +319,7 @@ class MainActivity : Activity() {
         store.loadSettings { s ->
             fileLogger.enabled = s.debugLogging
             fileLogger.log("App", "ForestNote launched (debugLogging=${s.debugLogging})")
+            if (attachment != null) return@loadSettings // The shared owner owns identity/credentials.
             val view = SettingsCredsView(s.syncUsername, s.syncPassword)
             val (result, after) = secureCreds.migrateSyncCredsFromSettings(view)
             if (result == SecureCredentialsStore.MigrationResult.Migrated) {
@@ -322,7 +336,7 @@ class MainActivity : Activity() {
         // Also re-check the OCR button state when a sync run completes, since the server may
         // have just delivered new page_text_from_server rows for the active page.
         syncScope.launch {
-            syncController.status.collect { status ->
+            syncController?.status?.collect { status ->
                 libraryView.setSyncCaption(syncCaption(status))
                 if (status is SyncStatus.Synced) refreshOcrButtonState()
             }
@@ -502,7 +516,10 @@ class MainActivity : Activity() {
             launchPrefs.edit().putString(KEY_START_VIEW, settings.startView.name).apply()
             store.listNotebooks { notebooks, activeId ->
                 val startOnLibrary = settings.startView == StartView.LIBRARY
-                if (deepLinkTarget != null) {
+                if (attachment != null) {
+                    val target = checkNotNull(attachment).notebookId
+                    if (notebooks.any { it.id == target }) goToNotebook(target) else finish()
+                } else if (deepLinkTarget != null) {
                     // Cold launch from a forestnote:// link: open the linked page directly,
                     // overriding the start-view preference.
                     routeToDeepLink(deepLinkTarget)
@@ -643,7 +660,7 @@ class MainActivity : Activity() {
                 // goToNotebook), composeStaticBitmap runs with the live fontResolver and the
                 // boxes get the right typefaces anyway, so skipping the refresh here is loss-
                 // less. Same gate as the delete-handler fix.
-                if (editorLoaded && !libraryView.isShowing && !settingsView.isShowing && !recycleBinView.isShowing) {
+                if (attachedWriterMayPaint() && editorLoaded && !libraryView.isShowing && !settingsView.isShowing && !recycleBinView.isShowing) {
                     drawView.fullRefresh()
                 }
             }
@@ -1123,7 +1140,7 @@ class MainActivity : Activity() {
     private suspend fun saveFullPageDeviceOcr(pageId: String, langTag: String, recognized: RecognizedText) {
         store.savePageTextFromClientSync(pageId, recognized.text, DeviceOcrScheduler.modelLabel(langTag))
         if (activePageId == pageId) refreshOcrInDialog()
-        syncController.syncNow()
+        requestWriterSync()
     }
 
 
@@ -1327,6 +1344,7 @@ class MainActivity : Activity() {
     /** Swap to another notebook: clear canvas, load its active/first page. Entered from the Library,
      *  so GC-refresh to clear any overlay ghost (and it counts as the editor's first paint). */
     private fun goToNotebook(notebookId: String) {
+        if (!attachedWriterMayPaint()) { deferredAttachedNotebook = notebookId; return }
         textBoxEditOverlay.commitIfShowing()
         val loadToken = ++editorLoadToken
         drawView.visibility = View.INVISIBLE
@@ -1335,6 +1353,8 @@ class MainActivity : Activity() {
         refreshUndoRedoButtons()
         store.switchNotebook(notebookId) { page ->
             if (loadToken != editorLoadToken) return@switchNotebook
+            if (!attachedWriterMayPaint()) { deferredAttachedNotebook = notebookId; return@switchNotebook }
+            if (attachment != null && page.notebook == null) { finish(); return@switchNotebook }
             applyNotebookGeometryBeforePaint(page.notebook)
             libraryView.hide()
             drawView.resetViewportForPage(recompose = false)
@@ -1579,7 +1599,7 @@ class MainActivity : Activity() {
             store.savePageTextFromClientSync(pageId, text, config.modelLabel)
             fileLogger.log("OCR", "endpoint transcription complete page=$pageId chars=${text.length}")
             if (activePageId == pageId) refreshOcrInDialog()
-            syncController.syncNow()
+            requestWriterSync()
         }
     }
 
@@ -1598,6 +1618,13 @@ class MainActivity : Activity() {
      * open it in the editor; long-press for its Properties dialog (AC4.4/AC4.5).
      */
     private fun openLibrary(viaBack: Boolean = false) {
+        if (attachment != null) {
+            // The parent owns the shared shelf and reader viewport. Never spawn a second shelf.
+            textBoxEditOverlay.commitIfShowing()
+            backend.setInputSuspended(true)
+            finish()
+            return
+        }
         if (libraryView.isShowing) return
         // Record HOW we got here so Back from the Library does the right thing (#29): backing out of a
         // from-Library editor (viaBack) → Back exits the app; peeking via the navbar icon → Back returns
@@ -1631,7 +1658,7 @@ class MainActivity : Activity() {
             onFolderProperties = { folder -> openFolderProperties(folder) },
             onOpenSettings = { openSettings() },
             onOpenRecycleBin = { openRecycleBin() },
-            onSyncNow = { syncController.syncNow() },
+            onSyncNow = { requestWriterSync() },
             onOpenSearch = { showSearchDialog() },
             onBulkMove = { ids -> showMoveTargetDialog(ids) },
             onBulkExport = { ids -> chooseExportFormat(ids) },
@@ -1772,6 +1799,7 @@ class MainActivity : Activity() {
     }
 
     private fun restoreBackup(uri: android.net.Uri) {
+        check(attachment == null) { "Only the library owner may replace its database" }
         syncScope.launch {
             val restored = File.createTempFile("forestnote-restore-", ".sqlite", cacheDir).apply { delete() }
             runCatching {
@@ -1783,7 +1811,7 @@ class MainActivity : Activity() {
                 // From here onward this Activity is only a staging shell for the atomic swap. Keep
                 // its inevitable onPause() from performing one last write/sync after shutdown.
                 restoreRestartPending = true
-                syncController.stopPeriodic()
+                syncController?.stopPeriodic()
                 caldavDrainer.pause()
                 caldavNetworkMonitor.stop()
                 backend.setInputSuspended(true)
@@ -1855,13 +1883,13 @@ class MainActivity : Activity() {
         store.loadSettings { s ->
             if (!s.syncOnClose || s.syncEnabled == false) return@loadSettings
             store.countPendingOps { count ->
-                if (count > 0L) syncController.syncNow()
+                if (count > 0L) requestWriterSync()
             }
         }
     }
 
     private fun refreshUiTransition(post: Boolean = true) {
-        if (!isEInk) return
+        if (!isEInk || !attachedWriterMayPaint()) return
         val host = findViewById<View>(android.R.id.content)
         if (!post) {
             backend.refreshUiFrame(host)
@@ -1894,7 +1922,7 @@ class MainActivity : Activity() {
                     val liveObserver = if (observer.isAlive) observer else host.viewTreeObserver
                     if (liveObserver.isAlive) liveObserver.removeOnDrawListener(this)
                     uiFrameRefreshPending = false
-                    backend.refreshUiFrame(host)
+                    if (attachedWriterMayPaint()) backend.refreshUiFrame(host)
                 }
             }
         }
@@ -1903,10 +1931,12 @@ class MainActivity : Activity() {
     }
 
     private fun refreshEditorTransition(post: Boolean = false) {
-        if (!isEInk) return
+        if (!isEInk || !attachedWriterMayPaint()) return
         val refresh = {
-            if (backend.requiresInputSurface()) backend.cleanNextReconcile()
-            drawView.gcRefresh()
+            if (attachedWriterMayPaint()) {
+                if (backend.requiresInputSurface()) backend.cleanNextReconcile()
+                drawView.gcRefresh()
+            }
         }
         if (post) drawView.post(refresh) else refresh()
     }
@@ -1973,7 +2003,7 @@ class MainActivity : Activity() {
         // MotionEvent swallowed) while Lasso (ordinary dispatch) still worked. Idempotent; no-op on
         // Viwoods/Generic. applyFirmwareEnableState then gates on the active tool, so a non-Pen tool
         // stays firmware-off regardless.
-        if (backend.usesFirmwareInk()) backend.setInputSuspended(false)
+        if (attachedWriterMayPaint() && backend.usesFirmwareInk()) backend.setInputSuspended(false)
     }
 
     /**
@@ -2060,6 +2090,7 @@ class MainActivity : Activity() {
 
     /** Show the full-screen Settings overlay over the editor (B2). */
     private fun openSettings() {
+        if (attachment != null) return // Owner/restore/sync settings are not editor responsibilities.
         if (settingsView.isShowing) return
         if (backend.usesFirmwareInk()) backend.setInputSuspended(true)
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
@@ -2102,7 +2133,7 @@ class MainActivity : Activity() {
         // path is the one place the user is explicitly in sync-config land, and a double
         // round-trip would be wasteful. The standalone overlay closes (Library, Recycle Bin)
         // still gate behind `syncOnClose`; touching Settings is its own ceremony.
-        syncController.resume()
+        syncController?.resume()
     }
 
     /**
@@ -2185,6 +2216,7 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        if (!::drawView.isInitialized) { finish(); return }
         // Text-box edit overlay first — it sits over all other overlays. Back = Cancel (with the
         // wasNewBox semantic: pending boxes are discarded; existing boxes revert to unchanged).
         if (textBoxEditOverlay.isShowing) {
@@ -2477,6 +2509,8 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        writerForeground = false
+        if (!::store.isInitialized) return
         if (::store.isInitialized) store.pauseReaderWork()
         // A successful restore closes the store before launching a clean replacement task. Android
         // then pauses this outgoing Activity as usual; skip every persistence trigger in that one
@@ -2490,7 +2524,7 @@ class MainActivity : Activity() {
         ocrTextDialog.dismiss()
         if (!restoreRestartPending) {
             // Stop the periodic timer and flush pending changes to UltraBridge.
-            syncController.pause()
+            syncController?.pause()
             // Stop the CalDAV drainer's periodic timer (in-flight PUT is allowed to finish).
             caldavDrainer.pause()
         }
@@ -2506,11 +2540,11 @@ class MainActivity : Activity() {
         // Per Android docs, register the connectivity callback in onStart and unregister in onStop.
         // Triggers an immediate CalDAV drain the moment the device sees a default network — what
         // makes the "user came back into WiFi range" recovery feel instant.
-        caldavNetworkMonitor.start(onAvailable = { caldavDrainer.drainNow() })
+        if (::caldavNetworkMonitor.isInitialized && attachment == null) caldavNetworkMonitor.start(onAvailable = { caldavDrainer.drainNow() })
     }
 
     override fun onStop() {
-        caldavNetworkMonitor.stop()
+        if (::caldavNetworkMonitor.isInitialized) caldavNetworkMonitor.stop()
         super.onStop()
     }
 
@@ -2525,6 +2559,7 @@ class MainActivity : Activity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (!::backend.isInitialized) return
         val regained = hasFocus && !wasFocused
         wasFocused = hasFocus
         // Boox: ANY AlertDialog / system window steals focus from this Activity's window. While firmware
@@ -2574,11 +2609,13 @@ class MainActivity : Activity() {
      * closes.
      */
     private fun anyEditorObscuringOverlayShowing(): Boolean =
-        libraryOpenFailed || libraryView.isShowing || settingsView.isShowing || recycleBinView.isShowing ||
+        !attachedWriterMayPaint() || libraryOpenFailed || libraryView.isShowing || settingsView.isShowing || recycleBinView.isShowing ||
             pagesView.isShowing || textBoxEditOverlay.isShowing || caldavTaskSheet.isShowing
 
     override fun onResume() {
         super.onResume()
+        writerForeground = true
+        if (!::store.isInitialized) return
         if (::store.isInitialized) store.resumeReaderWork()
         // If the user just granted All-Files-Access, re-open the datastore at /sdcard (via recreate)
         // and skip the rest — this Activity instance is being torn down, so don't spin up sync/drainer
@@ -2592,12 +2629,13 @@ class MainActivity : Activity() {
             drawView.resetBitmap()
         }
         // Enable+join on first run, or sync + restart the timer (no-op if sync is unconfigured).
-        syncController.resume()
+        syncController?.resume()
         // Try to drain any queued CalDAV tasks + restart the periodic timer. Safe to call before
         // the user has configured CalDAV — the drainer aborts cleanly when there are no creds.
-        caldavDrainer.resume()
+        if (attachment == null) caldavDrainer.resume()
         // First launch without the permission: prompt once to move the datastore to /sdcard.
         maybePromptForAllFilesAccess()
+        deferredAttachedNotebook?.let { deferredAttachedNotebook = null; goToNotebook(it) }
     }
 
     /** True when the app holds MANAGE_EXTERNAL_STORAGE ("All files access"). Never throws. */
@@ -2612,6 +2650,7 @@ class MainActivity : Activity() {
      * Once per process (declining just falls back to private storage — the app works either way).
      */
     private fun maybePromptForAllFilesAccess() {
+        if (attachment != null) return
         if (promptedStorage || hasAllFilesAccess() ||
             getSharedPreferences(STORAGE_PREFS, MODE_PRIVATE).getBoolean(KEY_KEEP_PRIVATE, false)) return
         promptedStorage = true
@@ -2660,6 +2699,7 @@ class MainActivity : Activity() {
      * Returns true if it triggered a recreate (so onResume can skip the rest of its work).
      */
     private fun reopenIfStorageJustGranted(): Boolean {
+        if (attachment != null) return false
         if (storageReopenTriggered || hadAllFilesAccessAtOpen || !hasAllFilesAccess()) return false
         storageReopenTriggered = true
         fileLogger.log("Storage", "all-files access granted; reopening datastore at /sdcard/ForestNote")
@@ -2668,20 +2708,25 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        editorLoadToken++
         if (::drawView.isInitialized) drawView.removeCallbacks(captureNotebookAspectRunnable)
         super.onDestroy()
         try {
-            caldavDrainer.shutdown()
+            if (::caldavDrainer.isInitialized) caldavDrainer.shutdown()
             syncScope.cancel()
             recognizer.close()
-            backend.release()
+            if (::backend.isInitialized) backend.release()
         } catch (_: Throwable) {
             // Ignore cleanup errors
         } finally {
             // The application-wide owner prevents recreation from racing this drain.
             // Never wait for SQLite or worker cancellation on Android's main thread.
-            if (::store.isInitialized && !storeClosedForRestore) store.shutdownAsync()
+            if (::store.isInitialized && !storeClosedForRestore && attachment == null) store.shutdownAsync()
         }
+    }
+
+    private fun requestWriterSync() {
+        if (attachment != null) store.wakeExistingSharedSync() else syncController?.syncNow()
     }
 
     /** Short Library-header caption for the current sync status. */

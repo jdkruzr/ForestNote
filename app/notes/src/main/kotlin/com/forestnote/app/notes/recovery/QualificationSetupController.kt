@@ -18,6 +18,7 @@ import java.security.MessageDigest
  * No network, automatic enrollment, restore, merge or external-storage access. */
 internal class QualificationSetupController(context: Context, private val workspace: String): LibrarySetupActions {
     private val app=context.applicationContext
+    private val main=android.os.Handler(android.os.Looper.getMainLooper())
     private val owner=StorageOwnerQueue()
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private val mutable=MutableStateFlow(LibrarySetupState(SetupStatus.BUSY,text(R.string.setup_checking)))
@@ -104,7 +105,7 @@ internal class QualificationSetupController(context: Context, private val worksp
                 checkNotNull(secrets.replicas.registration(identity.libraryId,identity.actor))
                 NotebookRepository.openIsolatedQualification(app,initialId)
             } else NotebookRepository.openSelectedRecoveryForQualification(app,service().selectedFile(expected))
-        },poster={it.run()},secureCredentials=secrets,qualifyReaderStorage=true)
+        },poster={main.post(it)},secureCredentials=secrets,qualifyReaderStorage=true)
         check(active!!.readerIdentity()==(identity.libraryId to identity.actor))
         mutable.value=LibrarySetupState(if(selected==null) SetupStatus.LOCAL_ONLY else SetupStatus.SELECTED,
             text(if(selected==null) R.string.setup_local_ready else R.string.setup_selected_ready),identity.libraryId,archive!=null)
@@ -127,7 +128,7 @@ internal class QualificationSetupController(context: Context, private val worksp
         check(!app.getDatabasePath("reader-qualification-$initialId.db").exists())
         val secrets=SecureCredentialsStore(backend())
         active=NotebookStore.createOwned(owner,repoProvider={NotebookRepository.openIsolatedQualification(app,initialId)},
-            poster={it.run()},secureCredentials=secrets,qualifyReaderStorage=true)
+            poster={main.post(it)},secureCredentials=secrets,qualifyReaderStorage=true)
         active!!.readerIdentity()
         load()
     }
