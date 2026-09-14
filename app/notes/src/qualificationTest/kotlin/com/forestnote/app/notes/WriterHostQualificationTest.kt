@@ -77,8 +77,7 @@ class WriterHostQualificationTest {
             ReaderHostQualificationSession.store=store;ReaderHostQualificationSession.sharedLibrary=true;ReaderHostQualificationSession.writer=true
             scenario=ActivityScenario.launch(ReaderHostQualificationActivity::class.java)
             val reader=awaitActivity(ReaderHostQualificationActivity::class.java)
-            waitUntil {withContext(Dispatchers.Main) {reader.findViewById<View>(android.R.id.content).findViewWithTag<View>("shelf:NOTEBOOKS")?.isShown==true}}
-            withContext(Dispatchers.Main) {reader.findViewById<View>(android.R.id.content).findViewWithTag<View>("shelf:NOTEBOOKS").performClick()}
+            ComposeChromeTest.tap("shelf:NOTEBOOKS")
             val gridId=R.id.library_grid
             waitUntil {withContext(Dispatchers.Main) {(reader.findViewById<RecyclerView>(gridId)?.adapter?.itemCount ?: 0)>0 && reader.findViewById<RecyclerView>(gridId).getChildAt(0)!=null}}
             withContext(Dispatchers.Main) {reader.findViewById<RecyclerView>(gridId).getChildAt(0).performClick()}
@@ -125,11 +124,11 @@ class WriterHostQualificationTest {
             assertEquals(identity,store.readerIdentity());assertEquals(before,readerRows())
             // The native Create draft authors nothing until explicitly accepted.
             val existingIds=store.syncNotebookIds()
-            withContext(Dispatchers.Main) {reader.findViewById<View>(android.R.id.content).findViewWithTag<View>("newSharedNotebook").performClick()}
+            ComposeChromeTest.click("newSharedNotebook")
             clickLabel(context.getString(android.R.string.cancel))
             waitUntil("Cancel Dismissed") {withContext(Dispatchers.Main) {reader.hasWindowFocus()}}
             assertEquals(existingIds,store.syncNotebookIds())
-            withContext(Dispatchers.Main) {reader.findViewById<View>(android.R.id.content).findViewWithTag<View>("newSharedNotebook").performClick()}
+            ComposeChromeTest.tap("newSharedNotebook")
             // Focus the real name field too: the writer must measure after the keyboard leaves.
             fun findInput(node:android.view.accessibility.AccessibilityNodeInfo?):android.view.accessibility.AccessibilityNodeInfo? {
                 if(node==null) return null
@@ -217,7 +216,7 @@ class WriterHostQualificationTest {
                 }}
                 return result!!
             }
-            suspend fun tagged(tag:String) {val v=shelf();withContext(Dispatchers.Main) {v.findViewWithTag<View>(tag).performClick()}}
+            suspend fun tagged(tag:String) {shelf();ComposeChromeTest.click(tag)}
             suspend fun dialog():android.app.AlertDialog {
                 var result:android.app.AlertDialog?=null
                 val v=shelf()

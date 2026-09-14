@@ -286,6 +286,10 @@ the headless result does not activate production integration.
    **D52 readability:** [larger labels and stronger borders](2026-09-13-forestread-ui-readability.md)
    defines density/font-aware native values and strengthens the reader menu tokens without
    changing saved document/ink geometry. This responds to the user's e-ink visibility feedback.
+   **D53 native Composables:** [source-based library chrome](2026-09-14-forestread-compose-chrome.md)
+   starts with library tabs/Close and notebook/folder creation controls, preserving the current
+   e-ink styling and ink/reader surfaces. Full current-toolkit adoption needs a separately
+   qualified toolchain update; native dialogs and reader HTML chrome are not migrated yet.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

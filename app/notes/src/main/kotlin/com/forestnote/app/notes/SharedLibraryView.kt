@@ -34,7 +34,8 @@ internal class SharedLibraryView(
     private val scroll=ScrollView(context).apply {addView(rows)}
     private val status=TextView(context)
     private val query=EditText(context)
-    private val shelfButtons=mutableMapOf<SharedLibraryState.Shelf,Button>()
+    private val chrome=LibraryChromeView(context,state.shelf,onCreateNotebook!=null && notebookCallbacks==null,
+        {select(it)},onClose,{newNotebook()},{newFolder()})
     private val filter=button("") {}
     private val more=button(context.getString(R.string.shared_library_more)) {load(false)}
     private var fetch:Job?=null
@@ -58,16 +59,7 @@ internal class SharedLibraryView(
     }
     init {
         orientation=VERTICAL;setBackgroundColor(Color.WHITE);isClickable=true;isFocusable=true
-        val header=LinearLayout(context).apply {gravity=Gravity.CENTER_VERTICAL}
-        header.addView(TextView(context).apply {text=context.getString(R.string.shared_library_title);EinkUiStyle.text(this,R.dimen.eink_ui_title_text,medium=true);setPadding(pixels(8),0,pixels(12),0)})
-        for(shelf in SharedLibraryState.Shelf.entries) {
-            val label=context.getString(if(shelf==SharedLibraryState.Shelf.NOTEBOOKS) R.string.shared_library_notebooks else R.string.shared_library_books)
-            val b=button(label) {select(shelf)}.apply {tag="shelf:$shelf"}
-            shelfButtons[shelf]=b;header.addView(b)
-        }
-        header.addView(View(context),LayoutParams(0,1,1f))
-        header.addView(button("×") {onClose()}.apply {contentDescription=context.getString(R.string.shared_library_close);tag="closeSharedLibrary"})
-        addView(header,LayoutParams(-1,resources.getDimensionPixelSize(R.dimen.eink_ui_header_height)))
+        addView(chrome,LayoutParams(-1,-2))
         addView(notebookHost,LayoutParams(-1,0,1f));addView(bookHost,LayoutParams(-1,0,1f))
         val actions=LinearLayout(context)
         actions.addView(button(context.getString(R.string.shared_library_import)) {onImport()})
@@ -93,7 +85,7 @@ internal class SharedLibraryView(
         if(shelf==SharedLibraryState.Shelf.NOTEBOOKS) hideKeyboard()
         notebookHost.visibility=if(shelf==SharedLibraryState.Shelf.NOTEBOOKS) VISIBLE else GONE
         bookHost.visibility=if(shelf==SharedLibraryState.Shelf.BOOKS) VISIBLE else GONE
-        shelfButtons.forEach {(key,b)->b.isSelected=key==shelf;b.setTypeface(null,if(key==shelf) 1 else 0)}
+        chrome.shelf=shelf
         if(shelf==SharedLibraryState.Shelf.BOOKS) restoreBookPosition(generation)
         if(shelf==SharedLibraryState.Shelf.NOTEBOOKS && !notebooks.isShowing) {
             fun notice() {Toast.makeText(context,if(onOpenNotebook==null) R.string.shared_library_writer_pending else R.string.shared_writer_management_pending,Toast.LENGTH_LONG).show()}
@@ -107,12 +99,6 @@ internal class SharedLibraryView(
                 onOpenSearch={notice()},onBulkMove={notice()},onBulkExport={notice()},onBulkDelete={notice()})
             if(notebookCallbacks==null) {
                 val content=LinearLayout(context).apply {orientation=VERTICAL}
-                if(onCreateNotebook!=null) {
-                    val actions=LinearLayout(context)
-                    actions.addView(button(context.getString(R.string.shared_writer_new_notebook)) {newNotebook()}.apply {tag="newSharedNotebook"},LayoutParams(-2,controlHeight))
-                    actions.addView(button(context.getString(R.string.library_new_folder)) {newFolder()}.apply {tag="newSharedFolder"},LayoutParams(-2,controlHeight))
-                    content.addView(actions)
-                }
                 if(onOpenNotebook==null) content.addView(TextView(context).apply {text=context.getString(R.string.shared_library_writer_pending);EinkUiStyle.text(this,R.dimen.eink_ui_meta_text);setPadding(pixels(8),pixels(4),pixels(8),pixels(4))})
                 val shelfHost=FrameLayout(context);content.addView(shelfHost,LayoutParams(-1,0,1f));notebookHost.addView(content)
                 notebooks.show(shelfHost,store,callbacks,state.notebooks,readOnly=true)

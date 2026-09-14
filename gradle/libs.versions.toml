@@ -19,16 +19,22 @@ okhttp = "4.12.0"
 androidx-security-crypto = "1.1.0-alpha06"
 androidx-sqlite = "2.4.0"
 rhizome = "0.8.2"
+androidx-compose = "1.7.8"
+androidx-activity = "1.9.3"
 
 [libraries]
 # Gradle plugins (for build-logic dependencies)
 android-gradlePlugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 kotlin-gradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+kotlin-composeCompilerPlugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
 
 # AndroidX
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "androidx-appcompat" }
 androidx-recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "androidx-recyclerview" }
+androidx-compose-foundation = { module = "androidx.compose.foundation:foundation", version.ref = "androidx-compose" }
+androidx-compose-ui = { module = "androidx.compose.ui:ui", version.ref = "androidx-compose" }
+androidx-activity = { module = "androidx.activity:activity-ktx", version.ref = "androidx-activity" }
 
 # Material Design (Views, not Compose)
 material = { module = "com.google.android.material:material", version.ref = "material" }

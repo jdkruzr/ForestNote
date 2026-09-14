@@ -1,6 +1,6 @@
 package com.forestnote.app.notes
 
-import android.app.Activity
+import androidx.activity.ComponentActivity
 import android.content.Intent
 import android.os.Bundle
 import android.widget.TextView
@@ -10,7 +10,7 @@ import kotlinx.coroutines.*
 import java.util.UUID
 
 /** Only an explicit test owner or the already-selected setup owner may be used. */
-class ReaderHostQualificationActivity:Activity() {
+class ReaderHostQualificationActivity:ComponentActivity() {
     private val ui=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
     private var host:ReaderHostView?=null
     private var store:NotebookStore?=null

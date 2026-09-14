@@ -1,9 +1,11 @@
 plugins {
     id("forestnote.android.application")
+    id("forestnote.android.compose")
 }
 
 android {
     namespace = "com.forestnote.app.notes"
+    buildFeatures { compose = true }
 
     buildTypes {
         create("qualification") {
@@ -67,6 +69,9 @@ val prepareSharedReaderAssets by tasks.registering(Sync::class) {
 tasks.matching {it.name=="preQualificationBuild"}.configureEach {dependsOn(prepareSharedReaderAssets)}
 
 dependencies {
+    implementation(libs.findLibrary("androidx-compose-foundation").get())
+    implementation(libs.findLibrary("androidx-compose-ui").get())
+    implementation(libs.findLibrary("androidx-activity").get())
     implementation("androidx.webkit:webkit:1.12.1")
     implementation(project(":core:ink"))
     implementation(project(":core:format"))

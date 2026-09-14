@@ -69,19 +69,22 @@ class ReaderAnnotationRenderingTest {
             visible("book:$book")
             native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.widget.EditText>("bookQuery").setText("unfindable")}
             delay(250)
-            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("shelf:NOTEBOOKS").performClick()}
-            visible("shelf:NOTEBOOKS")
+            ComposeChromeTest.node("shelf:BOOKS",selected=true)
+            ComposeChromeTest.tap("shelf:NOTEBOOKS")
+            ComposeChromeTest.node("shelf:NOTEBOOKS",selected=true)
+            assertTrue(ComposeChromeTest.labels("shelf:NOTEBOOKS").contains(context.getString(R.string.shared_library_notebooks)))
+            ComposeChromeTest.node("shelf:BOOKS",selected=false)
             native {a->assertTrue(a.findViewById<android.view.View>(R.id.library_grid).isShown)
                 assertFalse(a.findViewById<android.view.View>(R.id.btn_library_add_notebook).isShown)}
             waitNative {a->a.findViewById<android.widget.TextView>(R.id.folder_name)?.text=="Library Folder"}
             native {a->a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid).getChildAt(0).performClick()}
             waitNative {a->a.findViewById<android.view.View>(R.id.btn_library_back)?.isShown==true}
-            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("shelf:BOOKS").performClick()}
+            ComposeChromeTest.click("shelf:BOOKS")
             native {a->assertEquals("unfindable",a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.widget.EditText>("bookQuery").text.toString())}
             activity.recreate();visible("bookQuery")
-            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("shelf:NOTEBOOKS").performClick()}
+            ComposeChromeTest.click("shelf:NOTEBOOKS")
             waitNative {a->a.findViewById<android.view.View>(R.id.btn_library_back)?.isShown==true}
-            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("shelf:BOOKS").performClick()}
+            ComposeChromeTest.click("shelf:BOOKS")
             native {a->val q=a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.widget.EditText>("bookQuery")
                 assertEquals("unfindable",q.text.toString());q.setText("")}
             visible("book:$book")
@@ -90,7 +93,8 @@ class ReaderAnnotationRenderingTest {
             withTimeout(10000) {while(ReaderHostQualificationSession.view?.libraryCovered!=false) delay(30)}
             val bounds=js("JSON.stringify(document.getElementById('reader').getBoundingClientRect())")
             js("document.getElementById('library').click();true");visible("book:$book")
-            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("closeSharedLibrary").performClick()}
+            assertTrue(ComposeChromeTest.labels("closeSharedLibrary").contains(context.getString(R.string.shared_library_close)))
+            ComposeChromeTest.tap("closeSharedLibrary")
             assertEquals(bounds,js("JSON.stringify(document.getElementById('reader').getBoundingClientRect())"))
             assertEquals("null",js("forestReadState().editing"));assertEquals(before,snapshot())
             // Destructive UI checks use only this explicitly isolated fixture, never the user's book.
