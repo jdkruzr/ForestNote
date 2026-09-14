@@ -13,7 +13,7 @@ test('pen chooser has distinct compact categories, all brushes, and no layout ch
   const before = await state();
   await expect(page.locator('#penGroups h3')).toHaveText(['Pens', 'Pencils', 'Markers', 'Calligraphy']);
   await expect(page.locator('#penGroups button')).toHaveCount(17);
-  await expect(page.locator('#penGroups h3').nth(1)).toHaveCSS('border-top-width', '2px');
+  await expect(page.locator('#penGroups h3').nth(1)).toHaveCSS('border-top-width', '4px');
   expect(await page.locator('#penOptions').evaluate(el => el.scrollHeight <= el.clientHeight)).toBe(true);
   expect((await page.locator('#penGroups button').first().boundingBox()).height).toBeLessThanOrEqual(36);
   const picker = await page.locator('#penOptions').boundingBox(); expect(picker.height).toBeLessThan(580);
@@ -138,7 +138,7 @@ test('reading and refresh drafts do nothing until an explicit action button', as
   await page.waitForTimeout(250); expect(await state()).toEqual(before);
   expect(await page.evaluate(() => nativeMessages.filter(m => m.type === 'refresh'))).toHaveLength(0);
   await expect(page.locator('#apply')).toHaveText('Apply Reading Settings');
-  await expect(page.locator('#apply')).toHaveCSS('border-top-width', '2px');
+  await expect(page.locator('#apply')).toHaveCSS('border-top-width', '4px');
   // Dismissing discards all uncommitted settings, including the refresh mode.
   await page.keyboard.press('Escape'); await page.locator('#menu').click();
   await expect(page.locator('#fontSize')).toHaveValue('22'); await expect(page.locator('#refreshMode')).toHaveValue('NORMAL');
@@ -151,7 +151,7 @@ test('reading and refresh drafts do nothing until an explicit action button', as
   expect(await state()).toEqual(applied); // Applying unchanged values must not rebuild the book.
   await page.locator('#menu').click(); await page.locator('summary').filter({ hasText: /^Pen & Display$/ }).click();
   await expect(page.locator('#refresh')).toHaveText('Clear Ghosting');
-  await expect(page.locator('#refresh')).toHaveCSS('border-top-width', '2px');
+  await expect(page.locator('#refresh')).toHaveCSS('border-top-width', '4px');
   await page.locator('#refresh').click();
   expect(await page.evaluate(() => nativeMessages.filter(m => m.type === 'refresh').map(m => m.mode))).toEqual(['FAST', 'FULL_REFRESH']);
   expect(await state()).toEqual(applied);

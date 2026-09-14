@@ -3,7 +3,6 @@ package com.forestnote.app.notes
 import android.app.AlertDialog
 import android.content.Context
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.text.InputFilter
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -31,6 +30,7 @@ internal object NotebookLibraryDialogs {
                            accept: Int, fallback: String, onSave: (String) -> Unit,
                            onDelete: (() -> Unit)? = null): AlertDialog {
         val input = EditText(context).apply {
+            EinkUiStyle.text(this, R.dimen.eink_ui_label_text)
             id = android.R.id.edit
             setSingleLine(true); setText(name); setHint(hint)
             filters = arrayOf(InputFilter.LengthFilter(256))
@@ -67,22 +67,23 @@ internal object NotebookLibraryDialogs {
 
     /** No shadows/ripples needed to distinguish a modal from the white e-ink shelf. */
     fun style(dialog: AlertDialog): AlertDialog = dialog.also {
-        val density = it.context.resources.displayMetrics.density
-        val stroke = density.toInt().coerceAtLeast(1)
-        fun frame() = GradientDrawable().apply {setColor(Color.WHITE); setStroke(stroke, Color.BLACK)}
+        fun frame() = EinkUiStyle.frame(it.context)
         it.window?.apply {setGravity(Gravity.TOP); setBackgroundDrawable(frame())}
         fun styleButtons() { for (id in listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) {
             it.getButton(id)?.apply {
                 isAllCaps = false
-                setTextColor(Color.BLACK)
+                EinkUiStyle.text(this, R.dimen.eink_ui_label_text, medium = true)
                 backgroundTintList = null
                 letterSpacing = 0f
                 background = frame()
                 // Some e-ink firmware replaces button backgrounds after layout. Keep the
                 // affordance in a transparent foreground too, above that platform styling.
-                foreground = GradientDrawable().apply {setColor(Color.TRANSPARENT); setStroke(stroke, Color.BLACK)}
+                foreground = EinkUiStyle.frame(context, transparent = true)
             }
-        } }
+        }
+            val titleId = it.context.resources.getIdentifier("alertTitle", "id", "android")
+            it.findViewById<TextView>(titleId)?.let {title -> EinkUiStyle.text(title, R.dimen.eink_ui_title_text, medium = true)}
+        }
         styleButtons()
         // AlertController also applies button backgrounds during its first layout.
         it.window?.decorView?.post { if (dialog.isShowing) styleButtons() }

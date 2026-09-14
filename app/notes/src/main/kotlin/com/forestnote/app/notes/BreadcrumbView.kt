@@ -43,13 +43,14 @@ class BreadcrumbView(
         textSize = BREADCRUMB_TEXT_SP
         maxLines = 1
         setTypeface(typeface, android.graphics.Typeface.ITALIC)
-        alpha = 0.5f
+        setTextColor(android.graphics.Color.BLACK)
     }
 
     private fun separator(): TextView = TextView(container.context).apply {
         text = " / "
         gravity = Gravity.CENTER_VERTICAL
         textSize = BREADCRUMB_TEXT_SP
+        setTextColor(android.graphics.Color.BLACK)
     }
 
     private fun segmentView(seg: BreadcrumbLogic.Segment): TextView =
@@ -61,6 +62,7 @@ class BreadcrumbView(
             // especially for the root "Library" segment. The breadcrumb has its own row
             // (see view_library.xml) so this no longer competes with the toolbar height.
             textSize = BREADCRUMB_TEXT_SP
+            setTextColor(android.graphics.Color.BLACK)
             if (seg.interactive) {
                 isClickable = true
                 val tv = android.util.TypedValue()

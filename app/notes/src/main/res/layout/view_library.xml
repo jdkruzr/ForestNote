@@ -75,7 +75,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Settings"
-                android:textSize="9sp"
+                android:textSize="@dimen/eink_ui_caption_text"
                 android:textColor="@color/black"
                 android:maxLines="1"
                 android:paddingBottom="2dp" />
@@ -110,7 +110,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Sync"
-                android:textSize="9sp"
+                android:textSize="@dimen/eink_ui_caption_text"
                 android:textColor="@color/black"
                 android:maxLines="1"
                 android:paddingBottom="2dp"
@@ -147,7 +147,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Search"
-                android:textSize="9sp"
+                android:textSize="@dimen/eink_ui_caption_text"
                 android:textColor="@color/black"
                 android:maxLines="1"
                 android:paddingBottom="2dp" />
@@ -179,8 +179,8 @@
             android:gravity="center_vertical"
             android:paddingEnd="4dp">
             <ImageView
-                android:layout_width="14dp"
-                android:layout_height="14dp"
+                android:layout_width="@dimen/eink_ui_small_icon"
+                android:layout_height="@dimen/eink_ui_small_icon"
                 android:src="@drawable/ic_notebook"
                 android:tint="@color/black"
                 android:importantForAccessibility="no" />
@@ -191,11 +191,11 @@
                 android:paddingStart="4dp"
                 android:paddingEnd="10dp"
                 android:textColor="@color/black"
-                android:textSize="13sp"
+                android:textSize="@dimen/eink_ui_body_text"
                 android:maxLines="1" />
             <ImageView
-                android:layout_width="14dp"
-                android:layout_height="14dp"
+                android:layout_width="@dimen/eink_ui_small_icon"
+                android:layout_height="@dimen/eink_ui_small_icon"
                 android:src="@drawable/ic_folder"
                 android:tint="@color/black"
                 android:importantForAccessibility="no" />
@@ -205,14 +205,14 @@
                 android:layout_height="wrap_content"
                 android:paddingStart="4dp"
                 android:textColor="@color/black"
-                android:textSize="13sp"
+                android:textSize="@dimen/eink_ui_body_text"
                 android:maxLines="1" />
         </LinearLayout>
 
         <!-- Thin vertical divider separating the counts cluster from the breadcrumb area.
              Mirrors the rule between Search and Select in the toolbar row above. -->
         <View
-            android:layout_width="1dp"
+            android:layout_width="@dimen/eink_ui_border"
             android:layout_height="match_parent"
             android:layout_marginTop="8dp"
             android:layout_marginBottom="8dp"
@@ -248,7 +248,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Up"
-                android:textSize="9sp"
+                android:textSize="@dimen/eink_ui_caption_text"
                 android:textColor="@color/black"
                 android:maxLines="1"
                 android:paddingBottom="2dp" />
@@ -295,7 +295,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Select"
-                android:textSize="9sp"
+                android:textSize="@dimen/eink_ui_caption_text"
                 android:textColor="@color/black"
                 android:maxLines="1"
                 android:paddingBottom="2dp" />
@@ -328,7 +328,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Recycle"
-                android:textSize="9sp"
+                android:textSize="@dimen/eink_ui_caption_text"
                 android:textColor="@color/black"
                 android:maxLines="1"
                 android:paddingBottom="2dp" />
@@ -361,7 +361,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Folder"
-                android:textSize="9sp"
+                android:textSize="@dimen/eink_ui_caption_text"
                 android:textColor="@color/black"
                 android:maxLines="1"
                 android:paddingBottom="2dp" />
@@ -394,7 +394,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Notebook"
-                android:textSize="9sp"
+                android:textSize="@dimen/eink_ui_caption_text"
                 android:textColor="@color/black"
                 android:maxLines="1"
                 android:paddingBottom="2dp" />
@@ -403,7 +403,7 @@
 
     <View
         android:layout_width="match_parent"
-        android:layout_height="1dp"
+        android:layout_height="@dimen/eink_ui_border"
         android:background="@color/black" />
 
     <androidx.recyclerview.widget.RecyclerView
@@ -420,7 +420,7 @@
     <View
         android:id="@+id/select_bar_rule"
         android:layout_width="match_parent"
-        android:layout_height="1dp"
+        android:layout_height="@dimen/eink_ui_border"
         android:background="@color/black"
         android:visibility="gone" />
 
@@ -441,7 +441,7 @@
             android:paddingStart="16dp"
             android:paddingEnd="8dp"
             android:textColor="@color/black"
-            android:textSize="14sp"
+            android:textSize="@dimen/eink_ui_label_text"
             android:maxLines="1"
             android:ellipsize="end" />
 
@@ -454,7 +454,7 @@
             android:paddingEnd="16dp"
             android:text="Move"
             android:textColor="@color/black"
-            android:textSize="14sp"
+            android:textSize="@dimen/eink_ui_label_text"
             android:textStyle="bold"
             android:clickable="true"
             android:focusable="true"
@@ -469,7 +469,7 @@
             android:paddingEnd="16dp"
             android:text="Export"
             android:textColor="@color/black"
-            android:textSize="14sp"
+            android:textSize="@dimen/eink_ui_label_text"
             android:textStyle="bold"
             android:clickable="true"
             android:focusable="true"
@@ -484,7 +484,7 @@
             android:paddingEnd="16dp"
             android:text="Delete"
             android:textColor="@color/black"
-            android:textSize="14sp"
+            android:textSize="@dimen/eink_ui_label_text"
             android:textStyle="bold"
             android:clickable="true"
             android:focusable="true"
@@ -499,7 +499,7 @@
             android:paddingEnd="16dp"
             android:text="Done"
             android:textColor="@color/black"
-            android:textSize="14sp"
+            android:textSize="@dimen/eink_ui_label_text"
             android:textStyle="bold"
             android:clickable="true"
             android:focusable="true"

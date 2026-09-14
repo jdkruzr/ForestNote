@@ -41,8 +41,8 @@
         android:layout_height="wrap_content"
         android:paddingTop="2dp"
         android:typeface="monospace"
-        android:textColor="@color/gray_dark"
-        android:textSize="10sp"
+        android:textColor="@color/black"
+        android:textSize="@dimen/eink_ui_meta_text"
         android:maxLines="1"
         android:ellipsize="end"
         android:visibility="gone" />
@@ -52,7 +52,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:textColor="@color/black"
-        android:textSize="12sp"
+        android:textSize="@dimen/eink_ui_body_text"
         android:textStyle="bold"
         android:maxLines="1"
         android:ellipsize="end" />
@@ -61,8 +61,8 @@
         android:id="@+id/card_meta"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textColor="@color/gray_dark"
-        android:textSize="10sp"
+        android:textColor="@color/black"
+        android:textSize="@dimen/eink_ui_meta_text"
         android:maxLines="1"
         android:ellipsize="end" />
 </LinearLayout>

@@ -235,9 +235,12 @@ class WriterHostQualificationTest {
                     assertNotNull(d.window!!.decorView.background)
                     val save=d.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
                     assertNull("Theme tint must not erase the e-ink button border",save.backgroundTintList)
+                    assertEquals(context.resources.getDimension(R.dimen.eink_ui_label_text),save.textSize,.1f)
                     val painted=android.graphics.Bitmap.createBitmap(save.width,save.height,android.graphics.Bitmap.Config.ARGB_8888)
                     save.draw(android.graphics.Canvas(painted))
                     assertEquals("Visible button border ${save.javaClass.name}, ${save.background}, bounds=${save.background.bounds}, alpha=${save.background.alpha}, scroll=${save.scrollY}, clip=${save.clipToOutline}",android.graphics.Color.BLACK,painted.getPixel(save.width/2,0))
+                    assertEquals("Border retains its full e-ink weight",android.graphics.Color.BLACK,
+                        painted.getPixel(save.width/2,EinkUiStyle.borderPixels(context)-1))
                     painted.recycle()
                     assertEquals(save.text.toString(),(save.transformationMethod?.getTransformation(save.text,save) ?: save.text).toString())
                     if(name!=null) (d.findViewById<android.widget.EditText>(android.R.id.edit)

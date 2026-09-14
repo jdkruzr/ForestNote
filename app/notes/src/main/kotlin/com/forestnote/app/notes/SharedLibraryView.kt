@@ -3,7 +3,6 @@ package com.forestnote.app.notes
 import android.app.AlertDialog
 import android.content.Context
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.text.Editable
 import android.text.TextWatcher
 import android.text.TextUtils
@@ -50,16 +49,17 @@ internal class SharedLibraryView(
     private var restoreScroll=true
     private val dp get()=resources.displayMetrics.density
     private fun pixels(value:Int)=(value*dp).toInt()
-    private fun frame()=GradientDrawable().apply {setColor(Color.WHITE);setStroke(pixels(1),Color.DKGRAY)}
+    private fun frame()=EinkUiStyle.frame(context)
+    private val controlHeight get()=resources.getDimensionPixelSize(R.dimen.eink_ui_control_height)
     private fun button(label:String,action:()->Unit)=Button(context).apply {
-        text=label;isAllCaps=false;textSize=14f;setTextColor(Color.BLACK);background=frame()
-        minWidth=0;minimumWidth=0;minHeight=pixels(34);minimumHeight=0
+        text=label;isAllCaps=false;EinkUiStyle.text(this,R.dimen.eink_ui_label_text,medium=true);background=frame()
+        minWidth=0;minimumWidth=0;minHeight=controlHeight;minimumHeight=0
         setPadding(pixels(10),pixels(3),pixels(10),pixels(3));setOnClickListener {action()}
     }
     init {
         orientation=VERTICAL;setBackgroundColor(Color.WHITE);isClickable=true;isFocusable=true
         val header=LinearLayout(context).apply {gravity=Gravity.CENTER_VERTICAL}
-        header.addView(TextView(context).apply {text=context.getString(R.string.shared_library_title);textSize=18f;setPadding(pixels(8),0,pixels(12),0)})
+        header.addView(TextView(context).apply {text=context.getString(R.string.shared_library_title);EinkUiStyle.text(this,R.dimen.eink_ui_title_text,medium=true);setPadding(pixels(8),0,pixels(12),0)})
         for(shelf in SharedLibraryState.Shelf.entries) {
             val label=context.getString(if(shelf==SharedLibraryState.Shelf.NOTEBOOKS) R.string.shared_library_notebooks else R.string.shared_library_books)
             val b=button(label) {select(shelf)}.apply {tag="shelf:$shelf"}
@@ -67,7 +67,7 @@ internal class SharedLibraryView(
         }
         header.addView(View(context),LayoutParams(0,1,1f))
         header.addView(button("×") {onClose()}.apply {contentDescription=context.getString(R.string.shared_library_close);tag="closeSharedLibrary"})
-        addView(header,LayoutParams(-1,pixels(38)))
+        addView(header,LayoutParams(-1,resources.getDimensionPixelSize(R.dimen.eink_ui_header_height)))
         addView(notebookHost,LayoutParams(-1,0,1f));addView(bookHost,LayoutParams(-1,0,1f))
         val actions=LinearLayout(context)
         actions.addView(button(context.getString(R.string.shared_library_import)) {onImport()})
@@ -75,10 +75,10 @@ internal class SharedLibraryView(
             context.getString(R.string.shared_library_books) to {state.trash=false;load(true)},
             context.getString(R.string.shared_library_trash) to {state.trash=true;load(true)}))}
         actions.addView(filter);actions.addView(more);bookHost.addView(actions)
-        query.setSingleLine(true);query.textSize=16f;query.hint=context.getString(R.string.shared_library_search)
+        query.setSingleLine(true);EinkUiStyle.text(query,R.dimen.eink_ui_label_text);query.hint=context.getString(R.string.shared_library_search)
         query.filters=arrayOf(android.text.InputFilter.LengthFilter(256));query.tag="bookQuery";query.setText(state.query)
         bookHost.addView(query,LayoutParams(-1,pixels(44)))
-        status.textSize=12f;status.setPadding(pixels(8),pixels(3),pixels(8),pixels(3));status.tag="bookStatus"
+        EinkUiStyle.text(status,R.dimen.eink_ui_meta_text);status.setPadding(pixels(8),pixels(3),pixels(8),pixels(3));status.tag="bookStatus"
         bookHost.addView(status);bookHost.addView(scroll,LayoutParams(-1,0,1f))
         query.addTextChangedListener(object:TextWatcher {
             override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
@@ -109,11 +109,11 @@ internal class SharedLibraryView(
                 val content=LinearLayout(context).apply {orientation=VERTICAL}
                 if(onCreateNotebook!=null) {
                     val actions=LinearLayout(context)
-                    actions.addView(button(context.getString(R.string.shared_writer_new_notebook)) {newNotebook()}.apply {tag="newSharedNotebook"},LayoutParams(-2,pixels(34)))
-                    actions.addView(button(context.getString(R.string.library_new_folder)) {newFolder()}.apply {tag="newSharedFolder"},LayoutParams(-2,pixels(34)))
+                    actions.addView(button(context.getString(R.string.shared_writer_new_notebook)) {newNotebook()}.apply {tag="newSharedNotebook"},LayoutParams(-2,controlHeight))
+                    actions.addView(button(context.getString(R.string.library_new_folder)) {newFolder()}.apply {tag="newSharedFolder"},LayoutParams(-2,controlHeight))
                     content.addView(actions)
                 }
-                if(onOpenNotebook==null) content.addView(TextView(context).apply {text=context.getString(R.string.shared_library_writer_pending);textSize=12f;setPadding(pixels(8),pixels(4),pixels(8),pixels(4))})
+                if(onOpenNotebook==null) content.addView(TextView(context).apply {text=context.getString(R.string.shared_library_writer_pending);EinkUiStyle.text(this,R.dimen.eink_ui_meta_text);setPadding(pixels(8),pixels(4),pixels(8),pixels(4))})
                 val shelfHost=FrameLayout(context);content.addView(shelfHost,LayoutParams(-1,0,1f));notebookHost.addView(content)
                 notebooks.show(shelfHost,store,callbacks,state.notebooks,readOnly=true)
             } else notebooks.show(notebookHost,store,callbacks,state.notebooks)
@@ -218,7 +218,7 @@ internal class SharedLibraryView(
             val format=if(book.book.mediaType=="application/epub+zip") "EPUB" else "MOBI"
             text=context.getString(if(book.deleted) R.string.shared_library_trashed else if(book.contentReady) R.string.shared_library_available else R.string.shared_library_pending,
                 format,android.text.format.Formatter.formatShortFileSize(context,book.book.byteLength))
-            textSize=12f;setPadding(pixels(10),0,0,pixels(5))
+            EinkUiStyle.text(this,R.dimen.eink_ui_meta_text);setPadding(pixels(10),0,0,pixels(5))
         })
         row.addView(details,LayoutParams(0,-2,1f))
         val options=button("⋯") {}.apply {contentDescription=context.getString(R.string.shared_library_book_actions);tag="actions:${book.book.id}"}
@@ -237,7 +237,7 @@ internal class SharedLibraryView(
             }
             menu(options,choices)
         }
-        row.addView(options,LayoutParams(pixels(42),pixels(34)));rows.addView(row,LayoutParams(-1,-2))
+        row.addView(options,LayoutParams(pixels(44),controlHeight));rows.addView(row,LayoutParams(-1,-2))
     }
     private fun menu(anchor:View,choices:List<Pair<String,()->Unit>>) {
         popup?.dismiss();val content=LinearLayout(context).apply {orientation=VERTICAL}

@@ -22,7 +22,7 @@ async function centeredDots(locator) {
       dx: Math.abs((dots[0].left + dots.at(-1).right) / 2 - (r.left + r.right) / 2),
       dy: Math.abs((dots[0].top + dots[0].bottom) / 2 - (r.top + r.bottom) / 2) };
   });
-  expect(shape.borders).toEqual(['1px', '1px', '1px', '1px']);
+  expect(shape.borders).toEqual(['3px', '3px', '3px', '3px']);
   expect(shape.style).toBe('solid'); expect(shape.text).toBe(''); expect(shape.count).toBe(3);
   expect(shape.dx).toBeLessThan(.6); expect(shape.dy).toBeLessThan(.6);
 }
@@ -36,7 +36,7 @@ for (const width of [320, 720]) test(`Compact toolbar uses wide rectangular cont
     expect(header.height).toBe(35);
     const buttons = await page.locator('header button:visible').evaluateAll(buttons => buttons.map(b => b.getBoundingClientRect().toJSON()));
     for (const b of buttons) {
-      expect(b.height).toBe(32); expect(b.width).toBeGreaterThanOrEqual(40); expect(b.y).toBe(header.y + 1);
+      expect(b.height).toBe(32); expect(b.width).toBeGreaterThanOrEqual(40); expect(b.y).toBe(header.y);
       expect(b.y + b.height).toBeLessThanOrEqual(header.y + header.height - 2);
       expect(b.x).toBeGreaterThanOrEqual(0); expect(b.right).toBeLessThanOrEqual(width);
     }
@@ -47,11 +47,11 @@ for (const width of [320, 720]) test(`Compact toolbar uses wide rectangular cont
   await check();
   await page.locator('#cancel').click();
   await addNote(page); await check();
-  await expect(page.locator('#draw svg')).toHaveCSS('width', '20px');
-  await expect(page.locator('#done')).toHaveCSS('font-size', '20px');
+  await expect(page.locator('#draw svg')).toHaveCSS('width', '24px');
+  await expect(page.locator('#done')).toHaveCSS('font-size', '24px');
   await page.locator('#noteMenu').click();
   const popup = await page.locator('#noteOptions').boundingBox();
-  expect(popup.y).toBe(37);
+  expect(popup.y).toBe(36); // 32px button plus the unchanged 4px popup gap.
   await expect(page.locator('#closeNoteOptions')).toHaveCSS('height', '40px');
   expect(await page.locator('#reader').boundingBox()).toEqual(before);
 });
@@ -62,7 +62,7 @@ test('Ellipsis buttons have permanent borders and centered SVG dots in toolbar, 
   await centeredDots(page.locator('#noteMenu'));
   await page.locator('#noteMenu').click(); await centeredDots(page.locator('#noteMenu'));
   await page.screenshot({ path: test.info().outputPath('annotation-menu.png') });
-  for (const id of ['adjustHighlight', 'delete']) await expect(page.locator(`#${id}`)).toHaveCSS('border-left-width', '1px');
+  for (const id of ['adjustHighlight', 'delete']) await expect(page.locator(`#${id}`)).toHaveCSS('border-left-width', '3px');
   await page.keyboard.press('Escape'); await centeredDots(page.locator('#noteMenu'));
   expect(await page.locator('#reader').boundingBox()).toEqual(before);
   await page.locator('#draw').click(); await centeredDots(page.locator('#penMore'));
@@ -73,13 +73,13 @@ test('Ellipsis buttons have permanent borders and centered SVG dots in toolbar, 
   await page.locator('#menu').click(); await page.locator('#notes').click();
   const trigger = page.locator('.annotationActions summary');
   await centeredDots(trigger); await trigger.click(); await centeredDots(trigger);
-  await expect(page.getByRole('button', { name: 'Edit Handwriting', exact: true })).toHaveCSS('border-left-width', '1px');
+  await expect(page.getByRole('button', { name: 'Edit Handwriting', exact: true })).toHaveCSS('border-left-width', '3px');
 });
 
 test('All menu actions are bordered, including dynamic rows; headings and status are not buttons', async ({ page }) => {
   await openBook(page); await addNote(page, false);
   await page.locator('#menu').click(); await page.locator('#toc').click();
-  await expect(page.locator('.contentsEntry').first()).toHaveCSS('border-left-width', '1px');
+  await expect(page.locator('.contentsEntry').first()).toHaveCSS('border-left-width', '3px');
   await page.locator('#closeList').click();
   await page.locator('#menu').click(); await page.locator('#notes').click();
   const unbordered = await page.locator('dialog button, dialog summary').evaluateAll(buttons => buttons.filter(button => {
@@ -89,8 +89,8 @@ test('All menu actions are bordered, including dynamic rows; headings and status
   expect(unbordered).toEqual([]);
   await expect(page.locator('#ocr')).toHaveCSS('border-left-width', '0px');
   await expect(page.locator('.penCategory h3').first()).toHaveRole('heading');
-  await expect(page.locator('#apply')).toHaveCSS('border-left-width', '2px');
-  await expect(page.locator('#refresh')).toHaveCSS('border-left-width', '2px');
+  await expect(page.locator('#apply')).toHaveCSS('border-left-width', '4px');
+  await expect(page.locator('#refresh')).toHaveCSS('border-left-width', '4px');
 });
 
 for (const width of [320, 720]) test(`Annotation popup shares the penu pattern without moving content at ${width}px`, async ({ page }) => {

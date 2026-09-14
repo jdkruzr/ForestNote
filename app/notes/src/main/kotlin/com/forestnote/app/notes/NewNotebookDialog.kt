@@ -13,6 +13,7 @@ import java.util.Locale
 internal object NewNotebookDialog {
     fun show(context: Context, settings: Settings, onCreate: (String) -> Unit): AlertDialog {
         val input = EditText(context).apply {
+            EinkUiStyle.text(this, R.dimen.eink_ui_label_text)
             id = android.R.id.edit
             setHint(R.string.shared_writer_notebook_name)
             setSingleLine(true)

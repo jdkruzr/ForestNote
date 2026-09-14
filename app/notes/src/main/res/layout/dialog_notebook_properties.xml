@@ -17,6 +17,7 @@
         android:inputType="text"
         android:maxLines="1"
         android:singleLine="true"
+        android:textSize="@dimen/eink_ui_label_text"
         android:textColor="@color/black" />
 
     <TextView
@@ -25,7 +26,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
         android:textColor="@color/black"
-        android:textSize="14sp" />
+        android:textSize="@dimen/eink_ui_body_text" />
 
     <TextView
         android:id="@+id/text_modified"
@@ -33,7 +34,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
         android:textColor="@color/black"
-        android:textSize="14sp" />
+        android:textSize="@dimen/eink_ui_body_text" />
 
     <TextView
         android:id="@+id/text_pages"
@@ -41,5 +42,5 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
         android:textColor="@color/black"
-        android:textSize="14sp" />
+        android:textSize="@dimen/eink_ui_body_text" />
 </LinearLayout>
