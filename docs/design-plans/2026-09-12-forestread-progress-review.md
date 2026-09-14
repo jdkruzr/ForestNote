@@ -334,6 +334,11 @@ the headless result does not activate production integration.
    disposable real-book/annotation round trip passes 4/4 with unchanged user ink; Viwoods
    is deferred until tomorrow. The user's compact writer-toolbar styling question is
    recorded there as a proposal, not an implemented redesign.
+   **D64 writer toolbar:** [fixed-height, width-adaptive chrome](2026-09-14-forestread-writer-toolbar.md)
+   implements the approved follow-up, with Clear under Eraser, secondary actions in More
+   Tools and active-tool promotion on narrow hosts. Page/ink geometry stays unchanged.
+   Continue owner-managed sync/recovery navigation; physical Palma and integrated Viwoods
+   remain separate device checks.
    **Queued internationalization:** [shared UI resource extraction](2026-09-14-forestread-internationalization.md)
    records the user's request to replace inline chrome strings with a standard resource
    scheme, including the HTML reader boundary, plurals, accessibility and pseudo-locale

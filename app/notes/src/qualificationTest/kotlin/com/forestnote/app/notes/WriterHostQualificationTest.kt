@@ -228,6 +228,41 @@ class WriterHostQualificationTest {
             }
             assertEquals(mapOf("FOUNTAIN" to 47,"PENCIL_8B" to 63),settings().penWidthValues)
             val saved=ink().single();assertEquals(47,saved.penWidthMax);assertEquals(9,saved.penWidthMin)
+            // Clear moved under the eraser, never into More Tools, and still needs confirmation.
+            withContext(Dispatchers.Main) {
+                writer.findViewById<View>(R.id.cell_more).performClick()
+                assertNull(popup().contentView.findViewWithTag<View>("writerMenu:${context.getString(R.string.writer_clear)}"))
+                assertNotNull(popup().contentView.findViewWithTag<View>("writerMenu:${context.getString(R.string.writer_template)}"))
+                popup().dismiss()
+                writer.findViewById<View>(R.id.cell_erase).performClick()
+                writer.findViewById<View>(R.id.cell_erase).performClick()
+                popup().contentView.findViewWithTag<View>("writerMenu:${context.getString(R.string.writer_clear)}").performClick()
+            }
+            assertEquals(listOf(saved),ink())
+            clickLabel(context.getString(android.R.string.cancel))
+            waitUntil {withContext(Dispatchers.Main) {writer.hasWindowFocus()}}
+            assertEquals(listOf(saved),ink())
+            withContext(Dispatchers.Main) {(field(writer,"toolBar") as ToolBar).selectTool(Tool.Pen)}
+            val narrowWidth=(274*context.resources.displayMetrics.density).toInt()
+            withContext(Dispatchers.Main) {
+                val row=writer.findViewById<View>(R.id.navbar)
+                row.layoutParams=row.layoutParams.apply {width=narrowWidth}
+            }
+            waitUntil("Narrow Toolbar") {withContext(Dispatchers.Main) {writer.findViewById<View>(R.id.navbar).width==narrowWidth}}
+            withContext(Dispatchers.Main) {
+                assertEquals(View.GONE,writer.findViewById<View>(R.id.cell_text).visibility)
+                writer.findViewById<View>(R.id.cell_more).performClick()
+                popup().contentView.findViewWithTag<View>("writerMenu:${context.getString(R.string.writer_text)}").performClick()
+            }
+            waitUntil("Promoted Text Tool") {withContext(Dispatchers.Main) {
+                writer.findViewById<View>(R.id.cell_text).let {it.isShown && it.isSelected}
+            }}
+            assertEquals(listOf(saved),ink())
+            withContext(Dispatchers.Main) {
+                (field(writer,"toolBar") as ToolBar).selectTool(Tool.Pen)
+                val row=writer.findViewById<View>(R.id.navbar)
+                row.layoutParams=row.layoutParams.apply {width=android.view.ViewGroup.LayoutParams.MATCH_PARENT}
+            }
             withContext(Dispatchers.Main) {writer.recreate()}
             waitUntil {resumed()?.let {it is WriterHostQualificationActivity && it!==writer}==true}
             writer=writerReady()

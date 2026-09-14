@@ -65,6 +65,7 @@ class ToolBar(
     private val btnClear: View = root.findViewById(R.id.cell_clear)
     private val btnOcr: View = root.findViewById(R.id.cell_ocr)
     private val btnTemplate: View = root.findViewById(R.id.cell_template)
+    private val btnMore: View = root.findViewById(R.id.cell_more)
 
     private var activePasteCallback: (() -> Unit)? = null
     private var pasteEnabled = false
@@ -206,6 +207,7 @@ class ToolBar(
             if (wasActive && settingsPopupsEnabled) showEraseVariantDropdown(btnErase)
         }
         btnClear.setOnClickListener { logic.triggerClear() }
+        btnMore.setOnClickListener { showMoreTools() }
         // Paste is an action cell, gated on a non-empty clipboard (greyed when empty).
         btnPaste.setOnClickListener { if (pasteEnabled) activePasteCallback?.invoke() }
         // Template is an action cell: opens the per-page template picker (B4).
@@ -213,16 +215,8 @@ class ToolBar(
         // OCR is an action cell for viewing or initiating local/endpoint page transcription.
         btnOcr.setOnClickListener { if (ocrEnabled) activeOcrCallback?.invoke() }
 
-        // On e-ink, remove ripple background to prevent ghosting
-        if (isEInk) {
-            for (cell in highlightCells) {
-                cell.background = null
-            }
-            btnPaste.background = null
-            btnClear.background = null
-            btnTemplate.background = null
-            btnOcr.background = null
-        }
+        // Flat, outlined controls on all hosts; no ripple or shadows on e-ink.
+        for(cell in listOf(btnPaste,btnMore)) WriterToolbarStyle.apply(cell)
         setPasteEnabled(false)
 
         // Set initial visual state
@@ -234,41 +228,21 @@ class ToolBar(
     /** The Fountain cell label reflects the active pen variant (e.g. "Fineliner ▾"). */
     private fun updatePenCellLabel() {
         lblFountain.text = "${penVariantLabel(logic.activePenVariant())} ▾"
+        btnFountain.contentDescription=root.context.getString(R.string.writer_tool_settings,penVariantLabel(logic.activePenVariant()))
     }
 
     /** The Erase cell label reflects the active erase variant (e.g. "Pixel ▾"). */
     private fun updateEraseCellLabel() {
-        lblErase.text = "${eraseVariantLabel(logic.activeEraseVariant())} ▾"
+        val shortName=if(logic.activeEraseVariant()==Tool.PixelEraser) R.string.writer_pixel else R.string.writer_stroke
+        lblErase.text = "${root.context.getString(shortName)} ▾"
+        btnErase.contentDescription=root.context.getString(R.string.writer_tool_settings,eraseVariantLabel(logic.activeEraseVariant()))
     }
 
-    /**
-     * Update visual state of all buttons based on active tool.
-     * On e-ink: active tool gets 1dp black border for high contrast.
-     * On non-e-ink: active tool gets light gray background.
-     */
+    /** High-contrast selected state is shared by all hosts, without changing ink geometry. */
     private fun updateButtonAppearance() {
         val activeTool = logic.getActiveTool()
-        for (button in highlightCells) {
-            if (isCellActive(button, activeTool)) {
-                if (isEInk) {
-                    // E-ink: 1dp black border on white background for high contrast
-                    val border = GradientDrawable()
-                    border.setColor(Color.WHITE)
-                    border.setStroke(1, Color.BLACK)
-                    button.background = border
-                } else {
-                    // Non-e-ink: light gray background for visual feedback
-                    button.setBackgroundColor(Color.parseColor("#FFE0E0E0"))
-                }
-            } else {
-                // Inactive: remove background
-                if (isEInk) {
-                    button.background = null
-                } else {
-                    button.setBackgroundColor(Color.TRANSPARENT)
-                }
-            }
-        }
+        for (button in highlightCells) WriterToolbarStyle.apply(button,isCellActive(button,activeTool))
+        (root.parent as? WriterToolbarRow)?.requestLayout()
     }
 
     /**
@@ -308,12 +282,15 @@ class ToolBar(
     /** Enable/disable the Paste cell: greyed (alpha 0.3) + no-op when the clipboard is empty. */
     fun setPasteEnabled(enabled: Boolean) {
         pasteEnabled = enabled
+        btnPaste.isEnabled=enabled
         btnPaste.alpha = if (enabled) 1f else 0.3f
     }
 
     /** Reflect paste-placement mode: caption shows "Pasting…" until the next canvas tap. */
     fun setPasteArmed(armed: Boolean) {
-        lblPaste.text = if (armed) "Pasting…" else "Paste"
+        lblPaste.setText(if (armed) R.string.writer_pasting else R.string.writer_paste)
+        btnPaste.contentDescription=lblPaste.text
+        WriterToolbarStyle.apply(btnPaste,armed)
     }
 
     /** Human-readable label for a pen variant (UI concern, kept out of core:ink). */
@@ -503,65 +480,59 @@ class ToolBar(
      * [activeIndex] row is highlighted, and tapping a row calls [onPick] then
      * dismisses. Built programmatically (no shadow/animation) to stay e-ink friendly.
      */
-    private fun showDropdown(
-        anchor: View,
-        labels: List<String>,
-        activeIndex: Int,
-        onPick: (Int) -> Unit
-    ) {
+    private data class MenuAction(val label:String,val enabled:Boolean=true,val selected:Boolean=false,
+        val separated:Boolean=false,val pick:()->Unit)
+
+    private fun showActionMenu(anchor:View,title:Int,actions:List<MenuAction>) {
         openPopup?.dismiss()
-        val ctx = anchor.context
-        val density = ctx.resources.displayMetrics.density
-        val padH = (12 * density).toInt()
-        val padV = (8 * density).toInt()
-
-        val container = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                setColor(Color.WHITE)
-                setStroke(1, Color.BLACK)
-            }
+        val ctx=root.context
+        val gap=ctx.resources.getDimensionPixelSize(R.dimen.library_surface_gap)
+        val panel=LinearLayout(ctx).apply {
+            orientation=LinearLayout.VERTICAL;setPadding(gap,gap,gap,gap)
+            addView(TextView(ctx).apply {setText(title);EinkUiStyle.text(this,R.dimen.eink_ui_meta_text,true)})
         }
-
-        val popup = PopupWindow(
-            container,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            true // focusable: tap-outside dismisses
-        )
-        popup.isOutsideTouchable = true
-        if (isEInk) popup.elevation = 0f
-
-        // A fixed-width marker column keeps labels aligned in any (proportional) font;
-        // the active row shows a ● there. A per-row box border was avoided on purpose —
-        // in a stacked list it reads as a divider that moves with the selection.
-        val markerWidth = (18 * density).toInt()
-        labels.forEachIndexed { i, label ->
-            val row = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(padH, padV, padH, padV)
-                isClickable = true
-                addView(TextView(ctx).apply {
-                    text = if (i == activeIndex) "●" else ""
-                    textSize = 14f
-                    setTextColor(Color.BLACK)
-                    width = markerWidth
-                })
-                addView(TextView(ctx).apply {
-                    text = label
-                    textSize = 14f
-                    setTextColor(Color.BLACK)
-                })
-                setOnClickListener {
-                    onPick(i)
-                    popup.dismiss()
-                }
-            }
-            container.addView(row)
+        fun divider() {panel.addView(View(ctx).apply {setBackgroundColor(Color.BLACK)},
+            LinearLayout.LayoutParams(-1,EinkUiStyle.borderPixels(ctx)).apply {topMargin=gap/2;bottomMargin=gap/2})}
+        divider()
+        val popup=PopupWindow(ctx).apply {
+            width=minOf((320*ctx.resources.displayMetrics.density).toInt(),root.rootView.width-2*gap).coerceAtLeast(1)
+            height=ViewGroup.LayoutParams.WRAP_CONTENT;isFocusable=true;isOutsideTouchable=true;elevation=0f
+            setBackgroundDrawable(LibrarySurfaceStyle.surface(ctx))
         }
+        actions.forEach {entry ->
+            if(entry.separated) divider()
+            panel.addView(android.widget.Button(ctx).apply {
+                tag="writerMenu:${entry.label}"
+                text=entry.label;isAllCaps=false;gravity=Gravity.CENTER_VERTICAL or Gravity.START
+                LibrarySurfaceStyle.action(this,primary=entry.selected,outlined=entry.selected)
+                gravity=Gravity.CENTER_VERTICAL or Gravity.START
+                isSelected=entry.selected;isEnabled=entry.enabled;alpha=if(entry.enabled) 1f else .3f
+                setOnClickListener {popup.dismiss();entry.pick()}
+            },LinearLayout.LayoutParams(-1,-2))
+        }
+        popup.contentView=ScrollView(ctx).apply {addView(panel)}
+        panel.measure(View.MeasureSpec.makeMeasureSpec(popup.width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED))
+        popup.height=minOf(panel.measuredHeight,popup.getMaxAvailableHeight(anchor)).coerceAtLeast(1)
+        showTrackedPopup(popup,anchor)
+    }
 
-        showTrackedPopup(popup, anchor)
+    private fun showMoreTools() {
+        val ctx=root.context
+        val row=root.parent as? WriterToolbarRow
+        val actions=mutableListOf<MenuAction>()
+        val labels=mapOf(WriterToolbarPolicy.Control.LIBRARY to R.string.writer_library,
+            WriterToolbarPolicy.Control.PREVIOUS to R.string.writer_previous,WriterToolbarPolicy.Control.PAGES to R.string.writer_pages,
+            WriterToolbarPolicy.Control.NEXT to R.string.writer_next,WriterToolbarPolicy.Control.UNDO to R.string.writer_undo,
+            WriterToolbarPolicy.Control.REDO to R.string.writer_redo,WriterToolbarPolicy.Control.VIEWPORT to R.string.writer_viewport,
+            WriterToolbarPolicy.Control.LASSO to R.string.writer_lasso,WriterToolbarPolicy.Control.TEXT to R.string.writer_text,
+            WriterToolbarPolicy.Control.PASTE to R.string.writer_paste)
+        for((key,label) in labels) {
+            val view=row?.controls?.get(key) ?: continue
+            if(view.visibility==View.GONE) actions.add(MenuAction(ctx.getString(label),view.isEnabled,view.isSelected) {view.performClick()})
+        }
+        actions.add(MenuAction(ctx.getString(R.string.writer_template)) {btnTemplate.performClick()})
+        actions.add(MenuAction(ctx.getString(R.string.writer_recognized),ocrEnabled) {btnOcr.performClick()})
+        showActionMenu(btnMore,R.string.writer_more,actions)
     }
 
     /** Shared native Penu styling; the tracked popup retains the firmware exclusion boundary. */
@@ -597,19 +568,18 @@ class ToolBar(
     private val eraseVariants = listOf(Tool.StrokeEraser, Tool.PixelEraser)
 
     private fun eraseVariantLabel(tool: Tool): String = when (tool) {
-        Tool.StrokeEraser -> "Stroke"
-        Tool.PixelEraser -> "Pixel"
+        Tool.StrokeEraser -> root.context.getString(R.string.writer_stroke_eraser)
+        Tool.PixelEraser -> root.context.getString(R.string.writer_pixel_eraser)
         else -> ""
     }
 
     /** Erase-variant dropdown under the Erase cell. */
     private fun showEraseVariantDropdown(anchor: View) {
         val active = logic.activeEraseVariant()
-        showDropdown(anchor, eraseVariants.map { eraseVariantLabel(it) }, eraseVariants.indexOf(active)) { i ->
-            // selectEraseVariant activates the eraser; onToolSelected propagates it.
-            logic.selectEraseVariant(eraseVariants[i])
-            updateEraseCellLabel()
-        }
+        val actions=eraseVariants.map {variant -> MenuAction(eraseVariantLabel(variant),selected=variant==active) {
+            logic.selectEraseVariant(variant);updateEraseCellLabel()
+        }}+MenuAction(root.context.getString(R.string.writer_clear),separated=true) {logic.triggerClear()}
+        showActionMenu(anchor,R.string.writer_eraser,actions)
     }
 
     /**

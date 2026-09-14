@@ -1,305 +1,98 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  The five tools. Each cell (LinearLayout) is the clickable hitbox so a tap on
-  either the icon OR its word selects the tool; the ImageButton inside is
-  non-clickable so touches fall through to the cell. ToolBar.kt wires listeners
-  and the selection highlight onto the cells.
--->
+<!-- Compact cells retain their existing action IDs; WriterToolbarRow assigns available widths. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/toolbar"
-    android:layout_width="match_parent"
-    android:layout_height="30dp"
-    android:orientation="horizontal"
-    android:gravity="center"
-    android:background="@color/white"
-    android:elevation="0dp">
-
-    <LinearLayout
-        android:id="@+id/cell_fountain"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:clickable="true"
-        android:focusable="true"
-        android:contentDescription="Fountain"
-        android:background="?attr/selectableItemBackground">
-
-        <ImageButton
-            android:id="@+id/btn_fountain"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:src="@drawable/ic_fountain"
-            android:clickable="false"
-            android:focusable="false"
-            android:importantForAccessibility="no"
-            android:background="@null"
-            android:scaleType="fitCenter" />
-
-        <TextView
-            android:id="@+id/label_fountain"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Fountain ▾"
-            android:gravity="center"
-            android:textSize="9sp"
-            android:textColor="@color/black"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:paddingBottom="2dp" />
+    android:id="@+id/toolbar" android:layout_width="match_parent"
+    android:layout_height="@dimen/writer_toolbar_height" android:orientation="horizontal"
+    android:gravity="center_vertical" android:background="@color/white">
+    <LinearLayout android:id="@+id/cell_fountain" android:layout_width="32dp" android:layout_height="match_parent"
+        android:orientation="horizontal" android:gravity="center" android:paddingHorizontal="3dp"
+        android:clickable="true" android:focusable="true" android:contentDescription="@string/writer_pen">
+        <ImageButton android:id="@+id/btn_fountain" android:layout_width="@dimen/writer_toolbar_icon" android:layout_height="@dimen/writer_toolbar_icon"
+            android:src="@drawable/ic_fountain" android:clickable="false" android:focusable="false" android:importantForAccessibility="no"
+            android:background="@null" android:padding="0dp" android:scaleType="fitCenter" />
+        <TextView android:id="@+id/label_fountain" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/writer_pen" android:textSize="@dimen/writer_toolbar_text" android:textColor="@color/black"
+            android:maxLines="1" android:ellipsize="end" android:paddingStart="4dp" android:paddingEnd="0dp" android:visibility="gone" />
     </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/cell_lasso"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:clickable="true"
-        android:focusable="true"
-        android:contentDescription="Lasso"
-        android:background="?attr/selectableItemBackground">
-
-        <ImageButton
-            android:id="@+id/btn_lasso"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:src="@drawable/ic_lasso"
-            android:clickable="false"
-            android:focusable="false"
-            android:importantForAccessibility="no"
-            android:background="@null"
-            android:scaleType="fitCenter" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Lasso"
-            android:gravity="center"
-            android:textSize="9sp"
-            android:textColor="@color/black"
-            android:maxLines="1"
-            android:paddingBottom="2dp" />
+    <LinearLayout android:id="@+id/cell_lasso" android:layout_width="32dp" android:layout_height="match_parent"
+        android:orientation="horizontal" android:gravity="center" android:paddingHorizontal="3dp"
+        android:clickable="true" android:focusable="true" android:contentDescription="@string/writer_lasso">
+        <ImageButton android:id="@+id/btn_lasso" android:layout_width="@dimen/writer_toolbar_icon" android:layout_height="@dimen/writer_toolbar_icon"
+            android:src="@drawable/ic_lasso" android:clickable="false" android:focusable="false" android:importantForAccessibility="no"
+            android:background="@null" android:padding="0dp" android:scaleType="fitCenter" />
+        <TextView android:id="@+id/label_lasso" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/writer_lasso" android:textSize="@dimen/writer_toolbar_text" android:textColor="@color/black"
+            android:maxLines="1" android:ellipsize="end" android:paddingStart="4dp" android:paddingEnd="0dp" android:visibility="gone" />
     </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/cell_text"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:clickable="true"
-        android:focusable="true"
-        android:contentDescription="Text"
-        android:background="?attr/selectableItemBackground">
-
-        <ImageButton
-            android:id="@+id/btn_text"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:src="@drawable/ic_text"
-            android:clickable="false"
-            android:focusable="false"
-            android:importantForAccessibility="no"
-            android:background="@null"
-            android:scaleType="fitCenter" />
-
-        <TextView
-            android:id="@+id/label_text"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Text ▾"
-            android:gravity="center"
-            android:textSize="9sp"
-            android:textColor="@color/black"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:paddingBottom="2dp" />
+    <LinearLayout android:id="@+id/cell_text" android:layout_width="32dp" android:layout_height="match_parent"
+        android:orientation="horizontal" android:gravity="center" android:paddingHorizontal="3dp"
+        android:clickable="true" android:focusable="true" android:contentDescription="@string/writer_text">
+        <ImageButton android:id="@+id/btn_text" android:layout_width="@dimen/writer_toolbar_icon" android:layout_height="@dimen/writer_toolbar_icon"
+            android:src="@drawable/ic_text" android:clickable="false" android:focusable="false" android:importantForAccessibility="no"
+            android:background="@null" android:padding="0dp" android:scaleType="fitCenter" />
+        <TextView android:id="@+id/label_text" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/writer_text" android:textSize="@dimen/writer_toolbar_text" android:textColor="@color/black"
+            android:maxLines="1" android:ellipsize="end" android:paddingStart="4dp" android:paddingEnd="0dp" android:visibility="gone" />
     </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/cell_erase"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:clickable="true"
-        android:focusable="true"
-        android:contentDescription="Erase"
-        android:background="?attr/selectableItemBackground">
-
-        <ImageButton
-            android:id="@+id/btn_erase"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:src="@drawable/ic_stroke_eraser"
-            android:clickable="false"
-            android:focusable="false"
-            android:importantForAccessibility="no"
-            android:background="@null"
-            android:scaleType="fitCenter" />
-
-        <TextView
-            android:id="@+id/label_erase"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Stroke ▾"
-            android:gravity="center"
-            android:textSize="9sp"
-            android:textColor="@color/black"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:paddingBottom="2dp" />
+    <LinearLayout android:id="@+id/cell_erase" android:layout_width="32dp" android:layout_height="match_parent"
+        android:orientation="horizontal" android:gravity="center" android:paddingHorizontal="3dp"
+        android:clickable="true" android:focusable="true" android:contentDescription="@string/writer_eraser">
+        <ImageButton android:id="@+id/btn_erase" android:layout_width="@dimen/writer_toolbar_icon" android:layout_height="@dimen/writer_toolbar_icon"
+            android:src="@drawable/ic_stroke_eraser" android:clickable="false" android:focusable="false" android:importantForAccessibility="no"
+            android:background="@null" android:padding="0dp" android:scaleType="fitCenter" />
+        <TextView android:id="@+id/label_erase" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/writer_eraser" android:textSize="@dimen/writer_toolbar_text" android:textColor="@color/black"
+            android:maxLines="1" android:ellipsize="end" android:paddingStart="4dp" android:paddingEnd="0dp" android:visibility="gone" />
     </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/cell_paste"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:clickable="true"
-        android:focusable="true"
-        android:contentDescription="Paste"
-        android:background="?attr/selectableItemBackground">
-
-        <ImageButton
-            android:id="@+id/btn_paste"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:src="@drawable/ic_paste"
-            android:clickable="false"
-            android:focusable="false"
-            android:importantForAccessibility="no"
-            android:background="@null"
-            android:scaleType="fitCenter" />
-
-        <TextView
-            android:id="@+id/label_paste"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Paste"
-            android:gravity="center"
-            android:textSize="9sp"
-            android:textColor="@color/black"
-            android:maxLines="1"
-            android:paddingBottom="2dp" />
+    <LinearLayout android:id="@+id/cell_paste" android:layout_width="32dp" android:layout_height="match_parent"
+        android:orientation="horizontal" android:gravity="center" android:paddingHorizontal="3dp"
+        android:clickable="true" android:focusable="true" android:contentDescription="@string/writer_paste">
+        <ImageButton android:id="@+id/btn_paste" android:layout_width="@dimen/writer_toolbar_icon" android:layout_height="@dimen/writer_toolbar_icon"
+            android:src="@drawable/ic_paste" android:clickable="false" android:focusable="false" android:importantForAccessibility="no"
+            android:background="@null" android:padding="0dp" android:scaleType="fitCenter" />
+        <TextView android:id="@+id/label_paste" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/writer_paste" android:textSize="@dimen/writer_toolbar_text" android:textColor="@color/black"
+            android:maxLines="1" android:ellipsize="end" android:paddingStart="4dp" android:paddingEnd="0dp" android:visibility="gone" />
     </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/cell_clear"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:clickable="true"
-        android:focusable="true"
-        android:contentDescription="Clear"
-        android:background="?attr/selectableItemBackground">
-
-        <ImageButton
-            android:id="@+id/btn_clear"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:src="@drawable/ic_clear"
-            android:clickable="false"
-            android:focusable="false"
-            android:importantForAccessibility="no"
-            android:background="@null"
-            android:scaleType="fitCenter" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Clear"
-            android:gravity="center"
-            android:textSize="9sp"
-            android:textColor="@color/black"
-            android:maxLines="1"
-            android:paddingBottom="2dp" />
+    <LinearLayout android:id="@+id/cell_clear" android:layout_width="32dp" android:layout_height="match_parent"
+        android:orientation="horizontal" android:gravity="center" android:paddingHorizontal="3dp"
+        android:clickable="true" android:focusable="true" android:contentDescription="@string/writer_clear" android:visibility="gone">
+        <ImageButton android:id="@+id/btn_clear" android:layout_width="@dimen/writer_toolbar_icon" android:layout_height="@dimen/writer_toolbar_icon"
+            android:src="@drawable/ic_clear" android:clickable="false" android:focusable="false" android:importantForAccessibility="no"
+            android:background="@null" android:padding="0dp" android:scaleType="fitCenter" />
+        <TextView android:id="@+id/label_clear" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/writer_clear" android:textSize="@dimen/writer_toolbar_text" android:textColor="@color/black"
+            android:maxLines="1" android:ellipsize="end" android:paddingStart="4dp" android:paddingEnd="0dp" android:visibility="gone" />
     </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/cell_ocr"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:clickable="true"
-        android:focusable="true"
-        android:contentDescription="View recognized text"
-        android:background="?attr/selectableItemBackground">
-
-        <ImageButton
-            android:id="@+id/btn_ocr"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:src="@drawable/ic_ocr"
-            android:clickable="false"
-            android:focusable="false"
-            android:importantForAccessibility="no"
-            android:background="@null"
-            android:scaleType="fitCenter" />
-
-        <TextView
-            android:id="@+id/label_ocr"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="OCR"
-            android:gravity="center"
-            android:textSize="9sp"
-            android:textColor="@color/black"
-            android:maxLines="1"
-            android:paddingBottom="2dp" />
+    <LinearLayout android:id="@+id/cell_ocr" android:layout_width="32dp" android:layout_height="match_parent"
+        android:orientation="horizontal" android:gravity="center" android:paddingHorizontal="3dp"
+        android:clickable="true" android:focusable="true" android:contentDescription="@string/writer_recognized" android:visibility="gone">
+        <ImageButton android:id="@+id/btn_ocr" android:layout_width="@dimen/writer_toolbar_icon" android:layout_height="@dimen/writer_toolbar_icon"
+            android:src="@drawable/ic_ocr" android:clickable="false" android:focusable="false" android:importantForAccessibility="no"
+            android:background="@null" android:padding="0dp" android:scaleType="fitCenter" />
+        <TextView android:id="@+id/label_ocr" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/writer_recognized" android:textSize="@dimen/writer_toolbar_text" android:textColor="@color/black"
+            android:maxLines="1" android:ellipsize="end" android:paddingStart="4dp" android:paddingEnd="0dp" android:visibility="gone" />
     </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/cell_template"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:clickable="true"
-        android:focusable="true"
-        android:contentDescription="Template"
-        android:background="?attr/selectableItemBackground">
-
-        <ImageButton
-            android:id="@+id/btn_template"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:src="@drawable/ic_template"
-            android:clickable="false"
-            android:focusable="false"
-            android:importantForAccessibility="no"
-            android:background="@null"
-            android:scaleType="fitCenter" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Template ▾"
-            android:gravity="center"
-            android:textSize="9sp"
-            android:textColor="@color/black"
-            android:maxLines="1"
-            android:paddingBottom="2dp" />
+    <LinearLayout android:id="@+id/cell_template" android:layout_width="32dp" android:layout_height="match_parent"
+        android:orientation="horizontal" android:gravity="center" android:paddingHorizontal="3dp"
+        android:clickable="true" android:focusable="true" android:contentDescription="@string/writer_template" android:visibility="gone">
+        <ImageButton android:id="@+id/btn_template" android:layout_width="@dimen/writer_toolbar_icon" android:layout_height="@dimen/writer_toolbar_icon"
+            android:src="@drawable/ic_template" android:clickable="false" android:focusable="false" android:importantForAccessibility="no"
+            android:background="@null" android:padding="0dp" android:scaleType="fitCenter" />
+        <TextView android:id="@+id/label_template" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/writer_template" android:textSize="@dimen/writer_toolbar_text" android:textColor="@color/black"
+            android:maxLines="1" android:ellipsize="end" android:paddingStart="4dp" android:paddingEnd="0dp" android:visibility="gone" />
     </LinearLayout>
-
+    <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+    <LinearLayout android:id="@+id/cell_more" android:layout_width="32dp" android:layout_height="match_parent"
+        android:orientation="horizontal" android:gravity="center" android:paddingHorizontal="3dp"
+        android:clickable="true" android:focusable="true" android:contentDescription="@string/writer_more">
+        <ImageButton android:id="@+id/btn_more" android:layout_width="@dimen/writer_toolbar_icon" android:layout_height="@dimen/writer_toolbar_icon"
+            android:src="@drawable/ic_writer_more" android:clickable="false" android:focusable="false" android:importantForAccessibility="no"
+            android:background="@null" android:padding="0dp" android:scaleType="fitCenter" />
+        <TextView android:id="@+id/label_more" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/writer_more" android:textSize="@dimen/writer_toolbar_text" android:textColor="@color/black"
+            android:maxLines="1" android:ellipsize="end" android:paddingStart="4dp" android:paddingEnd="0dp" android:visibility="gone" />
+    </LinearLayout>
 </LinearLayout>

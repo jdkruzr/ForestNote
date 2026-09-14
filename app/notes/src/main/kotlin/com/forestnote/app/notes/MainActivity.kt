@@ -445,7 +445,9 @@ open class MainActivity : Activity() {
             }
         }
         pageIndicator.setOnClickListener { showPagePicker() }
-        findViewById<ImageButton>(R.id.btn_viewport).setOnClickListener { showViewportPopup(it) }
+        findViewById<ImageButton>(R.id.btn_viewport).setOnClickListener {
+            showViewportPopup(if(it.isShown) it else findViewById(R.id.cell_more))
+        }
 
         // Undo/redo (per-notebook history). Sit beside the page arrows as history navigation.
         btnUndo = findViewById(R.id.btn_undo)
@@ -1162,17 +1164,17 @@ open class MainActivity : Activity() {
      */
     private fun showClearConfirmation() {
         AlertDialog.Builder(this)
-            .setTitle("Clear Page")
-            .setMessage("Delete all strokes on this page?")
-            .setPositiveButton("Clear") { _, _ ->
+            .setTitle(R.string.writer_clear_title)
+            .setMessage(R.string.writer_clear_message)
+            .setPositiveButton(R.string.writer_clear_confirm) { _, _ ->
                 // Clear is ink-only — text boxes are separate elements and stay on the page.
                 // clearForUser records the wipe as one undoable step before clearing in-memory.
                 drawView.clearForUser()
                 // The store clears off-thread and handles its own errors.
                 store.clear { }
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            .setNegativeButton(android.R.string.cancel, null)
+            .show().also {NotebookLibraryDialogs.style(it)}
     }
 
     /**

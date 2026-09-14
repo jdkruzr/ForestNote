@@ -1,0 +1,30 @@
+<resources>
+    <dimen name="writer_toolbar_height">30dp</dimen>
+    <dimen name="writer_toolbar_icon">20dp</dimen>
+    <dimen name="writer_toolbar_text">14sp</dimen>
+    <string name="writer_library">Open Library</string>
+    <string name="writer_previous">Previous Page</string>
+    <string name="writer_next">Next Page</string>
+    <string name="writer_pages">Go To Page</string>
+    <string name="writer_undo">Undo</string>
+    <string name="writer_redo">Redo</string>
+    <string name="writer_viewport">Viewport Controls</string>
+    <string name="writer_pen">Pen</string>
+    <string name="writer_lasso">Lasso</string>
+    <string name="writer_text">Text</string>
+    <string name="writer_eraser">Eraser</string>
+    <string name="writer_stroke_eraser">Stroke Eraser</string>
+    <string name="writer_pixel_eraser">Pixel Eraser</string>
+    <string name="writer_stroke">Stroke</string>
+    <string name="writer_pixel">Pixel</string>
+    <string name="writer_paste">Paste</string>
+    <string name="writer_pasting">Pasting…</string>
+    <string name="writer_clear">Clear Page…</string>
+    <string name="writer_clear_title">Clear Page</string>
+    <string name="writer_clear_message">Delete All Strokes On This Page? Text Boxes Will Be Kept.</string>
+    <string name="writer_clear_confirm">Clear</string>
+    <string name="writer_recognized">Recognized Text</string>
+    <string name="writer_template">Page Template</string>
+    <string name="writer_more">More Tools</string>
+    <string name="writer_tool_settings">%1$s · Tap Again For Settings</string>
+</resources>
