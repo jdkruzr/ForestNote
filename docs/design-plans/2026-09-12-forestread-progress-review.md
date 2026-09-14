@@ -339,6 +339,10 @@ the headless result does not activate production integration.
    Tools and active-tool promotion on narrow hosts. Page/ink geometry stays unchanged.
    Continue owner-managed sync/recovery navigation; physical Palma and integrated Viwoods
    remain separate device checks.
+   **D65 Text chooser:** [compact surface and recycled searchable fonts](2026-09-14-forestread-text-menu.md)
+   applies the same treatment to Text without changing font/size persistence or page
+   geometry. Continue the owner-managed sync/status/recovery boundary described in D61;
+   neither this styling slice nor opening Settings activates mixed-library transport.
    **Queued internationalization:** [shared UI resource extraction](2026-09-14-forestread-internationalization.md)
    records the user's request to replace inline chrome strings with a standard resource
    scheme, including the HTML reader boundary, plurals, accessibility and pseudo-locale

@@ -228,6 +228,17 @@ class WriterHostQualificationTest {
             }
             assertEquals(mapOf("FOUNTAIN" to 47,"PENCIL_8B" to 63),settings().penWidthValues)
             val saved=ink().single();assertEquals(47,saved.penWidthMax);assertEquals(9,saved.penWidthMin)
+            withContext(Dispatchers.Main) {
+                writer.findViewById<View>(R.id.cell_text).performClick()
+                writer.findViewById<View>(R.id.cell_text).performClick()
+                val menu=popup().contentView
+                assertNotNull(menu.findViewWithTag<View>("writerFontSearch"))
+                menu.findViewWithTag<View>("writerTextSize:480").performClick()
+                assertEquals(480,writer.findViewById<DrawView>(R.id.draw_view).activeTextFontSize)
+                menu.findViewWithTag<View>("writerTextClose").performClick()
+            }
+            assertEquals(480,settings().textFontSizeV)
+            assertEquals(listOf(saved),ink())
             // Clear moved under the eraser, never into More Tools, and still needs confirmation.
             withContext(Dispatchers.Main) {
                 writer.findViewById<View>(R.id.cell_more).performClick()

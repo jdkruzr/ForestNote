@@ -3,11 +3,9 @@ package com.forestnote.app.notes
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.ScrollView
@@ -50,6 +48,7 @@ class ToolBar(
     private var fontPreview: (String) -> Typeface = { Typeface.DEFAULT }
     private var activeTextFont: String = ""
     private var activeTextSizeV: Int = DEFAULT_TEXT_SIZE_V
+    private var textMenu:WriterTextMenuView?=null
     private var textFontCallback: ((String) -> Unit)? = null
     private var textSizeCallback: ((Int) -> Unit)? = null
 
@@ -324,10 +323,16 @@ class ToolBar(
     // -- Text-box font/size chooser (Phase 4) ------------------------------------
 
     /** Supply the device's font list (from [FontCatalog]) for the chooser. */
-    fun setFontNames(names: List<String>) { fontNames = names }
+    fun setFontNames(names: List<String>) {
+        fontNames = names
+        textMenu?.takeIf {it.isAttachedToWindow}?.refreshFonts()
+    }
 
     /** Supply a resolver so each font row previews in its own typeface. */
-    fun setFontPreview(resolver: (String) -> Typeface) { fontPreview = resolver }
+    fun setFontPreview(resolver: (String) -> Typeface) {
+        fontPreview = resolver
+        textMenu?.takeIf {it.isAttachedToWindow}?.sync()
+    }
 
     /** Callback when a font is chosen (the /system/fonts basename, or "" for system default). */
     fun setOnTextFontSelected(callback: (String) -> Unit) { textFontCallback = callback }
@@ -341,145 +346,26 @@ class ToolBar(
         activeTextSizeV = sizeV
     }
 
-    /**
-     * Font + size chooser under the Text cell, mirroring the pen-settings popup: a scrollable list
-     * of device fonts (each previewed in its own face, active row marked ●) over a strip of size
-     * chips. Selecting either updates the popup in place; tap-outside dismisses.
-     */
-    private fun showTextSettingsPopup(anchor: View) {
+    /** Bounded, recycled Text chooser; uses the same whole-contact modal tracker as Penu. */
+    private fun showTextSettingsPopup(anchor:View) {
         openPopup?.dismiss()
-        val ctx = anchor.context
-        val density = ctx.resources.displayMetrics.density
-
-        val container = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                setColor(Color.WHITE)
-                setStroke(1, Color.BLACK)
-            }
+        val ctx=root.context
+        val margin=ctx.resources.getDimensionPixelSize(R.dimen.penu_screen_margin)
+        val popup=PopupWindow(ctx).apply {
+            width=minOf(ctx.resources.getDimensionPixelSize(R.dimen.penu_panel_width),root.rootView.width-2*margin).coerceAtLeast(1)
+            height=minOf(ctx.resources.getDimensionPixelSize(R.dimen.writer_text_panel_height),getMaxAvailableHeight(anchor)).coerceAtLeast(1)
+            isFocusable=true;isOutsideTouchable=true;elevation=0f
+            setBackgroundDrawable(LibrarySurfaceStyle.surface(ctx))
+            softInputMode=android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
-        val popup = PopupWindow(
-            container,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            true // focusable: tap-outside dismisses
-        )
-        popup.isOutsideTouchable = true
-        if (isEInk) popup.elevation = 0f
-
-        fun populate() {
-            container.removeAllViews()
-            val padH = (12 * density).toInt()
-            val padV = (8 * density).toInt()
-            val markerWidth = (18 * density).toInt()
-
-            // Font rows: "System default" (the "" name) followed by every installed font.
-            val list = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-            val entries = listOf("" to "System default") + fontNames.map { it to it }
-            entries.forEach { (name, label) ->
-                val row = LinearLayout(ctx).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(padH, padV, padH, padV)
-                    isClickable = true
-                    addView(TextView(ctx).apply {
-                        text = if (name == activeTextFont) "●" else ""
-                        textSize = 14f
-                        setTextColor(Color.BLACK)
-                        width = markerWidth
-                    })
-                    addView(TextView(ctx).apply {
-                        text = label
-                        textSize = 14f
-                        setTextColor(Color.BLACK)
-                        typeface = if (name.isEmpty()) Typeface.DEFAULT else fontPreview(name)
-                    })
-                    setOnClickListener {
-                        activeTextFont = name
-                        textFontCallback?.invoke(name)
-                        populate()
-                    }
-                }
-                list.addView(row)
-            }
-            // Cap the list height so a long /system/fonts list scrolls instead of overflowing.
-            val scroll = ScrollView(ctx).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, (200 * density).toInt()
-                )
-                addView(list)
-            }
-            container.addView(scroll)
-
-            container.addView(View(ctx).apply {
-                setBackgroundColor(Color.BLACK)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
-            })
-            container.addView(buildTextSizeStrip(ctx, density, activeTextSizeV) { sizeV ->
-                activeTextSizeV = sizeV
-                textSizeCallback?.invoke(sizeV)
-                populate()
-            })
-        }
-        populate()
-
-        showTrackedPopup(popup, anchor)
+        textMenu=WriterTextMenuView(ctx,{fontNames},{activeTextFont},{activeTextSizeV},{fontPreview(it)},
+            pickFont={activeTextFont=it;textFontCallback?.invoke(it)},
+            pickSize={activeTextSizeV=it;textSizeCallback?.invoke(it)},close={popup.dismiss()})
+        popup.contentView=textMenu
+        showTrackedPopup(popup,anchor)
     }
 
-    /**
-     * A horizontal strip of size chips (XS…XL). Each shows an "A" glyph at a representative size
-     * over its label; the chip matching [active] gets a 1dp border. Tapping a chip calls [onPick]
-     * with the size in virtual units.
-     */
-    private fun buildTextSizeStrip(
-        ctx: android.content.Context,
-        density: Float,
-        active: Int,
-        onPick: (Int) -> Unit
-    ): View {
-        val strip = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
-        }
-        val chipW = (40 * density).toInt()
-        TEXT_SIZES.forEach { (label, sizeV) ->
-            // Map the virtual size to a small on-chip preview point size (XL≈480 → ~20sp).
-            val previewSp = (sizeV / 480f * 20f + 8f)
-            val chip = LinearLayout(ctx).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                isClickable = true
-                layoutParams = LinearLayout.LayoutParams(chipW, ViewGroup.LayoutParams.WRAP_CONTENT)
-                if (sizeV == active) {
-                    background = GradientDrawable().apply {
-                        setColor(Color.WHITE)
-                        setStroke(1, Color.BLACK)
-                    }
-                }
-                addView(TextView(ctx).apply {
-                    text = "A"
-                    textSize = previewSp
-                    setTextColor(Color.BLACK)
-                    gravity = Gravity.CENTER
-                })
-                addView(TextView(ctx).apply {
-                    text = label
-                    textSize = 10f
-                    setTextColor(Color.BLACK)
-                    gravity = Gravity.CENTER
-                })
-                setOnClickListener { onPick(sizeV) }
-            }
-            strip.addView(chip)
-        }
-        return strip
-    }
-
-    /**
-     * Show a variant dropdown anchored under [anchor]. Rows are labelled, the
-     * [activeIndex] row is highlighted, and tapping a row calls [onPick] then
-     * dismisses. Built programmatically (no shadow/animation) to stay e-ink friendly.
-     */
+    /** Shared flat action/choice rows for Eraser and More Tools. */
     private data class MenuAction(val label:String,val enabled:Boolean=true,val selected:Boolean=false,
         val separated:Boolean=false,val pick:()->Unit)
 
@@ -589,9 +475,5 @@ class ToolBar(
 
     companion object {
         private const val DEFAULT_TEXT_SIZE_V = 240
-        private const val POPUP_SCREEN_MARGIN_DP = 8
-        // Text size presets live in [TextStylePresets.SIZES] — shared with the per-text-box
-        // Options dialog so the two choosers can't drift.
-        private val TEXT_SIZES = TextStylePresets.SIZES
     }
 }
