@@ -15,6 +15,12 @@ import kotlin.test.assertFalse
  */
 class SettingsTest {
 
+    @Test fun exactPenWidthsAreOptionalAndRoundTripStableKeys() {
+        assertEquals(emptyMap(), Settings.json.decodeFromString(Settings.serializer(), "{}").penWidthValues)
+        val original = Settings(penWidthLevels=mapOf("FOUNTAIN" to "4"), penWidthValues=mapOf("FOUNTAIN" to 47))
+        assertEquals(original, Settings.json.decodeFromString(Settings.serializer(), Settings.json.encodeToString(Settings.serializer(), original)))
+    }
+
     private val json = Settings.json
 
     @Test

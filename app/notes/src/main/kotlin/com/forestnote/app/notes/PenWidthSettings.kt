@@ -15,6 +15,11 @@ import com.forestnote.core.ink.PenWidthLevel
  * XS/S/M/L/XL values are accepted and mapped to 1/2/4/6/7.
  */
 object PenWidthSettings {
+    fun decodeValues(stored:Map<String,Int>):Map<PenVariant,Int> {
+        val variants=PenVariant.entries.associateBy {it.name}
+        return stored.mapNotNull {(key,value)->variants[key]?.takeIf {value in 7..250}?.let {it to value}}.toMap()
+    }
+    fun encodeValues(values:Map<PenVariant,Int>):Map<String,Int> = values.entries.associate {it.key.name to it.value}
 
     /** Decode the persisted string map, skipping any value that doesn't parse to a known level. */
     fun decode(stored: Map<String, String>): Map<PenVariant, PenWidthLevel> {

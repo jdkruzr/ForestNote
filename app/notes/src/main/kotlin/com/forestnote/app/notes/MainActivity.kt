@@ -380,7 +380,7 @@ open class MainActivity : Activity() {
         // setting enable/disable it after the asynchronous Settings load.
         if (backend is ViwoodsBackend) {
             backend.setTransform(pageTransform)
-            backend.updatePen(PenParams.of(drawView.activePenVariant, drawView.activePenWidthLevel))
+            backend.updatePen(drawView.activePenParams())
             backend.attachInput(drawView, drawView.inputStrokeSink(), emptyList())
         }
 
@@ -420,7 +420,7 @@ open class MainActivity : Activity() {
                 ),
             )
             backend.setTransform(pageTransform)
-            backend.updatePen(PenParams.of(drawView.activePenVariant, drawView.activePenWidthLevel))
+            backend.updatePen(drawView.activePenParams())
             // No exclude rect: the navbar is outside the surface entirely, so the firmware can neither
             // draw ink there nor own its refresh. The surface is co-extensive with DrawView (both fill
             // canvas_container), so firmware surface-local coords == DrawView-local coords and the page
@@ -494,8 +494,10 @@ open class MainActivity : Activity() {
             // active variant's width. (toolBar is assigned below in onCreate; this async
             // callback runs after onCreate returns, so it's set by the time we get here.)
             toolBar.loadPenWidths(PenWidthSettings.decode(settings.penWidthLevels))
+            toolBar.loadPenWidthValues(PenWidthSettings.decodeValues(settings.penWidthValues))
             drawView.activePenWidthLevel = toolBar.activePenWidthLevel()
-            backend.updatePen(PenParams.of(drawView.activePenVariant, drawView.activePenWidthLevel))
+            drawView.activePenWidthValue = toolBar.activePenWidthValue()
+            backend.updatePen(drawView.activePenParams())
             // Seed the active text-box style (font + size) from settings.
             toolBar.loadTextStyle(settings.textFontName, settings.textFontSizeV)
             drawView.activeTextFontName = settings.textFontName
@@ -633,15 +635,16 @@ open class MainActivity : Activity() {
         toolBar.setOnPenVariantSelected { variant ->
             drawView.activePenVariant = variant
             drawView.activePenWidthLevel = toolBar.activePenWidthLevel()
+            drawView.activePenWidthValue = toolBar.activePenWidthValue()
             // Keep an input-owning backend's firmware live-ink style in sync (no-op elsewhere).
-            backend.updatePen(PenParams.of(variant, drawView.activePenWidthLevel))
+            backend.updatePen(drawView.activePenParams())
         }
         // Pen width choice (A10): apply to the canvas and persist the per-variant map.
         toolBar.setOnPenWidthSelected { level ->
             drawView.activePenWidthLevel = level
-            backend.updatePen(PenParams.of(drawView.activePenVariant, level))
-            store.updateSettings({ it.copy(penWidthLevels = PenWidthSettings.encode(toolBar.currentPenWidthLevels())) })
+            applyAndSaveWriterPenWidth()
         }
+        toolBar.setOnPenWidthValueSelected {applyAndSaveWriterPenWidth()}
 
         // Text-box font/size choices: apply to the canvas (next-created box) and persist.
         toolBar.setOnTextFontSelected { name ->
@@ -1701,6 +1704,15 @@ open class MainActivity : Activity() {
         // closeLibrary() call stays: it covers mutations made INSIDE the Library (notebook/folder
         // delete/rename/move) that need pushing when you leave back to the editor.
         syncIfDirty()
+    }
+
+    private fun applyAndSaveWriterPenWidth() {
+        drawView.activePenWidthValue=toolBar.activePenWidthValue()
+        backend.updatePen(drawView.activePenParams())
+        // Snapshot UI state before dispatching the pure Settings transform to the worker.
+        val levels=PenWidthSettings.encode(toolBar.currentPenWidthLevels())
+        val values=PenWidthSettings.encodeValues(toolBar.currentPenWidthValues())
+        store.updateSettings({it.copy(penWidthLevels=levels,penWidthValues=values)})
     }
 
     private data class PendingExport(

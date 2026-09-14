@@ -1,0 +1,27 @@
+<resources>
+    <string name="penu_close">Close Pen Settings</string>
+    <string name="penu_base_width">Base Width</string>
+    <string name="penu_width_range">Enter A Width From 7 To 250</string>
+    <string name="penu_width_choice">Thickness %1$s · Base Width %2$d</string>
+    <string name="penu_pens">Pens</string>
+    <string name="penu_pencils">Pencils</string>
+    <string name="penu_markers">Markers</string>
+    <string name="penu_calligraphy_group">Calligraphy</string>
+    <string name="penu_fountain">Fountain</string>
+    <string name="penu_brush">Brush</string>
+    <string name="penu_ballpoint">Ballpoint</string>
+    <string name="penu_fineliner">Fineliner</string>
+    <string name="penu_dashed">Dashed Line</string>
+    <string name="penu_pencil_hb">Pencil HB</string>
+    <string name="penu_pencil_2b">Pencil 2B</string>
+    <string name="penu_pencil_4b">Pencil 4B</string>
+    <string name="penu_pencil_6b">Pencil 6B</string>
+    <string name="penu_pencil_8b">Pencil 8B</string>
+    <string name="penu_marker">Marker</string>
+    <string name="penu_translucent_marker">Translucent Marker</string>
+    <string name="penu_highlighter">Highlighter</string>
+    <string name="penu_calligraphy">Calligraphy</string>
+    <string name="penu_reverse_calligraphy">Reverse Calligraphy</string>
+    <string name="penu_broad_calligraphy">Broad Calligraphy</string>
+    <string name="penu_chisel_calligraphy">Chisel Calligraphy</string>
+</resources>

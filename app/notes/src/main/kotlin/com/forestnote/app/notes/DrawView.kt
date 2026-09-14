@@ -226,6 +226,9 @@ class DrawView @JvmOverloads constructor(
     var activePenVariant: PenVariant = PenVariant.FOUNTAIN
     /** Active pen width level (A10); set by MainActivity on width pick / variant switch / launch. */
     var activePenWidthLevel: PenWidthLevel = PenWidthLevel.DEFAULT
+    var activePenWidthValue: Int? = null
+    fun activePenParams():PenParams = activePenWidthValue?.let {PenParams.ofBaseWidth(activePenVariant,it)}
+        ?: PenParams.of(activePenVariant,activePenWidthLevel)
     var onStrokeSaved: ((Stroke) -> Unit)? = null
 
     private var editorZoomSetting: Float = EditorZoomPolicy.AUTO_SETTING
@@ -628,7 +631,7 @@ class DrawView @JvmOverloads constructor(
             maxZoom = EditorZoomPolicy.MAX_ZOOM,
             preserveCenter = preserveCenter,
         )
-        backend?.updatePen(PenParams.of(activePenVariant, activePenWidthLevel))
+        backend?.updatePen(activePenParams())
         // The page projection moved (size change, aspect switch, or a zoom-setting change all route
         // here) → let an input-owning backend re-push its firmware limit rect to the new page rect.
         backend?.onTransformChanged()
@@ -1594,7 +1597,7 @@ class DrawView @JvmOverloads constructor(
     private fun handleDraw(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                val params = PenParams.of(activePenVariant, activePenWidthLevel)
+                val params = activePenParams()
                 strokeSink.begin(Tool.Pen, params)
                 strokeSink.accept(sampleOf(event), InkPhase.DOWN)
             }

@@ -22,4 +22,13 @@
     <dimen name="library_compact_meta_text">14sp</dimen>
     <dimen name="library_list_preview_width">52dp</dimen>
     <dimen name="library_list_preview_height">72dp</dimen>
+    <!-- Native writer Penu: UI geometry only, independent of saved stroke widths. -->
+    <dimen name="penu_panel_width">420dp</dimen>
+    <dimen name="penu_panel_max_height">580dp</dimen>
+    <dimen name="penu_three_column_min_width">380dp</dimen>
+    <dimen name="penu_screen_margin">8dp</dimen>
+    <dimen name="penu_number_width">76dp</dimen>
+    <dimen name="penu_preset_width">42dp</dimen>
+    <dimen name="penu_sample_width">24dp</dimen>
+    <dimen name="penu_sample_max_height">12dp</dimen>
 </resources>

@@ -61,7 +61,13 @@ class ToolSelectionLogic(
     /** Set the active variant's width level (e.g. tapping a width chip). */
     fun selectPenWidth(level: PenWidthLevel) {
         penWidthLevels[penVariant] = level
+        penWidthValues.remove(penVariant)
     }
+    private val penWidthValues=mutableMapOf<PenVariant,Int>()
+    fun selectPenWidthValue(width:Int) {require(width in 7..250);penWidthValues[penVariant]=width}
+    fun activePenWidthValue():Int=penWidthValues[penVariant] ?: com.forestnote.core.ink.PenWidthScale.pair(activePenWidth()).second
+    fun loadPenWidthValues(values:Map<PenVariant,Int>) {penWidthValues.clear();penWidthValues.putAll(values.filterValues {it in 7..250})}
+    fun allPenWidthValues():Map<PenVariant,Int> = penWidthValues.toMap()
 
     /** The active variant's remembered width level. */
     fun activePenWidth(): PenWidthLevel = penWidthLevels[penVariant] ?: PenWidthLevel.DEFAULT

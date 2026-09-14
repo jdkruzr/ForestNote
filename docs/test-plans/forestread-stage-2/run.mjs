@@ -142,6 +142,8 @@ try {
       'app/notes/src/main/kotlin/com/forestnote/app/notes/NotebookLibraryDialogs.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/NotebookManagementUi.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/NotebookExportSession.kt',
+      'app/notes/src/main/kotlin/com/forestnote/app/notes/WriterPenuView.kt',
+      'app/notes/src/main/kotlin/com/forestnote/app/notes/PenWidthSettings.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/EinkUiStyle.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/LibraryChromeView.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/LibrarySurfaceStyle.kt',

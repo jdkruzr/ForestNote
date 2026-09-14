@@ -84,6 +84,8 @@ data class Settings(
      * app layer converts. Empty/missing ⇒ that variant defaults to 4 (the v1 width).
      */
     val penWidthLevels: Map<String, String> = emptyMap(),
+    /** Optional exact writer base widths, keyed by stable PenVariant names, not UI labels. */
+    val penWidthValues: Map<String, Int> = emptyMap(),
     /** Active text-box font (a /system/fonts basename). Empty ⇒ the system default font. */
     val textFontName: String = "",
     /** Active text-box font size in virtual units (short axis = 10,000). */

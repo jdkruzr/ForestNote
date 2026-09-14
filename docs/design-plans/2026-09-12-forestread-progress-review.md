@@ -313,6 +313,10 @@ the headless result does not activate production integration.
    attaches selected-notebook export using the canonical renderer, frozen private staging
    and failure-aware destination writes. No shared-storage activation. Continue with the
    writer Penu/shared Settings extraction; folder cascade/purge remain separate follow-ups.
+   **D60 writer Penu:** [grouped pens, precise widths and initial resources](2026-09-14-forestread-writer-penu.md)
+   applies shared styling to the native writer while preserving all historical preset
+   transforms. Per-pen exact widths persist through the same owner. Continue shared
+   Settings ownership/resource extraction; physical Penu ink feel remains a device check.
    **Queued internationalization:** [shared UI resource extraction](2026-09-14-forestread-internationalization.md)
    records the user's request to replace inline chrome strings with a standard resource
    scheme, including the HTML reader boundary, plurals, accessibility and pseudo-locale

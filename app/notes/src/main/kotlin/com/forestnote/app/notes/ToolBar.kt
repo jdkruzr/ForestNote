@@ -14,7 +14,6 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.forestnote.core.ink.PenVariant
 import com.forestnote.core.ink.PenWidthLevel
-import com.forestnote.core.ink.PenWidthScale
 import com.forestnote.core.ink.Tool
 
 /**
@@ -46,6 +45,7 @@ class ToolBar(
     private var activeClearCallback: (() -> Unit)? = null
     private var penVariantCallback: ((PenVariant) -> Unit)? = null
     private var penWidthCallback: ((PenWidthLevel) -> Unit)? = null
+    private var penWidthValueCallback: ((Int) -> Unit)? = null
 
     // Text-box style state (font name + size in virtual units), surfaced by the Text chooser.
     private var fontNames: List<String> = emptyList()
@@ -97,27 +97,50 @@ class ToolBar(
     private fun showTrackedPopup(popup: PopupWindow, anchor: View) {
         openPopup = popup
         onPopupVisibilityChanged?.invoke(true)
+        val pageRoot=root.rootView
+        var lastBounds:Rect?=null
+        var keyboardSuspended=false
+        fun keyboardVisible() = pageRoot.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime())==true ||
+            (popup.isShowing && popup.contentView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime())==true)
+        lateinit var listener:android.view.ViewTreeObserver.OnGlobalLayoutListener
+        fun removeListener() {
+            if(pageRoot.viewTreeObserver.isAlive) pageRoot.viewTreeObserver.removeOnGlobalLayoutListener(listener)
+            if(popup.contentView.viewTreeObserver.isAlive) popup.contentView.viewTreeObserver.removeOnGlobalLayoutListener(listener)
+        }
+        fun publishBounds() {
+            if(openPopup!==popup || !popup.isShowing) {
+                // A closing numeric editor may still have an IME over the ink canvas.
+                if(openPopup==null && keyboardVisible()) return
+                removeListener()
+                if(openPopup==null) onPopupVisibilityChanged?.invoke(false)
+                return
+            }
+            if(keyboardVisible()) {
+                if(!keyboardSuspended) {
+                    keyboardSuspended=true;lastBounds=null
+                    onPopupVisibilityChanged?.invoke(true);onPopupBoundsChanged?.invoke(null)
+                }
+                return
+            }
+            keyboardSuspended=false
+            val location=IntArray(2);popup.contentView.getLocationOnScreen(location)
+            val bounds=Rect(location[0],location[1],location[0]+popup.contentView.width,location[1]+popup.contentView.height)
+            if(bounds!=lastBounds) {lastBounds=bounds;onPopupBoundsChanged?.invoke(bounds)}
+        }
+        listener=android.view.ViewTreeObserver.OnGlobalLayoutListener {publishBounds()}
+        pageRoot.viewTreeObserver.addOnGlobalLayoutListener(listener)
+        popup.contentView.viewTreeObserver.addOnGlobalLayoutListener(listener)
         popup.setOnDismissListener {
             openPopup = null
             onPopupBoundsChanged?.invoke(null)
-            onPopupVisibilityChanged?.invoke(false)
+            (root.context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+                ?.hideSoftInputFromWindow(popup.contentView.windowToken,0)
+            publishBounds()
         }
         popup.showAsDropDown(anchor)
         // PopupWindow has real screen geometry only after showAsDropDown/layout. Keep firmware input
         // suspended for this tiny setup window; MainActivity resumes it as soon as this rect arrives.
-        popup.contentView.post {
-            if (openPopup !== popup || !popup.isShowing) return@post
-            val location = IntArray(2)
-            popup.contentView.getLocationOnScreen(location)
-            onPopupBoundsChanged?.invoke(
-                Rect(
-                    location[0],
-                    location[1],
-                    location[0] + popup.contentView.width,
-                    location[1] + popup.contentView.height,
-                )
-            )
-        }
+        popup.contentView.post {publishBounds()}
     }
 
     /** Dismiss the active chooser, if any (used by firmware draw-to-dismiss pen-down). */
@@ -280,7 +303,7 @@ class ToolBar(
     }
 
     /** Human-readable label for a pen variant (UI concern, kept out of core:ink). */
-    private fun penVariantLabel(variant: PenVariant): String = variant.displayName
+    private fun penVariantLabel(variant: PenVariant): String = root.context.getString(PenUiLabels.name(variant))
 
     /** Set the callback invoked when a pen variant is chosen from the dropdown. */
     fun setOnPenVariantSelected(callback: (PenVariant) -> Unit) {
@@ -302,6 +325,10 @@ class ToolBar(
 
     /** A snapshot of every variant's width level (for persisting back to Settings). */
     fun currentPenWidthLevels(): Map<PenVariant, PenWidthLevel> = logic.allPenWidthLevels()
+    fun activePenWidthValue():Int=logic.activePenWidthValue()
+    fun loadPenWidthValues(values:Map<PenVariant,Int>)=logic.loadPenWidthValues(values)
+    fun currentPenWidthValues():Map<PenVariant,Int> = logic.allPenWidthValues()
+    fun setOnPenWidthValueSelected(callback:(Int)->Unit) {penWidthValueCallback=callback}
 
     // -- Text-box font/size chooser (Phase 4) ------------------------------------
 
@@ -523,157 +550,33 @@ class ToolBar(
         showTrackedPopup(popup, anchor)
     }
 
-    /**
-     * Pen-settings popup under the Fountain cell (A10): the variant rows plus a 9-chip width
-     * strip (chips drawn as actual thickness samples) acting on the active variant. Unlike the
-     * generic dropdown, tapping a variant or width updates the popup IN PLACE (no dismiss) so
-     * variant + width can both be adjusted in one session; tap-outside dismisses.
-     */
+    /** Shared native Penu styling; the tracked popup retains the firmware exclusion boundary. */
     private fun showPenSettingsPopup(anchor: View) {
         openPopup?.dismiss()
-        val ctx = anchor.context
-        val density = ctx.resources.displayMetrics.density
-        // Viwoods enables its direct callback only after Settings loads, so input ownership is
-        // deliberately queried when the popup opens rather than frozen during Activity startup.
-        val container = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                setColor(Color.WHITE)
-                setStroke(1, Color.BLACK)
-            }
+        val ctx=anchor.context
+        fun px(id:Int)=ctx.resources.getDimensionPixelSize(id)
+        val width=minOf(px(R.dimen.penu_panel_width),root.rootView.width-2*px(R.dimen.penu_screen_margin)).coerceAtLeast(1)
+        val popup=PopupWindow(ctx).apply {
+            this.width=width
+            height=ViewGroup.LayoutParams.WRAP_CONTENT
+            isFocusable=true
         }
-        val popup = PopupWindow(
-            container,
-            // WRAP_CONTENT can freeze at the variant-list width on PopupWindow implementations,
-            // clipping the thickness strip after level 4. Reserve the complete nine-chip strip;
-            // buildWidthStrip remains horizontally scrollable on narrower screens.
-            minOf(
-                (PEN_POPUP_WIDTH_DP * density).toInt(),
-                ctx.resources.displayMetrics.widthPixels - (POPUP_SCREEN_MARGIN_DP * 2 * density).toInt(),
-            ),
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            true
-        )
-        popup.isOutsideTouchable = true
-        if (isEInk) popup.elevation = 0f
-
-        // Rebuild the popup body for the current active variant + its remembered width. Called
-        // again on each in-place selection so the ● marker and the strip highlight track state.
-        fun populate() {
-            container.removeAllViews()
-            val padH = (12 * density).toInt()
-            val padV = (8 * density).toInt()
-            val markerWidth = (18 * density).toInt()
-
-            val variants = PenVariant.entries
-            val activeVariant = logic.activePenVariant()
-            val variantList = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-            variants.forEach { variant ->
-                val row = LinearLayout(ctx).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(padH, padV, padH, padV)
-                    isClickable = true
-                    addView(TextView(ctx).apply {
-                        text = if (variant == activeVariant) "●" else ""
-                        textSize = 14f
-                        setTextColor(Color.BLACK)
-                        width = markerWidth
-                    })
-                    addView(TextView(ctx).apply {
-                        text = penVariantLabel(variant)
-                        textSize = 14f
-                        setTextColor(Color.BLACK)
-                    })
-                    setOnClickListener {
-                        logic.selectPenVariant(variant)
-                        penVariantCallback?.invoke(variant)
-                        updatePenCellLabel()
-                        populate() // refresh marker + strip for the newly-active variant
-                    }
-                }
-                variantList.addView(row)
-            }
-            container.addView(ScrollView(ctx).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    (360 * density).toInt(),
-                )
-                addView(variantList)
-            })
-
-            container.addView(View(ctx).apply {
-                setBackgroundColor(Color.BLACK)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
-            })
-            container.addView(buildWidthStrip(ctx, density, logic.activePenWidth()) { level ->
-                logic.selectPenWidth(level)
-                penWidthCallback?.invoke(level)
-                populate() // refresh the highlighted chip
-            })
-        }
-        populate()
-
-        showTrackedPopup(popup, anchor)
-    }
-
-    /**
-     * A horizontal strip of 9 width chips (1…9). Each chip shows an actual thickness sample
-     * (a black bar whose height tracks the level's base max width) over its label; the [active]
-     * chip gets a 1dp border. Tapping a chip calls [onPick].
-     */
-    private fun buildWidthStrip(
-        ctx: android.content.Context,
-        density: Float,
-        active: PenWidthLevel,
-        onPick: (PenWidthLevel) -> Unit
-    ): View {
-        val strip = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
-        }
-        val chipW = (40 * density).toInt()
-        val sampleW = (28 * density).toInt()
-        val sampleArea = (24 * density).toInt()
-        PenWidthLevel.entries.forEach { level ->
-            val baseMax = PenWidthScale.pair(level).second
-            // Scale the level's base max into a visible bar height (level 9 = 140 → 14dp).
-            val barH = (baseMax / MAX_WIDTH_SAMPLE_V * 14f * density).toInt().coerceAtLeast(1)
-            val chip = LinearLayout(ctx).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                isClickable = true
-                layoutParams = LinearLayout.LayoutParams(chipW, ViewGroup.LayoutParams.WRAP_CONTENT)
-                if (level == active) {
-                    background = GradientDrawable().apply {
-                        setColor(Color.WHITE)
-                        setStroke(1, Color.BLACK)
-                    }
-                }
-                // Thickness sample: a centred black bar of height barH inside a fixed sample area.
-                addView(LinearLayout(ctx).apply {
-                    gravity = Gravity.CENTER
-                    layoutParams = LinearLayout.LayoutParams(sampleW, sampleArea)
-                    addView(View(ctx).apply {
-                        setBackgroundColor(Color.BLACK)
-                        layoutParams = LinearLayout.LayoutParams(sampleW, barH)
-                    })
-                })
-                addView(TextView(ctx).apply {
-                    text = level.label
-                    textSize = 10f
-                    setTextColor(Color.BLACK)
-                    gravity = Gravity.CENTER
-                })
-                setOnClickListener { onPick(level) }
-            }
-            strip.addView(chip)
-        }
-        return HorizontalScrollView(ctx).apply {
-            isHorizontalScrollBarEnabled = false
-            isFillViewport = true
-            addView(strip)
-        }
+        val content=WriterPenuView(ctx,if(width>=px(R.dimen.penu_three_column_min_width)) 3 else 2,
+            logic::activePenVariant,logic::activePenWidthValue,
+            pickPen={variant ->
+                logic.selectPenVariant(variant);penVariantCallback?.invoke(variant);updatePenCellLabel()
+            },pickPreset={level ->
+                logic.selectPenWidth(level);penWidthCallback?.invoke(level)
+            },pickWidth={value ->
+                logic.selectPenWidthValue(value);penWidthValueCallback?.invoke(value)
+            },close={popup.dismiss()})
+        popup.contentView=ScrollView(ctx).apply {addView(content)}
+        popup.setBackgroundDrawable(LibrarySurfaceStyle.surface(ctx))
+        popup.isOutsideTouchable=true
+        popup.elevation=0f
+        popup.softInputMode=android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        popup.height=minOf(px(R.dimen.penu_panel_max_height),popup.getMaxAvailableHeight(anchor)).coerceAtLeast(1)
+        showTrackedPopup(popup,anchor)
     }
 
     /** The erase group's two variants, in dropdown order. */
@@ -702,10 +605,7 @@ class ToolBar(
 
     companion object {
         private const val DEFAULT_TEXT_SIZE_V = 240
-        /** Nine 40dp chips + 16dp strip padding + border/rounding allowance. */
-        private const val PEN_POPUP_WIDTH_DP = 380
         private const val POPUP_SCREEN_MARGIN_DP = 8
-        private const val MAX_WIDTH_SAMPLE_V = 140f
         // Text size presets live in [TextStylePresets.SIZES] — shared with the per-text-box
         // Options dialog so the two choosers can't drift.
         private val TEXT_SIZES = TextStylePresets.SIZES

@@ -23,6 +23,30 @@ import java.util.concurrent.Executors
 class WriterHostQualificationTest {
     private val instrumentation=InstrumentationRegistry.getInstrumentation()
     private val context get()=instrumentation.targetContext
+
+    @Test fun writerPenuRowsContainWrappedLabelsAndWidthSamples() {
+        instrumentation.runOnMainSync {
+            for(widthDp in listOf(300,420)) for(scale in listOf(1f,1.3f)) {
+                val config=android.content.res.Configuration(context.resources.configuration).apply {fontScale=scale}
+                val themed=android.view.ContextThemeWrapper(context.createConfigurationContext(config),android.R.style.Theme_Material_Light_NoActionBar)
+                val penu=WriterPenuView(themed,if(widthDp>=380) 3 else 2,{PenVariant.FOUNTAIN},{35},{},{},{},{})
+                val width=(widthDp*themed.resources.displayMetrics.density).toInt()
+                penu.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED))
+                penu.layout(0,0,width,penu.measuredHeight)
+                for(pen in PenVariant.entries) {
+                    val button=penu.findViewWithTag<android.widget.Button>("writerPen:${pen.name}")
+                    val row=button.parent as View
+                    assertTrue("$pen row clips at $widthDp/$scale",button.bottom<=row.height)
+                    assertTrue("$pen text clips at $widthDp/$scale",button.layout.height<=button.height-button.compoundPaddingTop-button.compoundPaddingBottom)
+                }
+                for(level in PenWidthLevel.entries) {
+                    val button=penu.findViewWithTag<android.widget.Button>("writerWidth:${PenWidthScale.pair(level).second}")
+                    assertTrue(button.bottom<=(button.parent as View).height)
+                    assertTrue(button.layout.height<=button.height-button.compoundPaddingTop-button.compoundPaddingBottom)
+                }
+            }
+        }
+    }
     private suspend fun resumed():Activity?=withContext(Dispatchers.Main) {
         ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).singleOrNull()
     }
@@ -152,6 +176,111 @@ class WriterHostQualificationTest {
         val a=awaitActivity(WriterHostQualificationActivity::class.java)
         waitUntil {withContext(Dispatchers.Main) {field(a,"editorLoaded")==true && a.findViewById<View>(R.id.draw_view).width>0}}
         return a
+    }
+
+    @Test fun writerPenuKeepsExactWidthsAndCanonicalInkAcrossRecreation()=runBlocking<Unit> {
+        val id="writer-penu-${UUID.randomUUID()}"
+        val main=Handler(Looper.getMainLooper())
+        val store=NotebookStore(repoProvider={NotebookRepository.openIsolatedQualification(context,id)},
+            executor=Executors.newSingleThreadExecutor(),poster={main.post(it)},qualifyReaderStorage=true)
+        var scenario:ActivityScenario<ReaderHostQualificationActivity>?=null
+        suspend fun settings():com.forestnote.core.format.Settings {
+            val done=CompletableDeferred<com.forestnote.core.format.Settings>()
+            store.loadSettings {done.complete(it)};return withTimeout(5000) {done.await()}
+        }
+        suspend fun ink():List<Stroke> {
+            val done=CompletableDeferred<List<Stroke>>()
+            store.load {done.complete(it)};return withTimeout(5000) {done.await()}
+        }
+        try {
+            store.readerIdentity()
+            ReaderHostQualificationSession.store=store;ReaderHostQualificationSession.sharedLibrary=true;ReaderHostQualificationSession.writer=true
+            scenario=ActivityScenario.launch(ReaderHostQualificationActivity::class.java)
+            val reader=awaitActivity(ReaderHostQualificationActivity::class.java)
+            ComposeChromeTest.tap("shelf:NOTEBOOKS")
+            waitUntil {withContext(Dispatchers.Main) {reader.findViewById<RecyclerView>(R.id.library_grid)?.getChildAt(0)!=null}}
+            withContext(Dispatchers.Main) {reader.findViewById<RecyclerView>(R.id.library_grid).getChildAt(0).performClick()}
+            var writer=writerReady()
+            fun popup():android.widget.PopupWindow {
+                val toolbar=field(writer,"toolBar") as ToolBar
+                return ToolBar::class.java.getDeclaredField("openPopup").apply {isAccessible=true}.get(toolbar) as android.widget.PopupWindow
+            }
+            withContext(Dispatchers.Main) {
+                writer.findViewById<View>(R.id.cell_fountain).performClick()
+                val content=popup().contentView
+                for(pen in PenVariant.entries) assertNotNull(content.findViewWithTag<View>("writerPen:${pen.name}"))
+                val input=content.findViewWithTag<android.widget.EditText>("writerPenWidth")
+                input.setText("47");content.findViewWithTag<View>("writerPenWidthApply").performClick()
+                assertEquals(PenParams.ofBaseWidth(PenVariant.FOUNTAIN,47),writer.findViewById<DrawView>(R.id.draw_view).activePenParams())
+                input.setText("251");content.findViewWithTag<View>("writerPenWidthApply").performClick()
+                assertNotNull(input.error)
+                assertEquals(47,writer.findViewById<DrawView>(R.id.draw_view).activePenWidthValue)
+                content.findViewWithTag<View>("writerPen:PENCIL_8B").performClick()
+                input.setText("63");content.findViewWithTag<View>("writerPenWidthApply").performClick()
+                content.findViewWithTag<View>("writerPen:FOUNTAIN").performClick()
+                assertEquals("47",input.text.toString())
+                popup().dismiss()
+                val draw=writer.findViewById<DrawView>(R.id.draw_view)
+                val sink=draw.inputStrokeSink();sink.begin(Tool.Pen,draw.activePenParams())
+                sink.accept(InkSample(1500,2000,300,1000),InkPhase.DOWN)
+                sink.accept(InkSample(1800,2300,600,1010),InkPhase.MOVE)
+                sink.accept(InkSample(2100,2000,800,1020),InkPhase.UP)
+            }
+            assertEquals(mapOf("FOUNTAIN" to 47,"PENCIL_8B" to 63),settings().penWidthValues)
+            val saved=ink().single();assertEquals(47,saved.penWidthMax);assertEquals(9,saved.penWidthMin)
+            withContext(Dispatchers.Main) {writer.recreate()}
+            waitUntil {resumed()?.let {it is WriterHostQualificationActivity && it!==writer}==true}
+            writer=writerReady()
+            waitUntil {withContext(Dispatchers.Main) {writer.findViewById<DrawView>(R.id.draw_view).activePenWidthValue==47}}
+            assertEquals(listOf(saved),ink())
+            withContext(Dispatchers.Main) {
+                writer.findViewById<View>(R.id.cell_fountain).performClick()
+                popup().contentView.findViewWithTag<View>("writerWidth:70").performClick()
+                assertEquals(PenParams.of(PenVariant.FOUNTAIN,PenWidthLevel.LEVEL_7),writer.findViewById<DrawView>(R.id.draw_view).activePenParams())
+                popup().dismiss()
+            }
+            assertEquals(mapOf("PENCIL_8B" to 63),settings().penWidthValues)
+            assertEquals("7",settings().penWidthLevels["FOUNTAIN"])
+            assertEquals(listOf(saved),ink())
+            // Real IME coexistence: firmware must not capture strokes over the keyboard.
+            withContext(Dispatchers.Main) {
+                writer.findViewById<View>(R.id.cell_fountain).performClick()
+                val input=popup().contentView.findViewWithTag<android.widget.EditText>("writerPenWidth")
+                input.requestFocus()
+            }
+            waitUntil("Penu Window Focus") {withContext(Dispatchers.Main) {popup().contentView.hasWindowFocus()}}
+            withContext(Dispatchers.Main) {
+                val input=popup().contentView.findViewWithTag<android.widget.EditText>("writerPenWidth")
+                (writer.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                    .showSoftInput(input,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+            }
+            waitUntil("Penu Keyboard Visible") {withContext(Dispatchers.Main) {
+                popup().contentView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime())==true
+            }}
+            val backend=field(writer,"backend")
+            if(backend is BooxInkBackend) {
+                waitUntil("Firmware Suspended For Keyboard") {withContext(Dispatchers.Main) {
+                    BooxInkBackend::class.java.getDeclaredField("inputSuspended").apply {isAccessible=true}.get(backend)==true
+                }}
+                assertEquals(PenParams.ofBaseWidth(PenVariant.FOUNTAIN,70),
+                    BooxInkBackend::class.java.getDeclaredField("pen").apply {isAccessible=true}.get(backend))
+            }
+            withContext(Dispatchers.Main) {popup().dismiss()}
+            waitUntil("Penu Keyboard Closed") {withContext(Dispatchers.Main) {
+                writer.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime())!=true
+            }}
+            if(backend is BooxInkBackend) waitUntil("Firmware Resumed After Keyboard") {withContext(Dispatchers.Main) {
+                BooxInkBackend::class.java.getDeclaredField("inputSuspended").apply {isAccessible=true}.get(backend)==false
+            }}
+            assertEquals(listOf(saved),ink())
+        } finally {
+            withContext(Dispatchers.Main) {
+                ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<WriterHostQualificationActivity>().forEach {it.finish()}
+            }
+            scenario?.close();ReaderHostQualificationSession.cleanup?.join()
+            ReaderHostQualificationSession.store=null;ReaderHostQualificationSession.sharedLibrary=false;ReaderHostQualificationSession.writer=false
+            store.shutdown()
+        }
     }
 
     @Test fun sharedShelfOpensRealWriterWithoutAnotherOwnerAndSavesAcrossRecreation()=runBlocking<Unit> {

@@ -34,6 +34,18 @@ data class PenParams(
          */
         fun of(variant: PenVariant, level: PenWidthLevel): PenParams {
             val (baseMin, baseMax) = PenWidthScale.pair(level)
+            return fromBase(variant,baseMin,baseMax)
+        }
+
+        /** Precise writer base width; all nine established presets retain their exact math. */
+        fun ofBaseWidth(variant: PenVariant, requested: Int): PenParams {
+            val width=requested.coerceIn(7,250)
+            val preset=PenWidthLevel.entries.firstOrNull {PenWidthScale.pair(it).second==width}
+            if(preset!=null) return of(variant,preset)
+            return fromBase(variant,(width/5).coerceAtLeast(1),width)
+        }
+
+        private fun fromBase(variant:PenVariant,baseMin:Int,baseMax:Int):PenParams {
             return when (variant) {
                 PenVariant.FOUNTAIN, PenVariant.PENCIL_HB, PenVariant.PENCIL_2B,
                 PenVariant.PENCIL_4B, PenVariant.PENCIL_6B, PenVariant.PENCIL_8B,
