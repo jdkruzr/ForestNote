@@ -12,7 +12,9 @@ internal interface ReaderRecognitionEngine {
     suspend fun prepare(downloading:()->Unit)
     suspend fun recognize(ink:List<StoredRecord>):String
 }
-internal data class ReaderRecognitionStatus(val message:String="Paused",val revision:Long=0,val retryable:Boolean=false)
+internal enum class ReaderRecognitionPhase { PAUSED, WAITING_FOR_INK, CHECKING_MODEL, DOWNLOADING_MODEL, MODEL_UNAVAILABLE, RECOGNIZING, UP_TO_DATE, PARTIAL_FAILURE, UNAVAILABLE, CLOSED }
+internal data class ReaderRecognitionStatus(val phase:ReaderRecognitionPhase=ReaderRecognitionPhase.PAUSED,
+    val revision:Long=0,val retryable:Boolean=false,val failures:Int=0,val language:String="")
 
 /** One owner, one foreground sweep. Missing fingerprint-matched results are the durable
  * work list; crashes need no extra queue to reconstruct eligibility.
@@ -27,28 +29,28 @@ internal class ReaderRecognitionWorker(
     private val active=MutableStateFlow(false)
     private val wake=Channel<Unit>(Channel.CONFLATED)
     private val retry=Channel<Unit>(Channel.CONFLATED)
-    private val mutableStatus=MutableStateFlow(ReaderRecognitionStatus())
+    private val mutableStatus=MutableStateFlow(ReaderRecognitionStatus(language=engine.language))
     val status:StateFlow<ReaderRecognitionStatus> = mutableStatus.asStateFlow()
     private var closed=false
-    private fun report(message:String,retryable:Boolean=false) {
-        mutableStatus.value=mutableStatus.value.copy(message=message,retryable=retryable)
+    private fun report(phase:ReaderRecognitionPhase,retryable:Boolean=false,failures:Int=0) {
+        mutableStatus.value=mutableStatus.value.copy(phase=phase,retryable=retryable,failures=failures)
     }
     private suspend fun awaitWriting() {
-        while(writing()) {report("Recognition Waits Until Writing Is Finished");delay(250)}
+        while(writing()) {report(ReaderRecognitionPhase.WAITING_FOR_INK);delay(250)}
         currentCoroutineContext().ensureActive()
     }
     private val job=scope.launch {
         active.collectLatest {enabled ->
-            if(!enabled) {report("Paused");return@collectLatest}
+            if(!enabled) {report(ReaderRecognitionPhase.PAUSED);return@collectLatest}
             while(true) {
                 try {
-                    awaitWriting();report("Checking Handwriting Model…")
-                    withTimeout(120_000) {engine.prepare {report("Downloading English Handwriting Model…")}}
+                    awaitWriting();report(ReaderRecognitionPhase.CHECKING_MODEL)
+                    withTimeout(120_000) {engine.prepare {report(ReaderRecognitionPhase.DOWNLOADING_MODEL)}}
                     currentCoroutineContext().ensureActive();break
                 } catch(e:CancellationException) {
                     currentCoroutineContext().ensureActive() // A model timeout is retryable, a pause is not.
-                    report("Handwriting Model Unavailable · Retry When Connected",true)
-                } catch(_:Exception) {report("Handwriting Model Unavailable · Retry When Connected",true)}
+                    report(ReaderRecognitionPhase.MODEL_UNAVAILABLE,true)
+                } catch(_:Exception) {report(ReaderRecognitionPhase.MODEL_UNAVAILABLE,true)}
                 retry.receive()
             }
             while(currentCoroutineContext().isActive) {
@@ -70,7 +72,7 @@ internal class ReaderRecognitionWorker(
                                         if(!a.visible || a.status!=ProjectionStatus.READY || a.strokes.isEmpty()) continue
                                         val hash=checkNotNull(a.inputHash)
                                         if(s.state.matchingRecognition(id,hash,1).isNotEmpty()) continue
-                                        report("Recognizing Handwriting…")
+                                        report(ReaderRecognitionPhase.RECOGNIZING)
                                         val text=withTimeout(60_000) {engine.recognize(a.strokes)}
                                         currentCoroutineContext().ensureActive();awaitWriting()
                                         if(s.state.publishRecognitionIfCurrent(UUID.randomUUID().toString(),id,hash,
@@ -86,9 +88,9 @@ internal class ReaderRecognitionWorker(
                         }
                         afterBook=books.lastOrNull()?.book?.id
                     } while(books.size==8)
-                    report(if(failures==0) "Handwriting Recognition Up To Date" else "$failures Annotations Could Not Be Recognized",failures>0)
+                    report(if(failures==0) ReaderRecognitionPhase.UP_TO_DATE else ReaderRecognitionPhase.PARTIAL_FAILURE,failures>0,failures)
                 } catch(e:CancellationException) {throw e}
-                catch(_:Exception) {report("Handwriting Recognition Unavailable",true)}
+                catch(_:Exception) {report(ReaderRecognitionPhase.UNAVAILABLE,true)}
                 withTimeoutOrNull(idleMillis) {wake.receive()}
             }
         }
@@ -99,6 +101,6 @@ internal class ReaderRecognitionWorker(
     fun retry() {retry.trySend(Unit);wake.trySend(Unit)}
     suspend fun close() {
         synchronized(this) {closed=true}
-        job.cancelAndJoin();scope.cancel();wake.close();retry.close();report("Closed")
+        job.cancelAndJoin();scope.cancel();wake.close();retry.close();report(ReaderRecognitionPhase.CLOSED)
     }
 }

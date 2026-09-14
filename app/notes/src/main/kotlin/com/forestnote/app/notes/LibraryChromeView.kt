@@ -62,7 +62,7 @@ internal class LibraryChromeView(
                     onDensity, Modifier.padding(end = gap).testTag("libraryDensity"), compact = compact,
                     description = stringResource(R.string.library_density))
                 EinkButton("", onSettings, Modifier.padding(end = gap).testTag("sharedSettings"),
-                    icon = R.drawable.ic_settings, description = stringResource(R.string.settings_notebook_defaults), compact = compact)
+                    icon = R.drawable.ic_settings, description = stringResource(R.string.settings_title), compact = compact)
                 EinkButton("×", onClose, Modifier.widthIn(min = 42.dp).testTag("closeSharedLibrary"),
                     description = stringResource(R.string.shared_library_close), compact = compact)
             }

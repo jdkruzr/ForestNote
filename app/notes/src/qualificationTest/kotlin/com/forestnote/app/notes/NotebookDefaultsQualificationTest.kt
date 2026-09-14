@@ -57,7 +57,14 @@ class NotebookDefaultsQualificationTest {
                 result?.isShowing==true
             }};return result!!
         }
-        suspend fun open():AlertDialog {shelf();ComposeChromeTest.click("sharedSettings");return dialog()}
+        suspend fun open():AlertDialog {
+            shelf();ComposeChromeTest.click("sharedSettings")
+            waitUntil {
+                instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(context.getString(R.string.settings_notebook_defaults))
+                    ?.firstOrNull {it.isClickable}?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)==true
+            }
+            return dialog()
+        }
         suspend fun loaded(d:AlertDialog) {waitUntil {withContext(Dispatchers.Main) {d.window!!.decorView.findViewWithTag<View>("defaultsTemplate:DOT")!=null}}}
         suspend fun click(d:AlertDialog,tag:String)=withContext(Dispatchers.Main) {d.window!!.decorView.findViewWithTag<View>(tag).performClick()}
         suspend fun dismiss(d:AlertDialog) {

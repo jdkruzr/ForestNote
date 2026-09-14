@@ -52,7 +52,7 @@ class ReaderLibraryAccessTest {
             for(book in books) assertEquals(1,a.browseAnnotations(book,query="cafe").getValue("entries").jsonArray.size)
             val history=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
             worker=ReaderRecognitionWorker({s.withReader {it}},engine,{false});worker.resume()
-            withTimeout(5000) {while(worker.status.value.message!="Handwriting Recognition Up To Date") delay(10)}
+            withTimeout(5000) {while(worker.status.value.phase!=ReaderRecognitionPhase.UP_TO_DATE) delay(10)}
             assertEquals(2,calls.get());assertEquals(history,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
         } finally {worker?.close();s.shutdown()}
     }
@@ -100,7 +100,7 @@ class ReaderLibraryAccessTest {
             worker.pause();withTimeout(5000) {while(inFlight.get()!=0) delay(10)}
             assertTrue(sql(file,"SELECT * FROM reader_recognition").isEmpty())
             worker.resume();withTimeout(5000) {while(worker.status.value.revision!=1L) delay(10)}
-            worker.close();assertEquals(0,inFlight.get());assertEquals("Closed",worker.status.value.message)
+            worker.close();assertEquals(0,inFlight.get());assertEquals(ReaderRecognitionPhase.CLOSED,worker.status.value.phase)
         } finally {worker?.close();s.shutdown()}
     }
 
@@ -121,7 +121,7 @@ class ReaderLibraryAccessTest {
             withTimeout(5000) {while(worker.status.value.revision<1) delay(10)}
             assertEquals(listOf(listOf("Fresh")),sql(file,"SELECT text FROM reader_recognition"))
             assertEquals(1L,worker.status.value.revision)
-            s.shutdown();assertEquals("Closed",worker.status.value.message)
+            s.shutdown();assertEquals(ReaderRecognitionPhase.CLOSED,worker.status.value.phase)
         } finally {s.shutdown()}
     }
 

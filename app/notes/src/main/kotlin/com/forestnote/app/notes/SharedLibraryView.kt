@@ -276,9 +276,22 @@ internal class SharedLibraryView(
         prompt?.dismiss();prompt=null
     }
     private fun openSettings() {
+        dismissNotebookPrompt();hideKeyboard()
+        menu(chrome,listOf(
+            context.getString(R.string.settings_notebook_defaults) to {openNotebookDefaults()},
+            context.getString(R.string.recognition_settings_title) to {openRecognitionSettings()}
+        ),R.string.settings_title)
+    }
+    private fun openNotebookDefaults() {
         dismissNotebookPrompt();popup?.dismiss();hideKeyboard()
         var opened:AlertDialog?=null
         opened=NotebookDefaultsDialog.show(context,store,onSaved={notebookChanged()},onDismiss={if(prompt===opened) prompt=null})
+        prompt=opened
+    }
+    private fun openRecognitionSettings() {
+        dismissNotebookPrompt();popup?.dismiss();hideKeyboard()
+        var opened:AlertDialog?=null
+        opened=ReaderRecognitionDialog.show(context,books.recognitionStatus(),books::retryRecognition) {if(prompt===opened) prompt=null}
         prompt=opened
     }
     private fun notebookMutationDone() {post {

@@ -1,0 +1,19 @@
+<resources>
+    <string name="recognition_settings_title">Reader Handwriting Recognition</string>
+    <string name="recognition_settings_description">Recognizes saved reader annotations on this device. Existing current results are kept. The shared worker pauses while handwriting is being edited.</string>
+    <string name="recognition_language">Language: %1$s</string>
+    <string name="recognition_not_configured">Recognition is not configured for this host.</string>
+    <string name="recognition_paused">Paused</string>
+    <string name="recognition_waiting_for_ink">Recognition Waits Until Writing Is Finished</string>
+    <string name="recognition_checking_model">Checking Handwriting Model…</string>
+    <string name="recognition_downloading_model">Downloading Handwriting Model…</string>
+    <string name="recognition_model_unavailable">Handwriting Model Unavailable · Retry When Connected</string>
+    <string name="recognition_running">Recognizing Handwriting…</string>
+    <string name="recognition_up_to_date">Handwriting Recognition Up To Date</string>
+    <string name="recognition_unavailable">Handwriting Recognition Unavailable</string>
+    <string name="recognition_closed">Closed</string>
+    <plurals name="recognition_failed_annotations">
+        <item quantity="one">%1$d Annotation Could Not Be Recognized</item>
+        <item quantity="other">%1$d Annotations Could Not Be Recognized</item>
+    </plurals>
+</resources>

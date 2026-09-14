@@ -89,7 +89,7 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
             }}
         }}
     }
-    private fun recognitionJson(value:ReaderRecognitionStatus)=JSONObject().put("message",value.message)
+    private fun recognitionJson(value:ReaderRecognitionStatus)=JSONObject().put("message",ReaderRecognitionText.message(context,value))
         .put("revision",value.revision).put("retryable",value.retryable)
     private suspend fun handle(request:JSONObject):Any {
         return when(request.getString("action")) {
