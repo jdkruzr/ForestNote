@@ -1,6 +1,14 @@
 <resources>
-    <string name="recognition_settings_title">Reader Handwriting Recognition</string>
-    <string name="recognition_settings_description">Recognizes saved reader annotations on this device. Existing current results are kept. The shared worker pauses while handwriting is being edited.</string>
+    <string name="recognition_settings_title">Handwriting Recognition</string>
+    <string name="recognition_settings_description">One on-device language choice for Reader annotations and Writer selection, page, and local-search recognition. Ink stays on this device during recognition. Existing current results are kept; changing language does not rewrite them.</string>
+    <string name="handwriting_language_title">Recognition Language</string>
+    <string name="handwriting_language_change">Change Language</string>
+    <string name="handwriting_language_description">Applies to Reader and Writer on this device after Save. Reader downloads the selected model when foreground recognition resumes; Writer offers a download when needed. Back discards your choice. Existing recognized text is preserved.</string>
+    <string name="handwriting_language_load_failed">Could not load the language choice. Nothing has changed.</string>
+    <string name="handwriting_language_save_failed">Could not save the language choice. Please retry Save.</string>
+    <string name="handwriting_reader_status">Reader Annotation Worker</string>
+    <string name="handwriting_writer_status">Writer uses the same language for recognition actions and its existing lazy page-search worker. Automatic whole-library Writer backfill and re-recognition controls are not yet connected here.</string>
+    <string name="handwriting_model_required">On-device recognition needs the %1$s handwriting model before it can run.</string>
     <string name="recognition_language">Language: %1$s</string>
     <string name="recognition_not_configured">Recognition is not configured for this host.</string>
     <string name="recognition_paused">Paused</string>

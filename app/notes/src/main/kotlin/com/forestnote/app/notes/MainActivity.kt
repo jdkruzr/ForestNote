@@ -300,6 +300,7 @@ open class MainActivity : Activity() {
             modelManager = modelManager,
             scope = syncScope,
             requestSync = { requestWriterSync() },
+            language = { handwritingLanguage() },
         )
         // Offline CalDAV queue. The drainer owns the network side of the outbox;
         // NotebookStore owns the durable side. Resume()/pause()/shutdown() in
@@ -858,7 +859,13 @@ open class MainActivity : Activity() {
     ) {
         if (strokes.isEmpty() || screenBounds == null) return
         syncScope.launch {
-            // Snapshot what's actually on disk — any English variant counts.
+            if (attachment != null) {
+                val language=handwritingLanguage()
+                if(modelManager.isDownloaded(language)) runRecognize(strokes,screenBounds,language,onText)
+                else promptModelDownload(language,{runRecognize(strokes,screenBounds,language,onText)})
+                return@launch
+            }
+            // OG ForestNote retains its existing English-variant fallback.
             val installed = modelManager.installedLanguages().toSet()
             when (val decision = RecognizeFlowLogic.decide(strokes.size, installed)) {
                 is RecognizeFlowLogic.Decision.PromptDownload -> {
@@ -1041,14 +1048,17 @@ open class MainActivity : Activity() {
             }
     }
 
+    private suspend fun handwritingLanguage():String = if(attachment==null) DeviceOcrScheduler.DEFAULT_LANG
+        else HandwritingPreferences.shared(this).current()
+
     /**
      * Page preparation for lasso → To-do. The sheet is already open with the lasso text
      * as SUMMARY; this fills the optional ATTACH with a JPEG of the source page. OCR still
      * runs afterward for local page search only; it is deliberately not attached to tasks.
      */
     private fun startTodoPagePreparation(pageId: String) {
-        val langTag = DeviceOcrScheduler.DEFAULT_LANG
         syncScope.launch {
+            val langTag = handwritingLanguage()
             fileLogger.log("CalDAV", "todo page prep start page=$pageId")
             caldavTaskSheet.updateAttachmentProgress("loading page")
             val strokes = runCatching { store.loadStrokesForPageSync(pageId) }
@@ -1090,8 +1100,8 @@ open class MainActivity : Activity() {
     }
 
     private fun startTodoLocalSearchOcr(pageId: String) {
-        val langTag = DeviceOcrScheduler.DEFAULT_LANG
         syncScope.launch {
+            val langTag = handwritingLanguage()
             val result = withTimeoutOrNull(TODO_PAGE_OCR_TIMEOUT_MS) {
                 runFullPageDeviceOcr(
                     pageId = pageId,
@@ -1534,12 +1544,12 @@ open class MainActivity : Activity() {
 
     private fun runDeviceOcrForPage(pageId: String, promptForModel: Boolean) {
         syncScope.launch {
-            val langTag = DeviceOcrScheduler.DEFAULT_LANG
+            val langTag = handwritingLanguage()
             if (!modelManager.isDownloaded(langTag)) {
                 if (!promptForModel) return@launch
                 AlertDialog.Builder(this@MainActivity)
                     .setTitle("Download handwriting model")
-                    .setMessage("Device OCR needs the English (US) handwriting model before it can run.")
+                    .setMessage(getString(R.string.handwriting_model_required,ReaderRecognitionText.language(this@MainActivity,langTag)))
                     .setPositiveButton("Download") { _, _ ->
                         syncScope.launch {
                             val ok = modelManager.download(langTag).isSuccess

@@ -9,6 +9,8 @@ import java.util.UUID
 internal interface ReaderRecognitionEngine {
     val language:String
     val model:String
+    val languageChanges:StateFlow<String>? get()=null
+    fun forLanguage(language:String):ReaderRecognitionEngine=this
     suspend fun prepare(downloading:()->Unit)
     suspend fun recognize(ink:List<StoredRecord>):String
 }
@@ -40,8 +42,13 @@ internal class ReaderRecognitionWorker(
         currentCoroutineContext().ensureActive()
     }
     private val job=scope.launch {
-        active.collectLatest {enabled ->
+        combine(active,engine.languageChanges ?: flowOf(engine.language)) {enabled,language->enabled to language}.collectLatest { (enabled,language) ->
+            mutableStatus.value=mutableStatus.value.copy(language=language)
             if(!enabled) {report(ReaderRecognitionPhase.PAUSED);return@collectLatest}
+            if(language.isBlank()) {report(ReaderRecognitionPhase.CHECKING_MODEL);return@collectLatest}
+            // Each sweep keeps one immutable model/language. collectLatest joins the old
+            // sweep before a language change can recognize or publish another result.
+            val engine=this@ReaderRecognitionWorker.engine.forLanguage(language)
             while(true) {
                 try {
                     awaitWriting();report(ReaderRecognitionPhase.CHECKING_MODEL)

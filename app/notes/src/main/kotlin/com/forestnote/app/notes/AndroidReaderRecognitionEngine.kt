@@ -6,9 +6,10 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 /** Existing local ML Kit transport; ink is never uploaded. Owned by the shared reader worker. */
-internal class AndroidReaderRecognitionEngine(context:android.content.Context):ReaderRecognitionEngine {
+internal class AndroidReaderRecognitionEngine(context:android.content.Context,override val language:String="en-US"):ReaderRecognitionEngine {
     private val context=context.applicationContext
-    override val language="en-US"
+    override val languageChanges get()=HandwritingPreferences.shared(context).language
+    override fun forLanguage(language:String)=AndroidReaderRecognitionEngine(context,language)
     override val model="mlkit-digital-ink:$language"
     private val models by lazy {RecognitionModelManager()}
     override suspend fun prepare(downloading:()->Unit) {

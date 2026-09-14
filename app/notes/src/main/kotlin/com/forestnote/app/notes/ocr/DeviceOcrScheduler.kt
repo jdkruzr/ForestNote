@@ -20,6 +20,7 @@ class DeviceOcrScheduler(
     private val scope: CoroutineScope,
     private val requestSync: () -> Unit,
     private val langTag: String = DEFAULT_LANG,
+    private val language: suspend () -> String = {langTag},
 ) {
     private val pending = ArrayDeque<String>()
     private var running = false
@@ -27,6 +28,7 @@ class DeviceOcrScheduler(
     fun enqueueNotebook(notebookId: String) {
         if (notebookId.isBlank()) return
         scope.launch {
+            val langTag=language()
             if (!modelManager.isDownloaded(langTag)) return@launch
             val pages = runCatching { store.pagesNeedingClientOcr(notebookId) }
                 .onFailure { Log.w(TAG, "failed to list pages needing device OCR", it) }
@@ -45,6 +47,7 @@ class DeviceOcrScheduler(
             try {
                 while (pending.isNotEmpty()) {
                     val pageId = pending.removeFirst()
+                    val langTag=language()
                     if (!modelManager.isDownloaded(langTag)) continue
                     val strokes = runCatching { store.loadStrokesForPageSync(pageId) }
                         .onFailure { Log.w(TAG, "failed to load page strokes for device OCR", it) }

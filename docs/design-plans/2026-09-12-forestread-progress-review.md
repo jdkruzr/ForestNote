@@ -353,6 +353,11 @@ the headless result does not activate production integration.
    from Reader, Writer and Library. It reuses OG Settings' header/scrolling structure
    and one extracted defaults form, preserves the foreground owner across internal
    navigation, and gives Settings/Close equal widths with a centered gear.
+   **D68 Settings inventory and naming:** [Alexandria checkpoint](2026-09-14-alexandria-settings-inventory.md)
+   maps all OG controls to connected features or explicit read-only placeholders, adds
+   Reader-specific Settings gaps, and shares a saved handwriting-language choice across
+   Reader and attached Writer. Records Aragonite Alexandria / Aragonite Alexandria Server
+   and the user's approval for a hard fork; repository/package split follows this checkpoint.
    **Queued internationalization:** [shared UI resource extraction](2026-09-14-forestread-internationalization.md)
    records the user's request to replace inline chrome strings with a standard resource
    scheme, including the HTML reader boundary, plurals, accessibility and pseudo-locale

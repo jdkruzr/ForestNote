@@ -24,6 +24,39 @@ import java.util.zip.ZipOutputStream
 import kotlin.test.*
 
 class ReaderLibraryAccessTest {
+    @Test fun languageChangeCancelsOldRecognitionBeforeNewModelPublishes()=runBlocking<Unit> {
+        val file=File(temp.root,"language-change.db");val s=open(file)
+        var worker:ReaderRecognitionWorker?=null
+        try {
+            val a=s.readerLibraryForQualification(temp.root);val book=a.importBook("book",{bytes().inputStream()}).book.id
+            val edit=a.createAnnotation("note","note",book,"edit",anchor,10000,1000)
+            a.appendAnnotationStroke("ink",edit,ink("ink"));a.finishAnnotation("finish",edit)
+            val selectedLanguage=kotlinx.coroutines.flow.MutableStateFlow("en-US")
+            val started=CompletableDeferred<Unit>();val cancelled=CompletableDeferred<Unit>()
+            val engine=object:ReaderRecognitionEngine {
+                override val language="en-US";override val model="unused"
+                override val languageChanges=selectedLanguage
+                override suspend fun prepare(downloading:()->Unit)=error("Use a language snapshot")
+                override suspend fun recognize(ink:List<StoredRecord>):String=error("Use a language snapshot")
+                override fun forLanguage(language:String)=object:ReaderRecognitionEngine {
+                    override val language=language;override val model="fixture:$language"
+                    override suspend fun prepare(downloading:()->Unit) {}
+                    override suspend fun recognize(ink:List<StoredRecord>):String {
+                        if(language=="en-US") {started.complete(Unit);try {awaitCancellation()} finally {cancelled.complete(Unit)}}
+                        assertTrue(cancelled.isCompleted);return "Bonjour"
+                    }
+                }
+            }
+            worker=ReaderRecognitionWorker({s.withReader {it}},engine,{false});worker.resume()
+            withTimeout(5000) {started.await()};selectedLanguage.value="fr"
+            withTimeout(5000) {while(worker.status.value.revision<1)delay(10)}
+            assertEquals(listOf(listOf("fr","fixture:fr","Bonjour")),sql(file,"SELECT language,model,text FROM reader_recognition"))
+            selectedLanguage.value="de"
+            withTimeout(5000) {while(worker.status.value.language!="de" || worker.status.value.phase!=ReaderRecognitionPhase.UP_TO_DATE)delay(10)}
+            assertEquals(listOf(listOf("fr","fixture:fr","Bonjour")),sql(file,"SELECT language,model,text FROM reader_recognition"))
+        } finally {worker?.close();s.shutdown()}
+    }
+
     private class RecognitionEngine(
         val ready:suspend ()->Unit={},val action:suspend (List<StoredRecord>)->String={"Recognized café"},
     ):ReaderRecognitionEngine {

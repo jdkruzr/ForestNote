@@ -27,6 +27,72 @@ class SharedSettingsQualificationTest {
     private suspend fun settings(store:NotebookStore)=CompletableDeferred<Settings>().also {d->store.loadSettings {d.complete(it)}}.await()
     private suspend fun ink(store:NotebookStore)=CompletableDeferred<List<Stroke>>().also {d->store.load {d.complete(it)}}.await()
 
+    @Test fun everyOriginalSettingsControlHasAConnectedOrPlannedHome() {
+        instrumentation.runOnMainSync {
+            val legacy=android.view.LayoutInflater.from(android.view.ContextThemeWrapper(context,android.R.style.Theme_Material_Light_NoActionBar))
+                .inflate(R.layout.view_settings,null,false)
+            val covered=SharedSettingsInventory.connectedLegacyIds+SharedSettingsInventory.items.flatMap {it.legacyIds.toList()}
+            fun inspect(view:View) {
+                if(view is android.widget.Button || view is android.widget.EditText) {
+                    if(view.id!=R.id.btn_settings_back) assertTrue("Missing Settings control: ${context.resources.getResourceEntryName(view.id)}",view.id in covered)
+                }
+                if(view is android.view.ViewGroup) repeat(view.childCount) {inspect(view.getChildAt(it))}
+            }
+            inspect(legacy)
+            assertTrue(R.id.container_recognition_models in covered);assertTrue(R.id.container_caldav_queued in covered)
+            assertTrue(R.id.text_app_version in covered)
+        }
+    }
+
+    @Test fun languageDraftRequiresSaveSurvivesRecreationAndIsSharedWithReaderEngine()=runBlocking<Unit> {
+        val preferences=HandwritingPreferences.shared(context);val before=preferences.current()
+        val store=owner();var scenario:ActivityScenario<SettingsQualificationActivity>?=null
+        val selected=if(before=="fr") "de" else "fr"
+        try {
+            ReaderHostQualificationSession.store=store
+            scenario=ActivityScenario.launch(SettingsQualificationActivity::class.java)
+            SharedSettingsTestUi.click("settingsSection:RECOGNITION");SharedSettingsTestUi.click("recognitionChangeLanguage")
+            waitUntil {withContext(Dispatchers.Main) {SharedSettingsTestUi.page().findViewWithTag<View>("handwritingLanguageSave").isEnabled}}
+            for(tag in HandwritingPreferences.languages) withContext(Dispatchers.Main) {
+                assertNotNull(SharedSettingsTestUi.page().findViewWithTag<View>("handwritingLanguage:$tag"))
+            }
+            SharedSettingsTestUi.click("handwritingLanguage:$selected");assertEquals(before,preferences.current())
+            scenario.recreate()
+            waitUntil {withContext(Dispatchers.Main) {SharedSettingsTestUi.page().findViewWithTag<View>("handwritingLanguage:$selected").isSelected}}
+            SharedSettingsTestUi.click("settingsBack");assertEquals(before,preferences.current())
+            SharedSettingsTestUi.click("recognitionChangeLanguage")
+            waitUntil {withContext(Dispatchers.Main) {SharedSettingsTestUi.page().findViewWithTag<View>("handwritingLanguage:$before").isSelected}}
+            SharedSettingsTestUi.click("handwritingLanguage:$selected");SharedSettingsTestUi.click("handwritingLanguageSave")
+            waitUntil {withContext(Dispatchers.Main) {SharedSettingsTestUi.page().section==SharedSettingsView.Section.RECOGNITION}}
+            assertEquals(selected,preferences.current())
+            assertEquals(selected,HandwritingPreferences(context).current()) // Persisted, not only cached.
+            val engine=AndroidReaderRecognitionEngine(context)
+            assertSame(preferences.language,engine.languageChanges)
+            assertEquals("mlkit-digital-ink:$selected",engine.forLanguage(selected).model)
+        } finally {scenario?.close();preferences.save(before);ReaderHostQualificationSession.store=null;store.shutdown()}
+    }
+
+    @Test fun checklistSectionsAreReadOnlyAndEveryPlannedEntryIsClearlyMarked()=runBlocking<Unit> {
+        val store=owner();var scenario:ActivityScenario<SettingsQualificationActivity>?=null
+        try {
+            val identity=store.readerIdentity();val before=settings(store)
+            ReaderHostQualificationSession.store=store
+            scenario=ActivityScenario.launch(SettingsQualificationActivity::class.java)
+            for(section in SharedSettingsInventory.items.map {it.section}.distinct()) {
+                scenario.onActivity {activity ->
+                    val page=activity.findViewById<View>(android.R.id.content).findViewWithTag<SharedSettingsView>("sharedSettingsPage")
+                    page.show(section)
+                    for(item in SharedSettingsInventory.items.filter {it.section==section}) {
+                        val card=page.findViewWithTag<android.view.ViewGroup>("settingsPlanned:${item.title}")
+                        assertFalse(card.isClickable)
+                        assertEquals(context.getString(R.string.settings_not_connected),(card.getChildAt(1) as android.widget.TextView).text)
+                    }
+                }
+            }
+            assertEquals(before,settings(store));assertEquals(identity,store.readerIdentity())
+        } finally {scenario?.close();ReaderHostQualificationSession.store=null;store.shutdown()}
+    }
+
     @Test fun defaultsDraftSurvivesRecreationBackDiscardsAndSaveUsesTheSameOwner()=runBlocking<Unit> {
         val store=owner();var scenario:ActivityScenario<SettingsQualificationActivity>?=null
         try {

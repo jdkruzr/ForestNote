@@ -9,6 +9,17 @@ import kotlin.test.assertTrue
 class SettingsResourcesTest {
     private val main = listOf(File("src/main"),File("app/notes/src/main")).first { it.isDirectory }
 
+    @Test fun `shared settings and language editor keep labels in resources`() {
+        for(name in listOf("SharedSettingsView.kt","HandwritingLanguageEditor.kt")) {
+            val source=File(main,"kotlin/com/forestnote/app/notes/$name").readText()
+            assertFalse(Regex("set(?:Text|Title|Message)\\(\"").containsMatchIn(source),name)
+        }
+        val writer=File(main,"kotlin/com/forestnote/app/notes/MainActivity.kt").readText()
+        assertTrue(writer.contains("language = { handwritingLanguage() }"))
+        assertTrue(writer.contains("HandwritingPreferences.shared(this).current()"))
+        assertFalse(writer.contains("val langTag = DeviceOcrScheduler.DEFAULT_LANG"))
+    }
+
     @Test fun `settings layout has no inline presentation strings`() {
         val source=File(main,"res/layout/view_settings.xml").readText()
         assertFalse(Regex("android:(?:text|hint|contentDescription)=\"(?![@?])").containsMatchIn(source))
