@@ -11,6 +11,9 @@ import android.view.Gravity
 import android.view.View
 import android.widget.*
 import com.forestnote.core.reader.BookSnapshot
+import com.forestnote.core.format.FolderCard
+import com.forestnote.core.format.NotebookCard
+import com.forestnote.core.format.NotebookMeta
 import kotlinx.coroutines.*
 import java.util.UUID
 
@@ -85,6 +88,7 @@ internal class SharedLibraryView(
         select(state.shelf);load(true,preserveScroll=true)
     }
     private fun select(shelf:SharedLibraryState.Shelf) {
+        if(state.shelf!=shelf) dismissNotebookPrompt()
         state.shelf=shelf
         if(shelf==SharedLibraryState.Shelf.NOTEBOOKS) hideKeyboard()
         notebookHost.visibility=if(shelf==SharedLibraryState.Shelf.NOTEBOOKS) VISIBLE else GONE
@@ -94,12 +98,21 @@ internal class SharedLibraryView(
         if(shelf==SharedLibraryState.Shelf.NOTEBOOKS && !notebooks.isShowing) {
             fun notice() {Toast.makeText(context,if(onOpenNotebook==null) R.string.shared_library_writer_pending else R.string.shared_writer_management_pending,Toast.LENGTH_LONG).show()}
             val callbacks=notebookCallbacks ?: LibraryView.Callbacks(
-                onOpenNotebook={card->onOpenNotebook?.invoke(card.id) ?: notice()},onNotebookProperties={notice()},onNewNotebook={notice()},onNewFolder={notice()},
-                onFolderProperties={notice()},onOpenSettings={notice()},onOpenRecycleBin={notice()},onSyncNow={notice()},
+                onOpenNotebook={card->onOpenNotebook?.invoke(card.id) ?: notice()},
+                onNotebookProperties={if(onCreateNotebook!=null) notebookProperties(it) else notice()},
+                onNewNotebook={if(onCreateNotebook!=null) newNotebook() else notice()},
+                onNewFolder={if(onCreateNotebook!=null) newFolder() else notice()},
+                onFolderProperties={if(onCreateNotebook!=null) folderProperties(it) else notice()},
+                onOpenSettings={notice()},onOpenRecycleBin={notice()},onSyncNow={notice()},
                 onOpenSearch={notice()},onBulkMove={notice()},onBulkExport={notice()},onBulkDelete={notice()})
             if(notebookCallbacks==null) {
                 val content=LinearLayout(context).apply {orientation=VERTICAL}
-                if(onCreateNotebook!=null) content.addView(button(context.getString(R.string.shared_writer_new_notebook)) {newNotebook()}.apply {tag="newSharedNotebook"},LayoutParams(-2,pixels(34)))
+                if(onCreateNotebook!=null) {
+                    val actions=LinearLayout(context)
+                    actions.addView(button(context.getString(R.string.shared_writer_new_notebook)) {newNotebook()}.apply {tag="newSharedNotebook"},LayoutParams(-2,pixels(34)))
+                    actions.addView(button(context.getString(R.string.library_new_folder)) {newFolder()}.apply {tag="newSharedFolder"},LayoutParams(-2,pixels(34)))
+                    content.addView(actions)
+                }
                 if(onOpenNotebook==null) content.addView(TextView(context).apply {text=context.getString(R.string.shared_library_writer_pending);textSize=12f;setPadding(pixels(8),pixels(4),pixels(8),pixels(4))})
                 val shelfHost=FrameLayout(context);content.addView(shelfHost,LayoutParams(-1,0,1f));notebookHost.addView(content)
                 notebooks.show(shelfHost,store,callbacks,state.notebooks,readOnly=true)
@@ -108,6 +121,45 @@ internal class SharedLibraryView(
     }
     fun changed() {load(true)}
     fun notebookChanged() {if(notebooks.isShowing) notebooks.reload()}
+    private fun canPromptNotebook() = scope.isActive && isAttachedToWindow && visibility==VISIBLE &&
+        state.shelf==SharedLibraryState.Shelf.NOTEBOOKS && !loadingNotebookPrompt && prompt==null
+    private fun trackNotebookPrompt(dialog:AlertDialog) {
+        prompt=dialog
+        dialog.setOnDismissListener {if(prompt===dialog) prompt=null}
+    }
+    private fun dismissNotebookPrompt() {
+        notebookPromptGeneration++;loadingNotebookPrompt=false
+        prompt?.dismiss();prompt=null
+    }
+    private fun notebookMutationDone() {post {
+        if(scope.isActive && isAttachedToWindow) notebooks.reload()
+    }}
+    private fun newFolder() {
+        if(!canPromptNotebook()) return
+        val parent=notebooks.currentFolderId
+        trackNotebookPrompt(NotebookLibraryDialogs.newFolder(context) {name ->
+            store.createFolder(name,parent) {id -> post {
+                if(scope.isActive && isAttachedToWindow) {
+                    if(id.isBlank()) Toast.makeText(context,R.string.library_folder_create_failed,Toast.LENGTH_LONG).show()
+                    notebooks.reload()
+                }
+            }}
+        })
+    }
+    private fun folderProperties(folder:FolderCard) {
+        if(!canPromptNotebook()) return
+        trackNotebookPrompt(NotebookLibraryDialogs.folder(context,folder,onSave={name ->
+            if(name!=folder.name) store.renameFolder(folder.id,name) {notebookMutationDone()}
+        }))
+    }
+    private fun notebookProperties(card:NotebookCard) {
+        if(!canPromptNotebook()) return
+        trackNotebookPrompt(NotebookLibraryDialogs.notebook(context,
+            NotebookMeta(card.id,card.name,card.createdAt,card.modifiedAt),
+            loadPages={store.countPages(card.id,it)},onSave={name ->
+                if(name!=card.name) store.renameNotebook(card.id,name) {notebookMutationDone()}
+            }))
+    }
     private fun newNotebook() {
         if(loadingNotebookPrompt || prompt!=null || onCreateNotebook==null) return
         loadingNotebookPrompt=true
@@ -117,8 +169,7 @@ internal class SharedLibraryView(
             if(epoch!=notebookPromptGeneration) return@post
             loadingNotebookPrompt=false
             if(!scope.isActive || !isAttachedToWindow || visibility!=VISIBLE || state.shelf!=SharedLibraryState.Shelf.NOTEBOOKS || folder!=notebooks.currentFolderId) return@post
-            prompt=NewNotebookDialog.show(context,settings) {name -> onCreateNotebook.invoke(name,folder)}
-                .also {it.setOnDismissListener {prompt=null}}
+            trackNotebookPrompt(NewNotebookDialog.show(context,settings) {name -> onCreateNotebook.invoke(name,folder)})
         }}
     }
     private fun load(reset:Boolean,delayMillis:Long=0,preserveScroll:Boolean=false) {
@@ -208,7 +259,7 @@ internal class SharedLibraryView(
         catch(_:Exception) {status.setText(R.string.shared_library_failed)}
     }}
     fun remember() {
-        notebookPromptGeneration++;loadingNotebookPrompt=false
+        dismissNotebookPrompt()
         hideKeyboard()
         if(!restoreScroll) {state.bookScroll=scroll.scrollY;state.bookRows=shown}
         if(notebooks.isShowing) state.notebooks=notebooks.browsePosition()

@@ -30,6 +30,6 @@ internal object NewNotebookDialog {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
-            .also { it.window?.setGravity(android.view.Gravity.TOP) }
+            .let { NotebookLibraryDialogs.style(it) }
     }
 }

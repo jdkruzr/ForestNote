@@ -1,0 +1,14 @@
+<resources>
+    <string name="library_new_folder">New Folder</string>
+    <string name="library_folder_name">Folder Name</string>
+    <string name="library_folder_properties">Folder Properties</string>
+    <string name="library_notebook_properties">Notebook Properties</string>
+    <string name="library_notebook_name">Notebook Name</string>
+    <string name="library_save">Save</string>
+    <string name="library_delete">Delete</string>
+    <string name="library_created">Created: %1$s</string>
+    <string name="library_modified">Modified: %1$s</string>
+    <string name="library_pages_loading">Pages: …</string>
+    <string name="library_pages">Pages: %1$d</string>
+    <string name="library_folder_create_failed">Folder Could Not Be Created</string>
+</resources>

@@ -184,4 +184,119 @@ class WriterHostQualificationTest {
             }
         } finally {SetupQualificationSession.host=old}
     }
+
+    @Test fun sharedFolderAndPropertiesDialogsPreserveContentAndCancelWithoutWrites()=runBlocking<Unit> {
+        val id="writer-management-${UUID.randomUUID()}"
+        val main=Handler(Looper.getMainLooper())
+        val opens=java.util.concurrent.atomic.AtomicInteger()
+        val store=NotebookStore(repoProvider={opens.incrementAndGet();NotebookRepository.openIsolatedQualification(context,id)},
+            executor=Executors.newSingleThreadExecutor(),poster={main.post(it)},qualifyReaderStorage=true)
+        var scenario:ActivityScenario<ReaderHostQualificationActivity>?=null
+        fun rows(sql:String)=SQLiteDatabase.openDatabase(context.getDatabasePath("reader-qualification-$id.db").path,null,SQLiteDatabase.OPEN_READONLY).use {db ->
+            db.rawQuery(sql,null).use {c -> buildList {
+                while(c.moveToNext()) add((0 until c.columnCount).map {
+                    if(c.getType(it)==android.database.Cursor.FIELD_TYPE_BLOB) android.util.Base64.encodeToString(c.getBlob(it),2) else c.getString(it)
+                })
+            }}
+        }
+        suspend fun barrier() {store.syncNotebookIds()}
+        try {
+            val identity=store.readerIdentity()
+            val notebookId=store.syncCurrentNotebookId()
+            val contentBefore=listOf("page","stroke","text_box","reader_book","reader_stroke").associateWith {rows("SELECT * FROM $it ORDER BY 1")}
+            val geometryBefore=rows("SELECT aspect_long_axis,page_width,page_height FROM notebook")
+            ReaderHostQualificationSession.store=store;ReaderHostQualificationSession.sharedLibrary=true;ReaderHostQualificationSession.writer=true
+            scenario=ActivityScenario.launch(ReaderHostQualificationActivity::class.java)
+            var reader=awaitActivity(ReaderHostQualificationActivity::class.java)
+            suspend fun shelf():SharedLibraryView {
+                var result:SharedLibraryView?=null
+                waitUntil("Shared Shelf") {withContext(Dispatchers.Main) {
+                    val f=ReaderHostQualificationActivity::class.java.getDeclaredField("libraryView").apply {isAccessible=true}
+                    result=f.get(reader) as? SharedLibraryView
+                    result?.isShown==true
+                }}
+                return result!!
+            }
+            suspend fun tagged(tag:String) {val v=shelf();withContext(Dispatchers.Main) {v.findViewWithTag<View>(tag).performClick()}}
+            suspend fun dialog():android.app.AlertDialog {
+                var result:android.app.AlertDialog?=null
+                val v=shelf()
+                waitUntil("Notebook Dialog") {withContext(Dispatchers.Main) {
+                    result=SharedLibraryView::class.java.getDeclaredField("prompt").apply {isAccessible=true}.get(v) as? android.app.AlertDialog
+                    result?.isShowing==true
+                }}
+                return result!!
+            }
+            suspend fun accept(name:String?,positive:Boolean=true) {
+                val d=dialog()
+                withContext(Dispatchers.Main) {
+                    assertEquals(android.view.Gravity.TOP,d.window!!.attributes.gravity and android.view.Gravity.VERTICAL_GRAVITY_MASK)
+                    assertNotNull(d.window!!.decorView.background)
+                    val save=d.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
+                    assertNull("Theme tint must not erase the e-ink button border",save.backgroundTintList)
+                    assertEquals(save.text.toString(),(save.transformationMethod?.getTransformation(save.text,save) ?: save.text).toString())
+                    if(name!=null) (d.findViewById<android.widget.EditText>(android.R.id.edit)
+                        ?: d.findViewById(R.id.input_notebook_name)).setText(name)
+                    assertFalse("Deletion remains gated on this shelf",d.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).isShown)
+                    d.getButton(if(positive) android.app.AlertDialog.BUTTON_POSITIVE else android.app.AlertDialog.BUTTON_NEGATIVE).performClick()
+                }
+                // AlertController posts its listener and dismissal; performClick returning is
+                // not the mutation boundary. Wait for those main-loop messages before the DB fence.
+                waitUntil("Dialog Dismissed") {withContext(Dispatchers.Main) {!d.isShowing && reader.hasWindowFocus()}}
+                barrier()
+            }
+            suspend fun card(name:String,longPress:Boolean=false) {
+                waitUntil("Card $name") {withContext(Dispatchers.Main) {
+                    val grid=reader.findViewById<RecyclerView>(R.id.library_grid) ?: return@withContext false
+                    val child=(0 until grid.childCount).map {grid.getChildAt(it)}.firstOrNull {
+                        (it.findViewById<android.widget.TextView>(R.id.folder_name)
+                            ?: it.findViewById(R.id.card_name))?.text?.toString()==name
+                    } ?: return@withContext false
+                    if(longPress) child.performLongClick() else child.performClick()
+                }}
+            }
+            tagged("shelf:NOTEBOOKS")
+            val initialOps=rows("SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            tagged("newSharedFolder");accept("Not Created",positive=false)
+            assertTrue(rows("SELECT id FROM folder").isEmpty())
+            assertEquals(initialOps,rows("SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            tagged("newSharedFolder");accept("Research")
+            val parent=rows("SELECT id FROM folder WHERE name='Research'").single().single()!!
+            card("Research")
+            tagged("newSharedFolder");accept("Sources")
+            assertEquals(parent,rows("SELECT parent_folder_id FROM folder WHERE name='Sources'").single().single())
+            card("Sources",true);accept("Primary Sources")
+            assertEquals(parent,rows("SELECT parent_folder_id FROM folder WHERE name='Primary Sources'").single().single())
+            val renamedOps=rows("SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            card("Primary Sources",true);accept(null)
+            card("Primary Sources",true);accept("Discarded",positive=false)
+            assertEquals(renamedOps,rows("SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            // A pause/recreation dismisses the draft; it must not execute it or reopen it.
+            card("Primary Sources",true)
+            scenario.recreate();reader=awaitActivity(ReaderHostQualificationActivity::class.java)
+            val restored=shelf()
+            withContext(Dispatchers.Main) {
+                assertNull(SharedLibraryView::class.java.getDeclaredField("prompt").apply {isAccessible=true}.get(restored))
+                reader.findViewById<View>(R.id.btn_library_back).performClick()
+            }
+            val notebookName=rows("SELECT name FROM notebook WHERE id='$notebookId'").single().single()!!
+            card(notebookName,true)
+            val properties=dialog()
+            waitUntil("Page Count") {withContext(Dispatchers.Main) {properties.findViewById<android.widget.TextView>(R.id.text_pages).text==context.getString(R.string.library_pages,1)}}
+            accept("Profoundly Unserious")
+            assertEquals("Profoundly Unserious",rows("SELECT name FROM notebook WHERE id='$notebookId'").single().single())
+            val finalOps=rows("SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            card("Profoundly Unserious",true);accept(null)
+            card("Profoundly Unserious",true);accept("Nope",positive=false)
+            assertEquals(finalOps,rows("SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            assertEquals(initialOps.size+4,finalOps.size) // two creates, folder rename, notebook rename
+            assertEquals(geometryBefore,rows("SELECT aspect_long_axis,page_width,page_height FROM notebook"))
+            contentBefore.forEach {(table,before)->assertEquals(table,before,rows("SELECT * FROM $table ORDER BY 1"))}
+            assertEquals(identity,store.readerIdentity());assertEquals(1,opens.get())
+        } finally {
+            scenario?.close();ReaderHostQualificationSession.cleanup?.join()
+            ReaderHostQualificationSession.store=null;ReaderHostQualificationSession.sharedLibrary=false;ReaderHostQualificationSession.writer=false
+            store.shutdown()
+        }
+    }
 }

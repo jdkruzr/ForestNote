@@ -2293,11 +2293,6 @@ open class MainActivity : Activity() {
         super.onBackPressed()
     }
 
-    /** Format an epoch-ms timestamp for the Properties dialog (device locale). */
-    private fun formatTimestamp(epochMs: Long): String =
-        java.text.SimpleDateFormat("MMM d, yyyy h:mm a", java.util.Locale.getDefault())
-            .format(java.util.Date(epochMs))
-
     /** New-notebook dialog. [parentFolderId] places it in the folder being viewed (null = root). */
     private fun promptNewNotebook(parentFolderId: String? = null) {
         // Snapshot the settled editor before the IME appears. The Library is an overlay, so the
@@ -2330,16 +2325,9 @@ open class MainActivity : Activity() {
 
     /** New-folder dialog (mirrors promptNewNotebook). Creates inside [parentFolderId] (null = root). */
     private fun promptNewFolder(parentFolderId: String? = null) {
-        val input = EditText(this).apply { hint = "Folder name" }
-        AlertDialog.Builder(this)
-            .setTitle("New Folder")
-            .setView(input)
-            .setPositiveButton("Create") { _, _ ->
-                val name = input.text.toString().trim().ifEmpty { "Untitled" }
-                store.createFolder(name, parentFolderId) { libraryView.reload() }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        NotebookLibraryDialogs.newFolder(this) { name ->
+            store.createFolder(name, parentFolderId) { libraryView.reload() }
+        }
     }
 
     /**
@@ -2348,19 +2336,11 @@ open class MainActivity : Activity() {
      * off any tombstoned descendant, so reloadCurrentPage() lets the editor follow.
      */
     private fun openFolderProperties(folder: FolderCard) {
-        val input = EditText(this).apply { setText(folder.name) }
-        AlertDialog.Builder(this)
-            .setTitle("Folder Properties")
-            .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                val name = input.text.toString().trim().ifEmpty { folder.name }
+        NotebookLibraryDialogs.folder(this, folder, onSave = { name ->
                 if (name != folder.name) {
                     store.renameFolder(folder.id, name) { libraryView.reload() }
                 }
-            }
-            .setNeutralButton("Delete") { _, _ -> confirmDeleteFolder(folder) }
-            .setNegativeButton("Cancel", null)
-            .show()
+            }, onDelete = { confirmDeleteFolder(folder) })
     }
 
     private fun confirmDeleteFolder(folder: FolderCard) {
@@ -2389,34 +2369,14 @@ open class MainActivity : Activity() {
      * in the picker — so AC4.5's Library card can open the same dialog once C3a lands.
      */
     private fun openNotebookProperties(notebook: NotebookMeta, canDelete: Boolean) {
-        val view = layoutInflater.inflate(R.layout.dialog_notebook_properties, null)
-        val nameInput = view.findViewById<EditText>(R.id.input_notebook_name)
-        val createdText = view.findViewById<TextView>(R.id.text_created)
-        val modifiedText = view.findViewById<TextView>(R.id.text_modified)
-        val pagesText = view.findViewById<TextView>(R.id.text_pages)
-
-        nameInput.setText(notebook.name)
-        createdText.text = "Created: ${formatTimestamp(notebook.createdAt)}"
-        modifiedText.text = "Modified: ${formatTimestamp(notebook.modifiedAt)}"
-        pagesText.text = "Pages: …"
-        store.countPages(notebook.id) { n -> pagesText.text = "Pages: $n" }
-
-        val builder = AlertDialog.Builder(this)
-            .setTitle("Notebook Properties")
-            .setView(view)
-            .setPositiveButton("Save") { _, _ ->
-                val name = nameInput.text.toString().trim().ifEmpty { notebook.name }
+        NotebookLibraryDialogs.notebook(this, notebook,
+            loadPages = { store.countPages(notebook.id, it) }, onSave = { name ->
                 if (name != notebook.name) {
                     store.renameNotebook(notebook.id, name) {
                         if (libraryView.isShowing) libraryView.reload()
                     }
                 }
-            }
-            .setNegativeButton("Cancel", null)
-        if (canDelete) {
-            builder.setNeutralButton("Delete") { _, _ -> confirmDeleteNotebook(notebook) }
-        }
-        builder.show()
+            }, onDelete = if (canDelete) ({ confirmDeleteNotebook(notebook) }) else null)
     }
 
     private fun confirmDeleteNotebook(notebook: NotebookMeta) {

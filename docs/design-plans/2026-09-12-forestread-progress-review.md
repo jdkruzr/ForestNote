@@ -279,7 +279,10 @@ the headless result does not activate production integration.
    [starter creator-canvas capture](2026-09-13-forestread-creator-canvas.md) eliminates the fallback
    margin on newly created starters without resizing old ink; [shared notebook creation](2026-09-13-forestread-shared-notebook-creation.md)
    reuses the naming dialog and measures the actual writer before creating, with owner-retained
-   recreation protection. Folder/property/bulk callbacks, writer Penu and Viwoods remain ahead.
+   recreation protection. **D51:** [shared folder creation and properties](2026-09-13-forestread-shared-notebook-management.md)
+   adds nested folder creation and folder/notebook renaming through shared top-aligned dialogs,
+   reused by the ordinary writer. Bulk/recycle/export callbacks, shared Settings, writer Penu
+   and integrated Viwoods remain ahead.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

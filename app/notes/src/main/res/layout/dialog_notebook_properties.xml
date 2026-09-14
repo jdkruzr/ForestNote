@@ -6,23 +6,24 @@
     android:orientation="vertical"
     android:paddingStart="24dp"
     android:paddingEnd="24dp"
-    android:paddingTop="16dp"
-    android:paddingBottom="8dp">
+    android:paddingTop="4dp"
+    android:paddingBottom="4dp">
 
     <EditText
         android:id="@+id/input_notebook_name"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Notebook name"
+        android:hint="@string/library_notebook_name"
         android:inputType="text"
         android:maxLines="1"
+        android:singleLine="true"
         android:textColor="@color/black" />
 
     <TextView
         android:id="@+id/text_created"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="4dp"
         android:textColor="@color/black"
         android:textSize="14sp" />
 
@@ -30,7 +31,7 @@
         android:id="@+id/text_modified"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="2dp"
         android:textColor="@color/black"
         android:textSize="14sp" />
 
@@ -38,7 +39,7 @@
         android:id="@+id/text_pages"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="2dp"
         android:textColor="@color/black"
         android:textSize="14sp" />
 </LinearLayout>
