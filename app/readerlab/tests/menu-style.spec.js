@@ -23,6 +23,7 @@ async function centeredDots(locator) {
       dy: Math.abs((dots[0].top + dots[0].bottom) / 2 - (r.top + r.bottom) / 2) };
   });
   expect(shape.borders).toEqual(['3px', '3px', '3px', '3px']);
+  await expect(locator).toHaveCSS('border-radius', '6px');
   expect(shape.style).toBe('solid'); expect(shape.text).toBe(''); expect(shape.count).toBe(3);
   expect(shape.dx).toBeLessThan(.6); expect(shape.dy).toBeLessThan(.6);
 }
@@ -53,6 +54,8 @@ for (const width of [320, 720]) test(`Compact toolbar uses wide rectangular cont
   const popup = await page.locator('#noteOptions').boundingBox();
   expect(popup.y).toBe(36); // 32px button plus the unchanged 4px popup gap.
   await expect(page.locator('#closeNoteOptions')).toHaveCSS('height', '40px');
+  await expect(page.locator('#noteOptions')).toHaveCSS('border-radius', '6px');
+  await expect(page.locator('#imageZoom')).toHaveCSS('border-radius', '0px');
   expect(await page.locator('#reader').boundingBox()).toEqual(before);
 });
 

@@ -45,3 +45,24 @@ Current evidence is under `/home/jtd/.cache/forestread-ui-weight-AC5fAj/`.
 - `shelf.png` and `properties.png`: final Go screenshots show the increased label/metadata
   size and strong visible frames without clipped actions. The interactive properties dialog
   is left open for the user's visual judgment; no name or other library data was edited.
+
+## Follow-up — modest rounded frames
+
+The next visual pass adds a shared 6dp native corner radius and a 6px reader-menu radius.
+Library frames, dialog frames/buttons, reader controls and popups use those values;
+the existing border weight, control sizes and popup placement are unchanged. Full-screen
+image zoom stays square, as do document/ink geometry and the custom selection handles.
+The posted native button restyling remains intact. Regression checks pin the radius,
+the transparent outer button corner and the full-weight black border at its top center.
+
+Follow-up evidence is under `/home/jtd/.cache/forestread-rounded-a4iMDI/`.
+
+- Builds pass; **456 JVM, 125 browser and 37 Go tests pass**. The device tests include
+  settled native button pixels, not just drawable configuration.
+- Installed app SHA-256 is
+  `ace3e8c626fd9b7a0351fe1e9e24da28331badbcbbdc151441af32f6d83a120f`,
+  verified against the on-device APK after a certificate-matched in-place upgrade.
+- `shelf.png` and `properties.png` show the modest curve with no layout expansion.
+  Notebook Properties is left open, with its name untouched, for visual review.
+- Interactive `before.db` and `after.db` match byte-for-byte (39 writer / 51 reader
+  strokes); the normal FN library retains the SHA-256 recorded above.

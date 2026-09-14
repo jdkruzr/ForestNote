@@ -1,6 +1,7 @@
 <resources>
     <!-- UI only: never use these dimensions for document text or saved ink geometry. -->
     <dimen name="eink_ui_border">2.5dp</dimen>
+    <dimen name="eink_ui_corner_radius">6dp</dimen>
     <dimen name="eink_ui_title_text">24sp</dimen>
     <dimen name="eink_ui_label_text">20sp</dimen>
     <dimen name="eink_ui_body_text">18sp</dimen>

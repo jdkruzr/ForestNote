@@ -14,6 +14,7 @@ internal object EinkUiStyle {
     fun frame(context: Context, transparent: Boolean = false) = GradientDrawable().apply {
         setColor(if (transparent) Color.TRANSPARENT else Color.WHITE)
         setStroke(borderPixels(context), Color.BLACK)
+        cornerRadius = context.resources.getDimension(R.dimen.eink_ui_corner_radius)
     }
 
     fun text(view: TextView, dimension: Int, medium: Boolean = false) {

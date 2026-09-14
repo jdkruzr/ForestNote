@@ -27,7 +27,8 @@ button:disabled{opacity:.5}
 footer{display:flex;align-items:center;gap:12px;height:22px;flex-shrink:0;white-space:nowrap;overflow:hidden}
 #status{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Every menu lives in the top layer, never in the flex layout of the book. */
-.anchoredPopup{position:fixed;margin:0;width:var(--menu-width-standard);max-width:calc(100vw - 2 * var(--popup-screen-margin));padding:0;border:var(--menu-border);border-radius:0;overflow:auto;overscroll-behavior:contain;background:var(--menu-surface);color:var(--menu-ink)}
+dialog{border-radius:var(--menu-corner-radius)}
+.anchoredPopup{position:fixed;margin:0;width:var(--menu-width-standard);max-width:calc(100vw - 2 * var(--popup-screen-margin));padding:0;border:var(--menu-border);border-radius:var(--menu-corner-radius);overflow:auto;overscroll-behavior:contain;background:var(--menu-surface);color:var(--menu-ink)}
 .popupCompact{width:var(--menu-width-compact)}.popupWide{width:var(--menu-width-wide)}
 #penOptions{width:var(--menu-width-wide)}
 #controls::backdrop,dialog::backdrop{background:transparent}
@@ -68,7 +69,7 @@ body.editingInk header{gap:var(--menu-gap)}
 .penuRows button[aria-pressed=true]{background:var(--menu-ink);color:var(--menu-surface);font-weight:600}
 .penuText{font-size:var(--menu-font-section);line-height:var(--menu-text-line-height);margin:0;padding:4px 5px 5px;max-height:72px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 #menuHint{margin:8px 12px;font-size:var(--menu-font-section)}
-#imageZoom{position:fixed;inset:0;margin:0;width:100%;height:100%;max-width:none;max-height:none;border:0;padding:0;background:var(--menu-surface);overflow:hidden}
+#imageZoom{position:fixed;inset:0;margin:0;width:100%;height:100%;max-width:none;max-height:none;border:0;border-radius:0;padding:0;background:var(--menu-surface);overflow:hidden}
 #imageZoom[open]{display:flex;flex-direction:column}
 .zoomHeading{display:flex;align-items:center;gap:12px;padding:2px 6px;border-bottom:var(--menu-border);flex-shrink:0}
 .zoomHeading strong{flex:1}.zoomHeading button{border:var(--menu-border)}
@@ -94,7 +95,7 @@ body.editingInk header{gap:var(--menu-gap)}
 .annotationActions{flex-shrink:0;font-size:var(--menu-font-meta)}
 .annotationActions summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:center;width:36px;height:36px;padding:0;margin-inline-start:auto;border:var(--menu-control-border);border-radius:var(--menu-control-radius);background:var(--menu-surface);color:black}
 .annotationActions summary::-webkit-details-marker{display:none}
-.annotationActions[open]{position:absolute;right:0;top:0;z-index:1;background:var(--menu-surface);border:var(--menu-border);max-width:70%;padding:4px}
+.annotationActions[open]{position:absolute;right:0;top:0;z-index:1;background:var(--menu-surface);border:var(--menu-border);border-radius:var(--menu-corner-radius);max-width:70%;padding:4px}
 .annotationActions button{display:block;width:100%;text-align:start;font-size:var(--menu-font-section);margin-top:4px}
 .listEmpty{padding:10px;font-size:var(--menu-font-choice)}.listMore{width:100%;margin-top:5px;font-size:var(--menu-font-section)}
 .annotationWarning{font-size:var(--menu-font-meta);border-left:3px solid black;padding-left:5px}

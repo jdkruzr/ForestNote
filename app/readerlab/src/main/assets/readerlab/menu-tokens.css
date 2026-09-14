@@ -16,7 +16,8 @@
   --menu-border: 3px solid var(--menu-ink);
   --menu-border-strong: 4px solid var(--menu-ink);
   --menu-control-border: 3px solid var(--menu-control-color);
-  --menu-control-radius: 3px;
+  --menu-corner-radius: 6px;
+  --menu-control-radius: var(--menu-corner-radius);
   --menu-gap-tight: 2px;
   --menu-gap: 4px;
   --menu-inset: 6px;
