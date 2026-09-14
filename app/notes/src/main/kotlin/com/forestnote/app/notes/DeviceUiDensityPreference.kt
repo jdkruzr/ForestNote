@@ -27,18 +27,23 @@ internal class DeviceUiDensityPreference(context: Context) {
         }
     }
 
-    fun loadBookView(deliver: (BookShelfView) -> Unit) {
+    fun loadBookView(deliver: (LibraryShelfView) -> Unit) = loadView("book-view", LibraryShelfView.LIST, deliver)
+    fun loadNotebookView(deliver: (LibraryShelfView) -> Unit) = loadView("notebook-view", LibraryShelfView.TILES, deliver)
+    fun saveBookView(mode: LibraryShelfView) = saveView("book-view", mode)
+    fun saveNotebookView(mode: LibraryShelfView) = saveView("notebook-view", mode)
+
+    private fun loadView(key: String, fallback: LibraryShelfView, deliver: (LibraryShelfView) -> Unit) {
         worker.execute {
-            val value = runCatching {app.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString("book-view", null)}.getOrNull()
-            val mode = BookShelfView.entries.firstOrNull {it.name == value} ?: BookShelfView.LIST
+            val value = runCatching {app.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString(key, null)}.getOrNull()
+            val mode = LibraryShelfView.entries.firstOrNull {it.name == value} ?: fallback
             main.post {deliver(mode)}
         }
     }
 
-    fun saveBookView(mode: BookShelfView) {
+    private fun saveView(key: String, mode: LibraryShelfView) {
         worker.execute {
-            runCatching {check(app.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString("book-view", mode.name).commit())}
-                .onFailure {Log.w("BookShelfView", "Could not save book view", it)}
+            runCatching {check(app.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(key, mode.name).commit())}
+                .onFailure {Log.w("LibraryShelfView", "Could not save $key", it)}
         }
     }
 

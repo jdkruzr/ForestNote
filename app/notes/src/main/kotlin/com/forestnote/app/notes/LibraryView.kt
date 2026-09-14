@@ -52,6 +52,30 @@ class LibraryView {
     private var reloadGeneration=0L
     private var restorePosition:LibraryBrowsePosition?=null
     private var densityMode = UiDensity.AUTO
+    private var shelfView: LibraryShelfView? = null
+    private var nameQuery = ""
+    private var folderItems = emptyList<LibraryItem>()
+
+    internal fun setShelfView(mode: LibraryShelfView) {
+        shelfView = mode
+        root?.findViewById<RecyclerView>(R.id.library_grid)?.let { updateDensity(it) }
+    }
+
+    /** Current-folder name filtering only; full content search remains a separate workflow. */
+    internal fun setNameQuery(value: String) {
+        if (nameQuery == value) return
+        nameQuery = value
+        adapter?.submit(filteredItems())
+        root?.findViewById<RecyclerView>(R.id.library_grid)?.scrollToPosition(0)
+    }
+
+    private fun filteredItems() = folderItems.filter { item ->
+        val name = when (item) {
+            is LibraryItem.Folder -> item.card.name
+            is LibraryItem.Notebook -> item.card.name
+        }
+        SharedBookPresentation.matchesTitle(name, nameQuery)
+    }
 
     internal fun setDensityMode(mode: UiDensity) {
         densityMode = mode
@@ -60,9 +84,10 @@ class LibraryView {
 
     private fun updateDensity(grid: RecyclerView) {
         if (grid.width <= 0) return
-        val profile = LibraryDensityPolicy.resolve(densityMode,
-            (grid.width - grid.paddingLeft - grid.paddingRight) / grid.resources.displayMetrics.density,
-            grid.resources.configuration.fontScale)
+        val widthDp = (grid.width - grid.paddingLeft - grid.paddingRight) / grid.resources.displayMetrics.density
+        val fontScale = grid.resources.configuration.fontScale
+        val profile = shelfView?.let { LibraryDensityPolicy.shelf(densityMode, widthDp, fontScale, it) }
+            ?: LibraryDensityPolicy.resolve(densityMode, widthDp, fontScale)
         val layout = grid.layoutManager as GridLayoutManager
         val first = layout.findFirstVisibleItemPosition().coerceAtLeast(0)
         val offset = layout.findViewByPosition(first)?.top ?: 0
@@ -225,8 +250,8 @@ class LibraryView {
             if (folderId != currentFolderId) return@listFolderCardsForParent
             store.listNotebookCardsInFolder(folderId) { notebooks ->
                 deliver {
-                val items = folders.map { LibraryItem.Folder(it) } + notebooks.map { LibraryItem.Notebook(it) }
-                adapter.submit(items)
+                folderItems = folders.map { LibraryItem.Folder(it) } + notebooks.map { LibraryItem.Notebook(it) }
+                adapter.submit(filteredItems())
                 restorePosition?.takeIf {it.folder==folderId}?.let {p ->
                     (view.findViewById<RecyclerView>(R.id.library_grid).layoutManager as GridLayoutManager).scrollToPositionWithOffset(p.item,p.offset)
                 }
@@ -325,6 +350,7 @@ class LibraryView {
         host = null
         store = null
         adapter = null
+        folderItems = emptyList()
         breadcrumbView = null
         callbacks = null
         backTarget = null

@@ -301,6 +301,10 @@ the headless result does not activate production integration.
    **D56 covers:** [Books List / Tiles and derived cover cache](2026-09-14-forestread-book-covers.md)
    implements that follow-up with recycled tiles, background EPUB/MOBI cover extraction,
    proportional thumbnails and a separate local view preference. No sync contract change.
+   **D57 matching shelf controls:** [Notebooks List / Tiles beside search](2026-09-14-forestread-notebook-views.md)
+   gives both shelves the same aligned row, independent local view choices and explicit
+   current-folder name filtering. Resume notebook management integration next; shared
+   Settings, writer Penu and integrated Viwoods remain open.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

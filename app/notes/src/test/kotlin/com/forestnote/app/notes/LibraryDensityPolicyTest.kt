@@ -4,6 +4,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LibraryDensityPolicyTest {
+    @Test fun explicitListAndTilesDoNotOverrideDensityOrStretchPreviews() {
+        for (mode in UiDensity.entries) {
+            for (width in listOf(304f, 344f, 980f)) {
+                val density = LibraryDensityPolicy.resolve(mode, width, 1f)
+                assertEquals(density.copy(columns=1,list=true),
+                    LibraryDensityPolicy.shelf(mode,width,1f,LibraryShelfView.LIST))
+                assertEquals(density.copy(list=false),
+                    LibraryDensityPolicy.shelf(mode,width,1f,LibraryShelfView.TILES))
+            }
+        }
+    }
+    @Test fun folderNameFilteringIsAccentInsensitiveAndMatchesAllWords() {
+        assertTrue(SharedBookPresentation.matchesTitle("Café Field Notes", "notes cafe"))
+        assertFalse(SharedBookPresentation.matchesTitle("Café Field Notes", "cafe recipes"))
+        assertTrue(SharedBookPresentation.matchesTitle("Anything", "  "))
+    }
     @Test fun narrowAutoUsesRowsInsteadOfHugeSingleCards() {
         assertEquals(LibraryDensityProfile(true, 1, true), LibraryDensityPolicy.resolve(UiDensity.AUTO, 304f, 1f))
     }

@@ -74,7 +74,7 @@ class LibraryAdapter(
     override fun getItemViewType(position: Int): Int = (when (items[position]) {
         is LibraryItem.Folder -> TYPE_FOLDER
         is LibraryItem.Notebook -> TYPE_NOTEBOOK
-    }) + if (!sharedSurfaces) 0 else if (densityProfile.list) 4 else if (densityProfile.compact) 2 else 0
+    }) + if (!sharedSurfaces) 0 else (if (densityProfile.list) 4 else 0) + (if (densityProfile.compact) 2 else 0)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
         val inflater = LayoutInflater.from(parent.context)
@@ -86,7 +86,7 @@ class LibraryAdapter(
         if (sharedSurfaces) {
             val context = parent.context
             val card = holder.itemView as LinearLayout
-            val compact = viewType >= 2
+            val compact = viewType and 2 != 0
             val list = viewType >= 4
             val inset = LibrarySurfaceStyle.px(context, if (compact) R.dimen.library_compact_inset else R.dimen.library_surface_inset)
             val gap = LibrarySurfaceStyle.px(context, if (compact) R.dimen.library_compact_gap else R.dimen.library_surface_gap)

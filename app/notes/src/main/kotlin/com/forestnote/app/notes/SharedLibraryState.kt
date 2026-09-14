@@ -11,6 +11,7 @@ internal class SharedLibraryState {
     enum class Shelf { NOTEBOOKS, BOOKS }
     var shelf=Shelf.BOOKS
     var query=""
+    var notebookQuery=""
     var trash=false
     var bookScroll=0
     var bookItem=0
@@ -27,5 +28,9 @@ internal object SharedBookPresentation {
     private fun fold(text:String)=Normalizer.normalize(text,Normalizer.Form.NFKD)
         .replace(Regex("\\p{M}+"),"").lowercase(Locale.ROOT)
     fun matches(book:BookSnapshot,query:String,trash:Boolean)=book.deleted==trash &&
-        fold(query).trim().split(Regex("\\s+")).all {fold(title(book)).contains(it)}
+        matchesTitle(title(book),query)
+    fun matchesTitle(title:String,query:String):Boolean {
+        val name=fold(title)
+        return fold(query).trim().split(Regex("\\s+")).all {name.contains(it)}
+    }
 }

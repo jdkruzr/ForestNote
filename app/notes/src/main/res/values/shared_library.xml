@@ -1,4 +1,7 @@
 <resources>
+    <string name="library_notebook_view_heading">Notebook View · This Device</string>
+    <string name="library_notebook_view">Notebook View</string>
+    <string name="library_search_folder_names">Search Names In This Folder…</string>
     <string name="library_book_view_heading">Book View · This Device</string>
     <string name="library_book_list">List</string>
     <string name="library_book_tiles">Tiles</string>

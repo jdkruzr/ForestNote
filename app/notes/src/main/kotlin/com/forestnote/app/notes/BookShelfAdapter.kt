@@ -6,7 +6,6 @@ import android.widget.FrameLayout
 import androidx.recyclerview.widget.RecyclerView
 import com.forestnote.core.reader.BookSnapshot
 
-internal enum class BookShelfView { LIST, TILES }
 
 /** Recycles artwork targets; bounded repository paging remains in the overlay. */
 internal class BookShelfAdapter(private val create: (BookSnapshot) -> View, private val release: (View) -> Unit) :

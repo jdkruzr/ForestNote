@@ -28,6 +28,9 @@ class ReaderAnnotationRenderingTest {
     @Test fun sharedLibraryKeepsNotebookContextAndBookSearchAcrossTabsAndRecreation()=runBlocking<Unit> {
         val preference=DeviceUiDensityPreference(context)
         val savedDensity=CompletableDeferred<UiDensity>().also {result->preference.load {result.complete(it)}}.await()
+        val savedNotebookView=CompletableDeferred<LibraryShelfView>().also {result->preference.loadNotebookView {result.complete(it)}}.await()
+        val savedBookView=CompletableDeferred<LibraryShelfView>().also {result->preference.loadBookView {result.complete(it)}}.await()
+        preference.saveNotebookView(LibraryShelfView.TILES);preference.saveBookView(LibraryShelfView.LIST)
         preference.save(UiDensity.AUTO)
         val id="library-${UUID.randomUUID()}"
         val store=NotebookStore(repoProvider={NotebookRepository.openIsolatedQualification(context,id)},
@@ -78,6 +81,8 @@ class ReaderAnnotationRenderingTest {
                 assertNull(title.backgroundTintList)
                 val search=root.findViewWithTag<android.widget.EditText>("bookQuery")
                 assertNotNull(search.compoundDrawablesRelative[0])
+                val choice=root.findViewWithTag<android.widget.Button>("bookView")
+                assertTrue(kotlin.math.abs(search.top+search.height/2-choice.top-choice.height/2)<=1)
                 assertEquals(context.resources.getDimension(R.dimen.library_surface_radius),
                     (search.background as android.graphics.drawable.GradientDrawable).cornerRadius,.1f)
             }
@@ -91,6 +96,17 @@ class ReaderAnnotationRenderingTest {
             native {a->assertTrue(a.findViewById<android.view.View>(R.id.library_grid).isShown)
                 assertFalse(a.findViewById<android.view.View>(R.id.btn_library_add_notebook).isShown)}
             waitNative {a->a.findViewById<android.widget.TextView>(R.id.folder_name)?.text==folderTitle}
+            native {a ->
+                val root=a.findViewById<android.view.View>(android.R.id.content)
+                val search=root.findViewWithTag<android.widget.EditText>("notebookQuery")
+                val choice=root.findViewWithTag<android.widget.Button>("notebookView")
+                assertTrue(kotlin.math.abs(search.top+search.height/2-choice.top-choice.height/2)<=1)
+                assertEquals(42f*context.resources.displayMetrics.density,choice.minimumHeight.toFloat(),1f)
+                search.setText("missing folder")
+            }
+            waitNative {a->a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid).adapter!!.itemCount==0}
+            native {a ->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.widget.EditText>("notebookQuery").setText("long library")}
+            waitNative {a->a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid).adapter!!.itemCount==1}
             // Exercise narrow-host layout without changing the tablet's display settings.
             native {a ->
                 val chrome=a.findViewById<android.view.View>(android.R.id.content)
@@ -104,6 +120,13 @@ class ReaderAnnotationRenderingTest {
             }
             ComposeChromeTest.node("shelf:NOTEBOOKS",selected=true)
             ComposeChromeTest.node("shelf:BOOKS",selected=false)
+            // An explicit Tiles choice stays a tile even at phone width. List is independent.
+            waitNative {a ->
+                val grid=a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid)
+                (grid.getChildAt(0) as? android.widget.LinearLayout)?.orientation==android.widget.LinearLayout.VERTICAL
+            }
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("notebookView").performClick()}
+            clickLabel(context.getString(R.string.library_book_list))
             waitNative {a ->
                 val grid=a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid)
                 (grid.getChildAt(0) as? android.widget.LinearLayout)?.orientation==android.widget.LinearLayout.HORIZONTAL
@@ -116,6 +139,8 @@ class ReaderAnnotationRenderingTest {
                     .findViewWithTag<android.view.View>("sharedLibraryChrome").parent as android.view.View
                 library.layoutParams=library.layoutParams.apply {width=(360*context.resources.displayMetrics.density).toInt()}
             }
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("notebookView").performClick()}
+            clickLabel(context.getString(R.string.library_book_tiles))
             waitNative {a ->
                 val grid=a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid)
                 (grid.layoutManager as androidx.recyclerview.widget.GridLayoutManager).spanCount==2 &&
@@ -135,12 +160,19 @@ class ReaderAnnotationRenderingTest {
             }
             native {a->a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid).getChildAt(0).performClick()}
             waitNative {a->a.findViewById<android.view.View>(R.id.btn_library_back)?.isShown==true}
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("notebookView").performClick()}
+            clickLabel(context.getString(R.string.library_book_list))
             ComposeChromeTest.click("shelf:BOOKS")
             native {a->assertEquals("unfindable",a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.widget.EditText>("bookQuery").text.toString())}
             activity.recreate();visible("bookQuery")
             assertTrue(ComposeChromeTest.labels("libraryDensity").any {it.contains(context.getString(R.string.library_density_comfortable))})
             ComposeChromeTest.click("shelf:NOTEBOOKS")
             waitNative {a->a.findViewById<android.view.View>(R.id.btn_library_back)?.isShown==true}
+            native {a ->
+                val root=a.findViewById<android.view.View>(android.R.id.content)
+                assertEquals("long library",root.findViewWithTag<android.widget.EditText>("notebookQuery").text.toString())
+                assertTrue(root.findViewWithTag<android.widget.Button>("notebookView").text.startsWith(context.getString(R.string.library_book_list)))
+            }
             ComposeChromeTest.click("shelf:BOOKS")
             native {a->val q=a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.widget.EditText>("bookQuery")
                 assertEquals("unfindable",q.text.toString());q.setText("")}
@@ -194,6 +226,7 @@ class ReaderAnnotationRenderingTest {
             activity?.close();ReaderHostQualificationSession.cleanup?.join();ReaderHostQualificationSession.store=null
             ReaderHostQualificationSession.sharedLibrary=false;store.shutdown()
             preference.save(savedDensity)
+            preference.saveNotebookView(savedNotebookView);preference.saveBookView(savedBookView)
             withTimeout(10000) {CompletableDeferred<UiDensity>().also {result->preference.load {result.complete(it)}}.await()}
         }
     }

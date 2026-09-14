@@ -97,8 +97,8 @@ class BookCoversQualificationTest {
 
     @Test fun visibleTilesLoadCoversWithoutRendererLeasesAndRetainViewChoice()=runBlocking<Unit> {
         val preference=DeviceUiDensityPreference(context)
-        suspend fun readView()=withTimeout(10000) {CompletableDeferred<BookShelfView>().also {d->preference.loadBookView {d.complete(it)}}.await()}
-        val saved=readView();preference.saveBookView(BookShelfView.LIST)
+        suspend fun readView()=withTimeout(10000) {CompletableDeferred<LibraryShelfView>().also {d->preference.loadBookView {d.complete(it)}}.await()}
+        val saved=readView();preference.saveBookView(LibraryShelfView.LIST)
         val id="covers-${UUID.randomUUID()}"
         val store=NotebookStore(repoProvider={NotebookRepository.openIsolatedQualification(context,id)},
             executor=Executors.newSingleThreadExecutor(),poster={it.run()},qualifyReaderStorage=true)
@@ -156,7 +156,7 @@ class BookCoversQualificationTest {
                 File(context.getExternalFilesDir(null),"cover-tiles.png").outputStream().use {bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
                 bitmap.recycle()
             }
-            assertEquals(BookShelfView.TILES,readView())
+            assertEquals(LibraryShelfView.TILES,readView())
             scenario.recreate();ready()
             choose(R.string.library_book_list)
             waitFor {a->a.findViewById<View>(R.id.book_cover_thumbnail)==null}
