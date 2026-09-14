@@ -266,8 +266,11 @@ the headless result does not activate production integration.
    no reauthoring on process restart. A real download exposed the lab's stripped connectivity
    permission; the explicit network overlay and pre-SDK guard now cover it. Integrated Viwoods
    acceptance remains open.
-   The [library navigation outline](2026-09-13-forestread-library-navigation.md) records a proposed
-   top-level Notebooks/Books switch; its final UI is not approved or implemented yet.
+   The user confirmed D46 recognition/search/navigation and zero ghosting. **D47 library surface:**
+   [native Notebooks/Books overlay](2026-09-13-forestread-shared-library-surface.md) implements the
+   approved switch, reused browse-only notebook shelf and book search/import/availability/actions
+   against that same owner. Real writer-editor attachment and its callbacks remain next; neither
+   this qualified surface nor its reader integration enables production storage.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { zipSync, strToU8 } from 'fflate';
 
-async function ready(page) {
+async function ready(page,nativeLibrary=false) {
   const xml = {
     mimetype: 'application/epub+zip',
     'META-INF/container.xml': '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
@@ -9,12 +9,13 @@ async function ready(page) {
     'text.xhtml': '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Write here. No pancakes.</p></body></html>',
   };
   await page.route('**/annotations.epub', route => route.fulfill({ contentType: 'application/epub+zip', body: Buffer.from(zipSync(Object.fromEntries(Object.entries(xml).map(([k,v]) => [k,strToU8(v)])))) }));
-  await page.addInitScript(() => {
+  await page.addInitScript(({nativeLibrary}) => {
     window.calls = []; window.delayed = [];
     const annotation = { id: 'note', status: 'READY', width: 10000, height: 0, inputHash: 'same', highlightPresent: true,
       anchor: { version: 1, section: 0, start: 0, end: 5, quote: 'Write', prefix: '', suffix: ' here.' } };
     window.ForestRead = { postMessage(data) {
       const r = JSON.parse(data); calls.push(r); let result = null;
+      if (r.action === 'libraryConfig') result = nativeLibrary;
       if (r.action === 'list') result = { books: [{ id: 'a'.repeat(64), title: 'Annotation Test', ready: true }] };
       if (r.action === 'open') result = { book: r.book, token: 'lease', title: 'Annotation Test', url: '/annotations.epub', mediaType: 'application/epub+zip' };
       if (r.action === 'annotations') result = { annotations: [annotation], next: null };
@@ -28,9 +29,12 @@ async function ready(page) {
       const reply = () => ForestRead.onmessage({ data: JSON.stringify({ id: r.id, result }) });
       if (r.action === 'browseAnnotations' && r.query === 'slow') delayed.push(reply); else queueMicrotask(reply);
     } };
-  });
+  },{nativeLibrary});
   await page.goto('http://127.0.0.1:4173/readerlab/shared-reader.html');
-  await page.getByRole('button', { name: 'Annotation Test', exact: true }).click();
+  if(nativeLibrary) {
+    await page.waitForFunction(()=>calls.some(c=>c.action==='library'));
+    await page.evaluate(()=>forestReadLibraryOpen('a'.repeat(64)));
+  } else await page.getByRole('button', { name: 'Annotation Test', exact: true }).click();
   await page.waitForFunction(() => forestReadState().book && !forestReadState().opening);
 }
 async function browse(page) {
@@ -118,4 +122,20 @@ test('a first status arriving after recognition refreshes a potentially older op
   const before = await page.evaluate(() => calls.filter(c => c.action === 'browseAnnotations').length);
   await page.evaluate(() => forestReadRecognitionChanged({ message: 'Up To Date', revision: 1 }));
   await expect.poll(() => page.evaluate(() => calls.filter(c => c.action === 'browseAnnotations').length)).toBe(before+1);
+});
+
+test('native Library covers without reflow and reopening the same book preserves its reader', async ({page}) => {
+  await ready(page,true);
+  const bounds=await page.locator('#reader').boundingBox();
+  const opens=await page.evaluate(()=>calls.filter(c=>c.action==='open').length);
+  await page.locator('#library').click();
+  await expect(page.locator('#shelves')).toBeHidden();
+  await page.evaluate(()=>forestReadLibraryClosed());
+  expect(await page.locator('#reader').boundingBox()).toEqual(bounds);
+  await page.locator('#library').click();
+  await page.evaluate(()=>forestReadLibraryOpen('a'.repeat(64),true));
+  await expect(page.locator('#annotationBrowser')).toBeVisible();
+  expect(await page.evaluate(()=>calls.filter(c=>c.action==='open').length)).toBe(opens);
+  expect(await page.evaluate(()=>forestReadState().editing)).toBeNull();
+  expect(await page.locator('#reader').boundingBox()).toEqual(bounds);
 });

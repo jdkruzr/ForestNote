@@ -25,6 +25,116 @@ class ReaderAnnotationRenderingTest {
     private val instrumentation=InstrumentationRegistry.getInstrumentation()
     private val context get()=instrumentation.targetContext
 
+    @Test fun sharedLibraryKeepsNotebookContextAndBookSearchAcrossTabsAndRecreation()=runBlocking<Unit> {
+        val id="library-${UUID.randomUUID()}"
+        val store=NotebookStore(repoProvider={NotebookRepository.openIsolatedQualification(context,id)},
+            executor=Executors.newSingleThreadExecutor(),poster={it.run()},qualifyReaderStorage=true)
+        var activity:ActivityScenario<ReaderHostQualificationActivity>?=null
+        suspend fun js(expression:String):String=withContext(Dispatchers.Main) {
+            val result=CompletableDeferred<String>();checkNotNull(ReaderHostQualificationSession.view).web.evaluateJavascript(expression) {result.complete(it)}
+            withTimeout(10000) {result.await()}
+        }
+        suspend fun waitFor(expression:String)=withTimeout(45000) {while(js(expression)!="true") delay(50)}
+        fun snapshot()=SQLiteDatabase.openDatabase(context.getDatabasePath("reader-qualification-$id.db").path,null,SQLiteDatabase.OPEN_READONLY).use {db ->
+            listOf("app_state","rhizome_outbox","reader_position","reader_edit_session").map {table ->
+                db.rawQuery("SELECT * FROM $table ORDER BY 1",null).use {c->buildList {while(c.moveToNext()) add((0 until c.columnCount).map {if(c.isNull(it)) null else c.getString(it)})}}
+            }
+        }
+        suspend fun native(action:(android.app.Activity)->Unit)=withContext(Dispatchers.Main) {activity!!.onActivity {action(it)}}
+        suspend fun waitNative(test:(android.app.Activity)->Boolean)=withTimeout(10000) {
+            while(true) {var ok=false;native {ok=test(it)};if(ok) break;delay(30)}
+        }
+        suspend fun visible(tag:String)=withTimeout(10000) {
+            instrumentation.sendStatus(0,Bundle().apply {putString("library_wait","Visible $tag")})
+            while(true) {
+                var found=false;native {a->found=a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>(tag)?.isShown==true}
+                if(found) break;delay(30)
+            }
+        }
+        suspend fun clickLabel(label:String)=withTimeout(10000) {
+            instrumentation.sendStatus(0,Bundle().apply {putString("library_wait","Click $label")})
+            while(true) {
+                val node=instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(label)
+                    ?.firstOrNull {it.isClickable && it.text?.toString()?.equals(label,ignoreCase=true)==true}
+                if(node?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)==true) break
+                delay(50)
+            }
+        }
+        try {
+            val access=store.readerLibraryForQualification(context.cacheDir);val book=access.importBook("book",{fixture().inputStream()}).book.id
+            val folder=CompletableDeferred<String>();store.createFolder("Library Folder",null) {folder.complete(it)};withTimeout(10000) {folder.await()}
+            val before=snapshot()
+            ReaderHostQualificationSession.store=store;ReaderHostQualificationSession.sharedLibrary=true
+            activity=ActivityScenario.launch(ReaderHostQualificationActivity::class.java)
+            visible("book:$book")
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.widget.EditText>("bookQuery").setText("unfindable")}
+            delay(250)
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("shelf:NOTEBOOKS").performClick()}
+            visible("shelf:NOTEBOOKS")
+            native {a->assertTrue(a.findViewById<android.view.View>(R.id.library_grid).isShown)
+                assertFalse(a.findViewById<android.view.View>(R.id.btn_library_add_notebook).isShown)}
+            waitNative {a->a.findViewById<android.widget.TextView>(R.id.folder_name)?.text=="Library Folder"}
+            native {a->a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid).getChildAt(0).performClick()}
+            waitNative {a->a.findViewById<android.view.View>(R.id.btn_library_back)?.isShown==true}
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("shelf:BOOKS").performClick()}
+            native {a->assertEquals("unfindable",a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.widget.EditText>("bookQuery").text.toString())}
+            activity.recreate();visible("bookQuery")
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("shelf:NOTEBOOKS").performClick()}
+            waitNative {a->a.findViewById<android.view.View>(R.id.btn_library_back)?.isShown==true}
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("shelf:BOOKS").performClick()}
+            native {a->val q=a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.widget.EditText>("bookQuery")
+                assertEquals("unfindable",q.text.toString());q.setText("")}
+            visible("book:$book")
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("book:$book").performClick()}
+            waitFor("forestReadState().book===${JSONObject.quote(book)} && !forestReadState().opening")
+            withTimeout(10000) {while(ReaderHostQualificationSession.view?.libraryCovered!=false) delay(30)}
+            val bounds=js("JSON.stringify(document.getElementById('reader').getBoundingClientRect())")
+            js("document.getElementById('library').click();true");visible("book:$book")
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("closeSharedLibrary").performClick()}
+            assertEquals(bounds,js("JSON.stringify(document.getElementById('reader').getBoundingClientRect())"))
+            assertEquals("null",js("forestReadState().editing"));assertEquals(before,snapshot())
+            // Destructive UI checks use only this explicitly isolated fixture, never the user's book.
+            js("document.getElementById('library').click();true");visible("actions:$book")
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("actions:$book").performClick()}
+            clickLabel(context.getString(R.string.shared_library_rename))
+            val input=withTimeout(10000) {
+                var found:android.view.accessibility.AccessibilityNodeInfo?=null
+                while(found==null) {
+                    fun find(n:android.view.accessibility.AccessibilityNodeInfo?):android.view.accessibility.AccessibilityNodeInfo? {
+                        if(n==null) return null
+                        if(n.isEditable) return n
+                        for(i in 0 until n.childCount) find(n.getChild(i))?.let {return it}
+                        return null
+                    }
+                    found=find(instrumentation.uiAutomation.rootInActiveWindow);if(found==null) delay(50)
+                };found
+            }
+            assertTrue(input.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply {
+                putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"Renamed Fixture")
+            }))
+            clickLabel(context.getString(R.string.shared_library_apply))
+            withTimeout(10000) {while(access.list().books.single().displayTitle!="Renamed Fixture") delay(50)}
+            visible("actions:$book")
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("actions:$book").performClick()}
+            val beforeTrash=ReaderHostQualificationSession.view
+            clickLabel(context.getString(R.string.shared_library_move_trash));clickLabel(context.getString(R.string.shared_library_move_trash))
+            withTimeout(10000) {while(access.list().books.isNotEmpty()) delay(50)}
+            withTimeout(10000) {while(ReaderHostQualificationSession.view==null || ReaderHostQualificationSession.view===beforeTrash) delay(30)}
+            visible("bookFilter")
+            native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("bookFilter").performClick()}
+            clickLabel(context.getString(R.string.shared_library_trash));visible("actions:$book")
+            native {a->assertFalse(a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("book:$book").isEnabled)
+                a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.view.View>("actions:$book").performClick()}
+            clickLabel(context.getString(R.string.shared_library_restore))
+            withTimeout(10000) {while(access.list().books.isEmpty()) delay(50)}
+            assertEquals("Renamed Fixture",access.list().books.single().displayTitle)
+            assertTrue(access.list().books.single().contentReady);assertEquals(before[0],snapshot()[0])
+        } finally {
+            activity?.close();ReaderHostQualificationSession.cleanup?.join();ReaderHostQualificationSession.store=null
+            ReaderHostQualificationSession.sharedLibrary=false;store.shutdown()
+        }
+    }
+
     @Test fun recognitionRejectsMissingConnectivityPermissionBeforeStartingTheSdk()=runBlocking<Unit> {
         for(missing in listOf(android.Manifest.permission.INTERNET,android.Manifest.permission.ACCESS_NETWORK_STATE)) {
             val denied=object:android.content.ContextWrapper(context) {

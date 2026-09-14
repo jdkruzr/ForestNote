@@ -48,6 +48,7 @@ internal class ReaderLibraryAccess(
     @Volatile var editorTools=ReaderEditorTools()
     /** Per-brush UI choices survive editor/View changes within this library owner. */
     val editorWidths=java.util.concurrent.ConcurrentHashMap<String,Int>()
+    val libraryUi=SharedLibraryState()
 
     suspend fun resizeDocumentEdit(command:String,height:Long):String = request {s -> editGate.withLock {
         require(command.matches(Regex("[a-zA-Z0-9-]{1,80}")) && height in 200..60000)

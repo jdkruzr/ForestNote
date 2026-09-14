@@ -1,0 +1,29 @@
+<resources>
+    <string name="shared_library_title">Library</string>
+    <string name="shared_library_notebooks">Notebooks</string>
+    <string name="shared_library_books">Books</string>
+    <string name="shared_library_close">Close Library</string>
+    <string name="shared_library_import">Import Book…</string>
+    <string name="shared_library_search">Search Book Titles…</string>
+    <string name="shared_library_trash">Trash</string>
+    <string name="shared_library_more">Show More</string>
+    <string name="shared_library_retry">Retry</string>
+    <string name="shared_library_loading">Loading Books…</string>
+    <plurals name="shared_library_count"><item quantity="one">%1$d Book</item><item quantity="other">%1$d Books</item></plurals>
+    <string name="shared_library_filter">%1$s ▾</string>
+    <string name="shared_library_empty">No Matching Books</string>
+    <string name="shared_library_failed">Library Action Failed · Retry</string>
+    <string name="shared_library_limit">%1$d Books · Narrow The Search To See More</string>
+    <string name="shared_library_available">%1$s · %2$s · Available On This Device</string>
+    <string name="shared_library_pending">%1$s · %2$s · Content Pending</string>
+    <string name="shared_library_trashed">%1$s · %2$s · In Trash</string>
+    <string name="shared_library_book_actions">Book Actions</string>
+    <string name="shared_library_annotations">Annotations</string>
+    <string name="shared_library_rename">Rename Book</string>
+    <string name="shared_library_move_trash">Move To Trash</string>
+    <string name="shared_library_restore">Restore Book</string>
+    <string name="shared_library_cancel">Cancel</string>
+    <string name="shared_library_apply">Apply</string>
+    <string name="shared_library_name_required">Enter A Book Title</string>
+    <string name="shared_library_writer_pending">Notebook Browsing · Notebook Editor Attachment Comes Next</string>
+</resources>

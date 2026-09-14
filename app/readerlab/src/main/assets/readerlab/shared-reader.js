@@ -12,12 +12,12 @@ reader.savedHighlightActions = true;
 for (const button of document.querySelectorAll('[data-icon="more"]')) button.append(moreIcon());
 const defaults = { ...reader.prefs };
 const pending = new Map(); let sequence = 0, current, opening = false;
-let editing = null, toolsUI, annotationNavigation = false;
+let editing = null, toolsUI, annotationNavigation = false, nativeLibrary = false, nativeLibraryOpen = false;
 const report = message => { $('status').textContent = message; };
 const run = fn => async () => { try { await fn(); } catch (error) { report(error.message); } };
 // During terminal readback the native surface remains visible. Intermediate page/tile
 // notifications must not request display-wide flashes; Finish publishes one settled frame.
-const refreshReading = () => editing || selectionUI.pending || annotationNavigation ? Promise.resolve() : rpc('refresh');
+const refreshReading = () => editing || selectionUI.pending || annotationNavigation || nativeLibraryOpen ? Promise.resolve() : rpc('refresh');
 const inkSlices = createInkSlices(reader, rpc, () => current, report, refreshReading);
 let resizePending = false, resizeTimer, viewportSize = `${$('reader').clientWidth}:${$('reader').clientHeight}`;
 function reflowAfterResize() {
@@ -48,7 +48,7 @@ if (window.ForestRead) ForestRead.onmessage = ({ data }) => {
   clearTimeout(request.timer); pending.delete(message.id);
   message.error ? request.reject(Object.assign(new Error(message.error), { code: message.code })) : request.resolve(message.result);
 };
-const popups = createPopupHost({ onChange: () => { reader.highlightMenuOpen = !!document.querySelector('dialog[open]'); reflowAfterResize(); void toolsUI?.popupChanged(); } });
+const popups = createPopupHost({ onChange: () => { reader.highlightMenuOpen = nativeLibraryOpen || !!document.querySelector('dialog[open]'); reflowAfterResize(); void toolsUI?.popupChanged(); } });
 for (const [dialog, closeButton] of [['shelves', 'closeShelves'], ['chapters', 'closeChapters'], ['settings', 'closeSettings']]) popups.register($(dialog), { closeButton: $(closeButton) });
 setupImageZoom(reader, { native: () => rpc('refresh').catch(() => {}), syncMenuInput: () => {} });
 const text = (tag, value) => { const element = document.createElement(tag); element.textContent = value; return element; };
@@ -95,7 +95,30 @@ async function open(book) {
     }
   } finally { opening = false; if (prepared) await rpc('release', { token: prepared.token }); reflowAfterResize(); }
 }
-$('library').onclick = run(async () => { if(editing) return; await shelves(); popups.open($('shelves'), { anchor: $('library') }); });
+$('library').onclick = run(async () => {
+  if(editing || opening || selectionUI.pending || reader.selection || annotationNavigation) return;
+  if(nativeLibrary) {
+    nativeLibraryOpen=true;reader.highlightMenuOpen=true;
+    try {await rpc('library');} catch(error) {nativeLibraryOpen=false;reader.highlightMenuOpen=false;throw error;}
+  } else {await shelves();popups.open($('shelves'), {anchor:$('library')});}
+});
+window.forestReadLibraryClosed = () => {
+  nativeLibraryOpen=false;reader.highlightMenuOpen=!!document.querySelector('dialog[open]');void refreshReading();
+};
+window.forestReadLibraryTitle = (book,title) => {if(current?.book===book && typeof title==='string') {current.title=title;$('title').textContent=title;}};
+window.forestReadLibraryOpen = async (book,annotations=false) => {
+  try {
+    if(editing || opening || selectionUI.pending || reader.selection || annotationNavigation) throw new Error('Finish The Current Action First');
+    nativeLibraryOpen=false;reader.highlightMenuOpen=false;
+    if(current?.book!==book) await open(book);
+    if(current?.book!==book) throw new Error('Book Could Not Be Opened');
+    await inkSlices.settled();
+    if(annotations) $('browseAnnotations').click();
+    await rpc('libraryOpened',{ok:true});
+  } catch(error) {
+    nativeLibraryOpen=true;reader.highlightMenuOpen=true;report(error.message);await rpc('libraryOpened',{ok:false});
+  }
+};
 $('import').onclick = run(async () => { if(!editing) await rpc('import'); });
 window.forestReadImported = run(async () => { await shelves(); report('Book Imported Into Shared Library'); });
 $('prev').onclick = run(() => reader.turn(-1)); $('next').onclick = run(() => reader.turn(1));
@@ -221,6 +244,7 @@ $('refresh').onclick = run(async () => { popups.close($('settings')); await rpc(
 // Deliberate, read-only diagnostics for the isolated host's instrumentation.
 window.forestReadState = () => ({ book: reader.bookHash ?? null, text: reader.doc?.body?.textContent?.slice(0, 1000), index: reader.index, opening, editing:editing?.annotation.id ?? null, editAttached:editing?.attached ?? false, navigationLocked:reader.navigationLocked, prefs: reader.prefs, annotations: reader.annotations.map(a => ({ id: a.id, inputHash: a.inputHash, width: a.width, height: a.height, anchor: reader.anchorState(a).status })), inkTiles: reader.doc?.querySelectorAll('[data-shared-ink]').length ?? 0, frameScripts: reader.doc?.defaultView?.frameElement?.getAttribute('sandbox') });
 window.forestReadOpen = open;
+nativeLibrary=await rpc('libraryConfig')===true;
 const resumeBook=await shelves();
 if(resumeBook) await open(resumeBook);
-else { popups.open($('shelves'), { anchor: $('library') }); report('Shared Library Ready'); }
+else { if(nativeLibrary) await $('library').onclick();else popups.open($('shelves'), { anchor: $('library') });report('Shared Library Ready'); }

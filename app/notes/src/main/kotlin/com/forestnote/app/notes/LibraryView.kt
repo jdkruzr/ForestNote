@@ -49,6 +49,8 @@ class LibraryView {
     private var callbacks: Callbacks? = null
     // The folder the back chevron walks up to (one level up), set from the last path resolution.
     private var backTarget: String? = null
+    private var reloadGeneration=0L
+    private var restorePosition:LibraryBrowsePosition?=null
 
     // Select mode (D1): a notebook tap toggles its checkbox instead of opening; folders stay
     // tap-to-enter. Selection is cleared whenever the user navigates between folders.
@@ -67,14 +69,21 @@ class LibraryView {
     /** A defensive copy of the currently-selected notebook ids. */
     fun selectedNotebookIds(): Set<String> = selectedIds.toSet()
 
-    fun show(host: ViewGroup, store: NotebookStore, callbacks: Callbacks) {
+    fun show(host: ViewGroup, store: NotebookStore, callbacks: Callbacks,
+             position:LibraryBrowsePosition?=null,readOnly:Boolean=false) {
         if (isShowing) return
         this.host = host
         this.store = store
-        currentFolderId = null
+        currentFolderId = position?.folder
+        restorePosition=position
         val view = LayoutInflater.from(host.context).inflate(R.layout.view_library, host, false)
         host.addView(view)
         root = view
+        if(readOnly) {
+            view.findViewById<View>(R.id.library_header).visibility=View.GONE
+            for(id in listOf(R.id.btn_library_add_notebook,R.id.btn_library_add_folder,R.id.btn_library_select,R.id.btn_library_recycle_bin))
+                view.findViewById<View>(id).visibility=View.GONE
+        }
 
         val thumbnailLoader = ThumbnailLoader(store, host.context.cacheDir, R.color.card_placeholder)
         loader = thumbnailLoader
@@ -163,6 +172,8 @@ class LibraryView {
         val store = store ?: return
         val adapter = adapter ?: return
         val folderId = currentFolderId
+        val generation=++reloadGeneration
+        fun deliver(action:()->Unit) {view.post {if(root===view && generation==reloadGeneration && currentFolderId==folderId) action()}}
         val backChevron = view.findViewById<View>(R.id.btn_library_back)
 
         // Resolve the breadcrumb path + back target for the current folder. Each async
@@ -175,34 +186,43 @@ class LibraryView {
             breadcrumbView?.render(emptyList())
         } else {
             store.folderPath(folderId) { path ->
-                if (folderId != currentFolderId) return@folderPath
+                deliver {
                 backTarget = BreadcrumbLogic.backTargetId(path)
                 backChevron.visibility = View.VISIBLE
                 breadcrumbView?.render(path)
+                }
             }
         }
 
         store.listFolderCardsForParent(folderId) { folders ->
             if (folderId != currentFolderId) return@listFolderCardsForParent
             store.listNotebookCardsInFolder(folderId) { notebooks ->
-                if (folderId != currentFolderId) return@listNotebookCardsInFolder
+                deliver {
                 val items = folders.map { LibraryItem.Folder(it) } + notebooks.map { LibraryItem.Notebook(it) }
                 adapter.submit(items)
+                restorePosition?.takeIf {it.folder==folderId}?.let {p ->
+                    (view.findViewById<RecyclerView>(R.id.library_grid).layoutManager as GridLayoutManager).scrollToPositionWithOffset(p.item,p.offset)
+                }
+                restorePosition=null
+                }
             }
         }
 
         // Header summary is a library-wide total (not the current folder's count), shown
         // inline beside the title as compact [book icon] N · [folder icon] N counters.
         store.libraryTotals { notebookCount, folderCount ->
+            deliver {
             view.findViewById<TextView>(R.id.text_notebook_count).text = notebookCount.toString()
             view.findViewById<TextView>(R.id.text_folder_count).text = folderCount.toString()
+            }
         }
 
         // Recycle Bin count badge: caption shows "Recycle (N)" when non-empty (AC4.6).
         store.recycleBinCount { n ->
-            if (root !== view) return@recycleBinCount
+            deliver {
             view.findViewById<TextView>(R.id.text_recycle_bin_caption).text =
                 if (n > 0) "Recycle ($n)" else "Recycle"
+            }
         }
     }
 
@@ -270,6 +290,7 @@ class LibraryView {
     }
 
     fun hide() {
+        reloadGeneration++
         loader?.shutdown()
         loader = null
         root?.let { host?.removeView(it) }
@@ -283,6 +304,13 @@ class LibraryView {
         currentFolderId = null
         selectMode = false
         selectedIds.clear()
+    }
+
+    fun browsePosition():LibraryBrowsePosition {
+        val grid=root?.findViewById<RecyclerView>(R.id.library_grid)
+        val layout=grid?.layoutManager as? GridLayoutManager
+        val item=layout?.findFirstVisibleItemPosition()?.coerceAtLeast(0) ?: 0
+        return LibraryBrowsePosition(currentFolderId,item,layout?.findViewByPosition(item)?.top ?: 0)
     }
 
     private companion object { const val COLUMNS = 4 }

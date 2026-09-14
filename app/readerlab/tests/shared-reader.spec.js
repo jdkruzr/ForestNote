@@ -79,7 +79,7 @@ test('saved shared annotations compose into the book with native tiles and width
   await page.waitForFunction(() => forestReadState().inkTiles === 1 && forestReadState().prefs.fontSize === 28);
   state = await rendered(); expect(state.width).toBeLessThanOrEqual(360); expect(state.width / state.height).toBeCloseTo(state.naturalAspect, 2);
   const actions = await page.evaluate(() => calls.map(c => c.action));
-  expect(actions.every(a => ['list', 'open', 'annotations', 'inkSlice', 'refresh', 'rendered', 'preferences'].includes(a))).toBe(true);
+  expect(actions.every(a => ['libraryConfig', 'list', 'open', 'annotations', 'inkSlice', 'refresh', 'rendered', 'preferences'].includes(a))).toBe(true);
   const beforeEdit=await page.locator('#reader').boundingBox();
   await page.evaluate(()=>document.querySelector('foliate-paginator').getContents()[0].doc.querySelector('[data-annotation]').click());
   await page.waitForFunction(()=>forestReadState().editAttached);

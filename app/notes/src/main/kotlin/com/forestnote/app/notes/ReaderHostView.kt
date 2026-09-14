@@ -23,7 +23,8 @@ import java.util.concurrent.ConcurrentHashMap
 @SuppressLint("SetJavaScriptEnabled")
 internal class ReaderHostView(context:Context,private val library:ReaderLibraryAccess,
     private val importBook:()->Unit,private val refresh:(android.view.View)->Unit,
-    private val rendered:(String)->Unit={},private val inkBackend:com.forestnote.core.ink.InkBackend?=null):FrameLayout(context) {
+    private val rendered:(String)->Unit={},private val inkBackend:com.forestnote.core.ink.InkBackend?=null,
+    private val openLibrary:(()->Unit)?=null):FrameLayout(context) {
     val web=WebView(context)
     // TouchHelper is bound to a SurfaceView identity. Reuse that same capture surface when
     // moving between annotation slices; only its parent/rectangle and StrokeSink change.
@@ -41,6 +42,7 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
     private val books=ConcurrentHashMap<String,PreparedReaderBook>()
     @Volatile private var disposed=false
     private var refreshGeneration=0L
+    private var libraryNavigation:CompletableDeferred<Boolean>?=null
     private val worker=scope.launch {
         for(message in messages) {
             var id=""
@@ -91,6 +93,11 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
         .put("revision",value.revision).put("retryable",value.retryable)
     private suspend fun handle(request:JSONObject):Any {
         return when(request.getString("action")) {
+            "libraryConfig" -> openLibrary!=null
+            "library" -> {
+                check(!editing);withContext(Dispatchers.Main) {if(!disposed) openLibrary?.invoke()};JSONObject.NULL
+            }
+            "libraryOpened" -> {withContext(Dispatchers.Main) {libraryNavigation?.complete(request.optBoolean("ok"))};JSONObject.NULL}
             "recognitionState" -> {
                 checkNotNull(books[request.getString("token")])
                 library.recognitionStatus()?.value?.let(::recognitionJson) ?: JSONObject.NULL
@@ -314,13 +321,25 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
         ready.await()
     }
     private fun scheduleRefresh() {
-        if(documentInk!=null) return
+        if(documentInk!=null || libraryCovered) return
         val generation=++refreshGeneration
         web.postVisualStateCallback(generation,object:WebView.VisualStateCallback() {
-            override fun onComplete(requestId:Long) {web.postOnAnimation {if(!disposed && documentInk==null && generation==refreshGeneration && hasWindowFocus()) refresh(web)}}
+            override fun onComplete(requestId:Long) {web.postOnAnimation {if(!disposed && !libraryCovered && documentInk==null && generation==refreshGeneration && hasWindowFocus()) refresh(web)}}
         })
     }
     fun imported() {if(!disposed) web.evaluateJavascript("window.forestReadImported?.()",null)}
+    var libraryCovered=false
+        private set
+    fun coverLibrary(covered:Boolean) {libraryCovered=covered;refreshGeneration++}
+    fun libraryClosed() {coverLibrary(false);if(!disposed) web.evaluateJavascript("window.forestReadLibraryClosed?.()",null)}
+    suspend fun openFromLibrary(book:String,annotations:Boolean):Boolean {
+        check(!editing && libraryNavigation==null)
+        val ready=CompletableDeferred<Boolean>();libraryNavigation=ready
+        return try {
+            web.evaluateJavascript("window.forestReadLibraryOpen?.(${JSONObject.quote(book)},$annotations)",null)
+            withTimeout(60_000) {ready.await()}
+        } finally {libraryNavigation=null}
+    }
     fun resume() {resumed=true;if(editorFrameReady) documentInk?.resume()}
     fun pause() {resumed=false;documentInk?.pause()}
     override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int) {

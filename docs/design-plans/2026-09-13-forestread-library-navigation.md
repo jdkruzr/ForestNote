@@ -1,6 +1,7 @@
 # Reader/writer library navigation — discussion outline
 
-Status: **proposal, not an approved UI design or implemented navigation shell**.
+Status: **Notebooks / Books direction approved; D47 implements the gated library surface.**
+The main notebook editor attachment and production activation are still separate work.
 Return hook: [larger integration review, item 3](2026-09-12-forestread-progress-review.md).
 Raised while implementing [D44](2026-09-13-forestread-saved-highlight-adjustment.md).
 
@@ -14,13 +15,15 @@ to the existing explicit local/per-site position contract, not to a library tab 
 
 ## Current implementation
 
-The normal app has its existing notebook/folder Library. The qualification reader has a compact
-Books popup with paged listing, import/open and content-pending handling. The shared repository
-boundary already provides rename/trash/restore and explicit availability, but the final main-app
-book library and reader/writer switch are not yet attached. Reader Lab's richer annotation browser
-is a prototype to connect to the shared repositories, not another durable store to carry forward.
+The normal app retains its notebook/folder Library. D47's interactive qualification reader opens
+a native shared Library overlay: Notebooks reuses that existing shelf in explicitly labeled browse-
+only mode, while Books supports bounded title search, import/open, availability, annotations,
+rename and recoverable trash/restore. Both use the selected shared owner; there is no second DB.
+The component accepts ordinary notebook callbacks for the upcoming writer-host attachment;
+qualification does not pretend a notebook-editor tap is implemented yet. The shared annotation
+browser and native recognition/backfill are already attached and device-qualified (D45–D46).
 
-## Recommended next UI decision
+## Approved direction
 
 Use one Library destination with compact **Notebooks / Books** tabs at the top, following our shared
 menu sizing, visible control boundaries and overlay/no-reflow principles. Preserve each tab's
@@ -37,12 +40,14 @@ selected. Library navigation must respect unfinished input/edit boundaries: no s
 Cancel, lost draft or overlapping owners. Reserve top-bar real estate for this switch, not a bottom
 gesture target under the user's palm. Main-writer Penu cleanup remains part of this integration work.
 
-## Questions for that design slice
+## Remaining decisions and attachment work
 
-- Final labels and exact placement of the switch; tabs are the recommendation, not settled policy.
+- Refine spacing/placement after hands-on use; Notebooks / Books tabs are now implemented.
 - Book layout/sort/filter choices, and whether book collections are needed in the first version.
 - Scoped versus combined library search, and how annotations/results open their book context.
 - Shared library/reader/writer navigation and Android Back behavior, including interrupted edits.
 
 Build and qualify this shell explicitly before production activation. Do not treat a storage-path
 toggle, a second database or the current qualification Books popup as completion of this UX.
+
+Implementation and evidence: [D47 shared library surface](2026-09-13-forestread-shared-library-surface.md).
