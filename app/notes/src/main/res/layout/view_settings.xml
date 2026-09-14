@@ -12,46 +12,7 @@
     android:clickable="true"
     android:focusable="true">
 
-    <!-- Header: Back + title -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingStart="8dp"
-        android:paddingEnd="16dp"
-        android:paddingTop="6dp"
-        android:paddingBottom="6dp">
-
-        <TextView
-            android:id="@+id/btn_settings_back"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_back_library"
-            android:textColor="@color/black"
-            android:textSize="18sp"
-            android:padding="8dp" />
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="@string/settings_title"
-            android:textColor="@color/black"
-            android:textSize="18sp"
-            android:textStyle="bold" />
-
-        <!-- Spacer to balance the back button so the title stays centred -->
-        <View
-            android:layout_width="72dp"
-            android:layout_height="1dp" />
-    </LinearLayout>
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="@color/black" />
+    <include layout="@layout/settings_page_header" />
 
     <ScrollView
         android:layout_width="match_parent"

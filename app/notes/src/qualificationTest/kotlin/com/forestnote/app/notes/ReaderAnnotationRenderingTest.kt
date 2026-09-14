@@ -256,7 +256,14 @@ class ReaderAnnotationRenderingTest {
             checkNotNull(ReaderHostQualificationSession.view).web.evaluateJavascript(expression) {result.complete(it)}
             withTimeout(10000) {result.await()}
         }
-        suspend fun waitFor(expression:String)=withTimeout(45000) {while(js(expression)!="true") delay(50)}
+        suspend fun waitFor(expression:String) {
+            instrumentation.sendStatus(0,Bundle().apply {putString("annotation_browser_wait",expression)})
+            try {withTimeout(45000) {while(js(expression)!="true") delay(50)}}
+            catch(e:TimeoutCancellationException) {
+                instrumentation.sendStatus(0,Bundle().apply {putString("annotation_browser_state",js("JSON.stringify({state:forestReadState(),status:document.getElementById('status').textContent,dialogs:[...document.querySelectorAll('dialog[open]')].map(d=>d.id)})"))})
+                throw e
+            }
+        }
         fun history()=SQLiteDatabase.openDatabase(context.getDatabasePath("reader-qualification-$id.db").path,null,SQLiteDatabase.OPEN_READONLY).use {db ->
             db.rawQuery("SELECT count(*) FROM rhizome_outbox",null).use {c->c.moveToFirst();c.getLong(0)}
         }

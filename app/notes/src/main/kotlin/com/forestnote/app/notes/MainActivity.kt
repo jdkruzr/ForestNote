@@ -92,6 +92,7 @@ open class MainActivity : Activity() {
     internal open fun writerAttachment(): WriterAttachment? = null
     internal open val requiresWriterAttachment: Boolean = false
     private var attachment: WriterAttachment? = null
+    private var returningFromSharedSettings=false
     private var writerForeground = false
     private var deferredAttachedNotebook: String? = null
     private fun attachedWriterMayPaint() = attachment == null ||
@@ -622,6 +623,7 @@ open class MainActivity : Activity() {
                 }
             }
         }
+        toolBar.onOpenSettings = {openSettings()}
         toolBar.onPopupBoundsChanged = { bounds ->
             if (backend.usesFirmwareInk()) {
                 backend.setOverlayExcludeScreenRect(bounds)
@@ -2137,7 +2139,10 @@ open class MainActivity : Activity() {
 
     /** Show the full-screen Settings overlay over the editor (B2). */
     private fun openSettings() {
-        if (attachment != null) return // Owner/restore/sync settings are not editor responsibilities.
+        attachment?.let {binding ->
+            binding.openSettings?.let {open -> returningFromSharedSettings=true;open()}
+            return
+        }
         if (settingsView.isShowing) return
         if (backend.usesFirmwareInk()) backend.setInputSuspended(true)
         val content = findViewById<android.view.ViewGroup>(android.R.id.content)
@@ -2501,7 +2506,8 @@ open class MainActivity : Activity() {
         super.onPause()
         writerForeground = false
         if (!::store.isInitialized) return
-        if (::store.isInitialized) store.pauseReaderWork()
+        // Settings borrows this foreground owner; device lock/background still pauses normally.
+        if (!returningFromSharedSettings) store.pauseReaderWork()
         // A successful restore closes the store before launching a clean replacement task. Android
         // then pauses this outgoing Activity as usual; skip every persistence trigger in that one
         // lifecycle pass, because its database executor no longer exists.
@@ -2626,6 +2632,7 @@ open class MainActivity : Activity() {
         // First launch without the permission: prompt once to move the datastore to /sdcard.
         maybePromptForAllFilesAccess()
         deferredAttachedNotebook?.let { deferredAttachedNotebook = null; goToNotebook(it) }
+        if(returningFromSharedSettings) {returningFromSharedSettings=false;refreshPageIndicator()}
     }
 
     /** True when the app holds MANAGE_EXTERNAL_STORAGE ("All files access"). Never throws. */

@@ -95,7 +95,7 @@ internal class ReaderRecognitionWorker(
             }
         }
     }
-    @Synchronized fun resume() {if(!closed) {active.value=true;wake.trySend(Unit)}}
+    @Synchronized fun resume() {if(!closed && !active.value) {active.value=true;wake.trySend(Unit)}}
     @Synchronized fun pause() {if(!closed) active.value=false}
     fun changed() {wake.trySend(Unit)}
     fun retry() {retry.trySend(Unit);wake.trySend(Unit)}

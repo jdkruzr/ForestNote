@@ -102,6 +102,11 @@ $('library').onclick = run(async () => {
     try {await rpc('library');} catch(error) {nativeLibraryOpen=false;reader.highlightMenuOpen=false;throw error;}
   } else {await shelves();popups.open($('shelves'), {anchor:$('library')});}
 });
+$('appSettings').onclick = run(async () => {
+  if(editing || opening || selectionUI.pending || reader.selection || annotationNavigation) return;
+  for(const dialog of document.querySelectorAll('dialog[open]')) popups.close(dialog);
+  await rpc('settings');
+});
 window.forestReadLibraryClosed = () => {
   nativeLibraryOpen=false;reader.highlightMenuOpen=!!document.querySelector('dialog[open]');void refreshReading();
 };
@@ -131,7 +136,7 @@ setupSharedAnnotationBrowser($, { rpc, current: () => current, popups, report,
   navigate: async id => {
     annotationNavigation = true;
     popups.close($('annotationBrowser')); reader.highlightMenuOpen = true;
-    for (const key of ['library', 'contents', 'reading', 'prev', 'next']) $(key).disabled = true;
+    for (const key of ['library', 'contents', 'reading', 'prev', 'next', 'appSettings']) $(key).disabled = true;
     try {
       const saved = await loadAnnotations(rpc, current.token);
       const a = saved.annotations.find(a => a.id === id);
@@ -146,7 +151,7 @@ setupSharedAnnotationBrowser($, { rpc, current: () => current, popups, report,
       report(reader.anchorState(a).status === 'unresolved' ? 'Passage Could Not Be Located · Stored Annotation Preserved' : 'Annotation · Tap The Highlight Or Writing To Edit');
     } finally {
       reader.highlightMenuOpen = false; annotationNavigation = false;
-      for (const key of ['library', 'contents', 'reading', 'prev', 'next']) $(key).disabled = false;
+      for (const key of ['library', 'contents', 'reading', 'prev', 'next', 'appSettings']) $(key).disabled = false;
       await rpc('refresh').catch(() => report('Refresh Unavailable'));
     }
   },
@@ -154,7 +159,7 @@ setupSharedAnnotationBrowser($, { rpc, current: () => current, popups, report,
 reader.addEventListener('edit', ({detail}) => { void beginEdit(detail).catch(error => report(error.message)); });
 function editChrome(active) {
   document.body.toggleAttribute('data-native-edit', active); $('editControls').hidden = !active;
-  for(const id of ['library','contents','reading','prev','next','import','apply']) $(id).disabled = active;
+  for(const id of ['library','contents','reading','prev','next','import','apply','appSettings']) $(id).disabled = active;
 }
 function visibleSlot(annotation) {
   const viewport = $('reader').getBoundingClientRect();
@@ -243,8 +248,15 @@ $('apply').onclick = run(async () => {
 $('refresh').onclick = run(async () => { popups.close($('settings')); await rpc('refresh'); });
 // Deliberate, read-only diagnostics for the isolated host's instrumentation.
 window.forestReadState = () => ({ book: reader.bookHash ?? null, text: reader.doc?.body?.textContent?.slice(0, 1000), index: reader.index, opening, editing:editing?.annotation.id ?? null, editAttached:editing?.attached ?? false, navigationLocked:reader.navigationLocked, prefs: reader.prefs, annotations: reader.annotations.map(a => ({ id: a.id, inputHash: a.inputHash, width: a.width, height: a.height, anchor: reader.anchorState(a).status })), inkTiles: reader.doc?.querySelectorAll('[data-shared-ink]').length ?? 0, frameScripts: reader.doc?.defaultView?.frameElement?.getAttribute('sandbox') });
-window.forestReadOpen = open;
 nativeLibrary=await rpc('libraryConfig')===true;
+const appSettings=await rpc('settingsConfig');
+if(appSettings?.enabled) {
+  $('appSettings').hidden=false;
+  $('appSettings').setAttribute('aria-label',appSettings.label);
+  $('appSettings').title=appSettings.label;
+}
 const resumeBook=await shelves();
 if(resumeBook) await open(resumeBook);
 else { if(nativeLibrary) await $('library').onclick();else popups.open($('shelves'), { anchor: $('library') });report('Shared Library Ready'); }
+// Do not advertise readiness while startup can still open a shelf over a requested book.
+window.forestReadOpen = open;

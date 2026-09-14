@@ -20,6 +20,7 @@ class ReaderHostQualificationActivity:ComponentActivity() {
     private var resumed=false
     private var launchingWriter=false
     private var leavingForSetup=false
+    private var openingSettings=false
     private var libraryView:SharedLibraryView?=null
     private var exports:NotebookExportSession?=null
     private var exportToken:String?=null
@@ -47,12 +48,13 @@ class ReaderHostQualificationActivity:ComponentActivity() {
                 val shared=ReaderHostQualificationSession.store==null || ReaderHostQualificationSession.sharedLibrary
                 val view=ReaderHostView(this@ReaderHostQualificationActivity,library,{pickBook()},
                     {backend?.refreshUiFrame(it);ReaderHostQualificationSession.refreshes++},{ReaderHostQualificationSession.rendered=it},backend,
-                    if(shared) ({showLibrary()}) else null)
+                    if(shared) ({showLibrary()}) else null,{openSettings()})
                 host=view;ReaderHostQualificationSession.view=view
                 content=android.widget.FrameLayout(this@ReaderHostQualificationActivity).apply {addView(view)}
                 setContentView(content)
                 if(resumed) view.resume()
                 if(resumed) owner.resumeReaderWork() else owner.pauseReaderWork()
+                if(intent.getBooleanExtra(RETURN_TO_SETUP,false)) returnToSetup()
             } catch(e:CancellationException) {throw e}
             catch(_:Exception) {setContentView(TextView(this@ReaderHostQualificationActivity).apply {text="Shared Reader Unavailable. Return To Library Setup."})}
         }
@@ -94,7 +96,7 @@ class ReaderHostQualificationActivity:ComponentActivity() {
                 }
             }) else null,onExportNotebooks={ids,format ->
                 if(exports?.start(ids,format)!=true) exportNotice(R.string.library_export_busy)
-            },onLibraryRecovery=if(ReaderHostQualificationSession.store==null) ({returnToSetup()}) else null).also {content.addView(it)}
+            },onOpenSettings={openSettings()}).also {content.addView(it)}
         }
         libraryView?.visibility=android.view.View.VISIBLE
         libraryView?.post {libraryView?.takeIf {it.visibility==android.view.View.VISIBLE}?.let {backend?.refreshUiFrame(it)}}
@@ -102,6 +104,16 @@ class ReaderHostQualificationActivity:ComponentActivity() {
     private fun closeLibrary() {
         libraryView?.remember();libraryView?.visibility=android.view.View.GONE;host?.libraryClosed()
     }
+    private fun openSettings() {
+        if(leavingForSetup || launchingWriter || host?.editing==true) return
+        openingSettings=true
+        startActivity(Intent(this,SettingsQualificationActivity::class.java))
+    }
+    override fun onNewIntent(intent:Intent) {
+        super.onNewIntent(intent);setIntent(intent)
+        if(intent.getBooleanExtra(RETURN_TO_SETUP,false)) returnToSetup()
+    }
+    companion object {const val RETURN_TO_SETUP="returnToLibrarySetup"}
     private fun returnToSetup() {
         if(leavingForSetup || launchingWriter || host?.editing==true) return
         leavingForSetup=true
@@ -141,7 +153,10 @@ class ReaderHostQualificationActivity:ComponentActivity() {
         }
     }
     override fun onResume() {
-        super.onResume();resumed=true
+        super.onResume()
+        if(leavingForSetup) return
+        resumed=true
+        openingSettings=false
         if(launchingWriter) libraryView?.notebookChanged()
         launchingWriter=false;store?.resumeReaderWork();host?.resume()
         exports?.state?.value?.let {presentExport(it)}
@@ -188,7 +203,7 @@ class ReaderHostQualificationActivity:ComponentActivity() {
         }) else null
         session.picked(token,output)
     }
-    override fun onPause() {resumed=false;libraryView?.remember();host?.pause();store?.pauseReaderWork();super.onPause()}
+    override fun onPause() {resumed=false;libraryView?.remember();host?.pause();if(!openingSettings) store?.pauseReaderWork();super.onPause()}
     @Deprecated("Qualification guards the active document edit")
     override fun onBackPressed() {
         if(libraryView?.visibility==android.view.View.VISIBLE) {closeLibrary();return}

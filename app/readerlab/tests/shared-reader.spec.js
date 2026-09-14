@@ -1,6 +1,24 @@
 import { test, expect } from '@playwright/test';
 import { zipSync, strToU8 } from 'fflate';
 
+test('shared reader publishes readiness only after delayed Settings capability and initial shelf setup', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.ForestRead={postMessage(data) {
+      const r=JSON.parse(data);
+      const reply=result=>queueMicrotask(()=>ForestRead.onmessage({data:JSON.stringify({id:r.id,result})}));
+      if(r.action==='settingsConfig') {window.releaseSettingsConfig=()=>reply({enabled:true,label:'Settings'});return;}
+      reply(r.action==='list'?{books:[],next:null}:false);
+    }};
+  });
+  await page.goto('http://127.0.0.1:4173/readerlab/shared-reader.html',{waitUntil:'commit'});
+  await page.waitForFunction(()=>typeof releaseSettingsConfig==='function');
+  expect(await page.evaluate(()=>typeof forestReadOpen)).toBe('undefined');
+  await page.evaluate(()=>releaseSettingsConfig());
+  await page.waitForFunction(()=>typeof forestReadOpen==='function');
+  await expect(page.locator('#shelves')).toBeVisible();
+  await expect(page.locator('#appSettings')).toBeVisible();
+});
+
 test('saved shared annotations compose into the book with native tiles and width-fit reflow', async ({ page }) => {
   const xml = {
     mimetype: 'application/epub+zip',
@@ -15,6 +33,7 @@ test('saved shared annotations compose into the book with native tiles and width
     window.toolState = { pen: 'FOUNTAIN', width: 35, erasing: false, widths: {} }; window.noteHeight = 6000;
     window.ForestRead = { postMessage(data) {
       const r = JSON.parse(data); calls.push(r); let result = null;
+      if (r.action === 'settingsConfig') result = { enabled: true, label: 'Settings' };
       if(r.action==='editFreeze' && window.failNextReadback) window.failAnnotations=true;
       if(r.action==='annotations' && window.failAnnotations) {
         window.failAnnotations=false;window.failNextReadback=false;
@@ -79,12 +98,20 @@ test('saved shared annotations compose into the book with native tiles and width
   await page.waitForFunction(() => forestReadState().inkTiles === 1 && forestReadState().prefs.fontSize === 28);
   state = await rendered(); expect(state.width).toBeLessThanOrEqual(360); expect(state.width / state.height).toBeCloseTo(state.naturalAspect, 2);
   const actions = await page.evaluate(() => calls.map(c => c.action));
-  expect(actions.every(a => ['libraryConfig', 'list', 'open', 'annotations', 'inkSlice', 'refresh', 'rendered', 'preferences'].includes(a))).toBe(true);
+  expect(actions.every(a => ['libraryConfig', 'settingsConfig', 'list', 'open', 'annotations', 'inkSlice', 'refresh', 'rendered', 'preferences'].includes(a))).toBe(true);
+  const beforeSettings=await page.evaluate(()=>forestReadState());
+  await page.locator('#appSettings').click();
+  expect(await page.evaluate(()=>calls.filter(c=>c.action==='settings').length)).toBe(1);
+  expect(await page.evaluate(()=>forestReadState())).toEqual(beforeSettings);
+  const gear=await page.locator('#appSettings').boundingBox();
+  const gearIcon=await page.locator('#appSettings svg').boundingBox();
+  expect(gear.x+gear.width).toBeLessThanOrEqual(360);
+  expect(Math.abs((gearIcon.x+gearIcon.width/2)-(gear.x+gear.width/2))).toBeLessThan(1);
   const beforeEdit=await page.locator('#reader').boundingBox();
   await page.evaluate(()=>document.querySelector('foliate-paginator').getContents()[0].doc.querySelector('[data-annotation]').click());
   await page.waitForFunction(()=>forestReadState().editAttached);
   expect(await page.locator('#reader').boundingBox()).toEqual(beforeEdit);
-  for(const id of ['prev','next','library','contents','reading']) await expect(page.locator(`#${id}`)).toBeDisabled();
+  for(const id of ['prev','next','library','contents','reading','appSettings']) await expect(page.locator(`#${id}`)).toBeDisabled();
   await expect(page.getByRole('button',{name:'Finish Writing',exact:true})).toBeVisible();
   const controls=await page.locator('#editControls').boundingBox();expect(controls.y+controls.height).toBeLessThanOrEqual(beforeEdit.y);
   const index=await page.evaluate(()=>forestReadState().index);

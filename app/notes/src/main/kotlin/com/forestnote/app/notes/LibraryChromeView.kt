@@ -61,9 +61,10 @@ internal class LibraryChromeView(
                 EinkButton(stringResource(R.string.library_density_choice, stringResource(densityLabel(densityMode))),
                     onDensity, Modifier.padding(end = gap).testTag("libraryDensity"), compact = compact,
                     description = stringResource(R.string.library_density))
-                EinkButton("", onSettings, Modifier.padding(end = gap).testTag("sharedSettings"),
+                val iconWidth=dimensionResource(R.dimen.shared_header_icon_width)
+                EinkButton("", onSettings, Modifier.padding(end = gap).width(iconWidth).testTag("sharedSettings"),
                     icon = R.drawable.ic_settings, description = stringResource(R.string.settings_title), compact = compact)
-                EinkButton("×", onClose, Modifier.widthIn(min = 42.dp).testTag("closeSharedLibrary"),
+                EinkButton("×", onClose, Modifier.width(iconWidth).testTag("closeSharedLibrary"),
                     description = stringResource(R.string.shared_library_close), compact = compact)
             }
             BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = gap)) {

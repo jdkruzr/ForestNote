@@ -2,6 +2,7 @@ package com.forestnote.app.notes
 
 /** A writer borrows an already-open, main-callback store. No path, credentials, or factory:
  * attaching a renderer must not implicitly select/enroll/open a different library. */
-internal data class WriterAttachment(val store: NotebookStore, val notebookId: String = "", val creation: PendingNotebookCreation? = null) {
+internal data class WriterAttachment(val store: NotebookStore, val notebookId: String = "", val creation: PendingNotebookCreation? = null,
+    val openSettings:(()->Unit)?=null) {
     init { require(notebookId.isNotBlank() xor (creation != null)) }
 }

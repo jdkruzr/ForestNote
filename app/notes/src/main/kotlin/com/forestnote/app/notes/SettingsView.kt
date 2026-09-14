@@ -92,6 +92,8 @@ class SettingsView {
         host.addView(view)
         root = view
 
+        LibrarySurfaceStyle.action(view.findViewById<Button>(R.id.btn_settings_back))
+
         view.findViewById<View>(R.id.btn_settings_back).setOnClickListener { onClose() }
         view.findViewById<View>(R.id.btn_backup_library).setOnClickListener { onBackup() }
         view.findViewById<View>(R.id.btn_restore_library).setOnClickListener { onRestore() }

@@ -58,11 +58,14 @@ class NotebookDefaultsQualificationTest {
             }};return result!!
         }
         suspend fun open():AlertDialog {
-            shelf();ComposeChromeTest.click("sharedSettings")
-            waitUntil {
-                instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(context.getString(R.string.settings_notebook_defaults))
-                    ?.firstOrNull {it.isClickable}?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)==true
-            }
+            // Qualify the legacy adapter over the same extracted draft editor. The new full-page
+            // navigation and saved draft recreation are exercised by SharedSettingsQualificationTest.
+            val library=shelf()
+            withContext(Dispatchers.Main) {scenario!!.onActivity {a ->
+                val opened=NotebookDefaultsDialog.show(a,store)
+                val field=SharedLibraryView::class.java.getDeclaredField("prompt").apply {isAccessible=true}
+                field.set(library,opened)
+            }}
             return dialog()
         }
         suspend fun loaded(d:AlertDialog) {waitUntil {withContext(Dispatchers.Main) {d.window!!.decorView.findViewWithTag<View>("defaultsTemplate:DOT")!=null}}}

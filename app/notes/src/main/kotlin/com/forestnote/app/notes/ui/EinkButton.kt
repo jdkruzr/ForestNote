@@ -106,7 +106,7 @@ internal fun EinkButton(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (icon != null) Image(painterResource(icon), null,
                 Modifier.size(dimensionResource(R.dimen.eink_ui_small_icon)), colorFilter = ColorFilter.tint(contentColor))
-            BasicText(label, style = TextStyle(color = contentColor, fontSize = fontSize,
+            if (label.isNotEmpty()) BasicText(label, style = TextStyle(color = contentColor, fontSize = fontSize,
                 fontWeight = FontWeight.Medium, textAlign = TextAlign.Center))
         }
     }

@@ -348,6 +348,11 @@ the headless result does not activate production integration.
    plus a render-cleanup barrier before returning to the established setup/recovery
    controller. Opening Settings does not configure sync or prepare recovery. Explicit
    enrollment UI, policy/history and whole-library backup remain continuation work.
+   **D67 Settings page:** [shared full-page navigation](2026-09-14-forestread-settings-page.md)
+   replaces the shared Settings dropdown/modal stack with one opaque page reachable
+   from Reader, Writer and Library. It reuses OG Settings' header/scrolling structure
+   and one extracted defaults form, preserves the foreground owner across internal
+   navigation, and gives Settings/Close equal widths with a centered gear.
    **Queued internationalization:** [shared UI resource extraction](2026-09-14-forestread-internationalization.md)
    records the user's request to replace inline chrome strings with a standard resource
    scheme, including the HTML reader boundary, plurals, accessibility and pseudo-locale

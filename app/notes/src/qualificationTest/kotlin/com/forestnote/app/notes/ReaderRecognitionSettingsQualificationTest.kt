@@ -50,26 +50,21 @@ class ReaderRecognitionSettingsQualificationTest {
                 instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(context.getString(R.string.recognition_settings_title))
                     ?.firstOrNull {it.isClickable}?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)==true
             }
-            var dialog:AlertDialog?=null
-            waitUntil {withContext(Dispatchers.Main) {scenario.onActivity {a ->
-                val shelf=ReaderHostQualificationActivity::class.java.getDeclaredField("libraryView").apply {isAccessible=true}.get(a)
-                dialog=SharedLibraryView::class.java.getDeclaredField("prompt").apply {isAccessible=true}.get(shelf) as? AlertDialog
-            };dialog?.isShowing==true}}
+            val page=SharedSettingsTestUi.page()
             withContext(Dispatchers.Main) {
-                val content=dialog!!.window!!.decorView
+                val content=page
                 assertEquals(context.getString(R.string.recognition_model_unavailable),content.findViewWithTag<TextView>("recognitionStatus").text)
                 assertTrue(content.findViewWithTag<View>("recognitionRetry").isEnabled)
                 content.findViewWithTag<View>("recognitionRetry").performClick()
             }
             waitUntil {withContext(Dispatchers.Main) {
-                dialog!!.window!!.decorView.findViewWithTag<TextView>("recognitionStatus").text==context.getString(R.string.recognition_up_to_date)
+                page.findViewWithTag<TextView>("recognitionStatus").text==context.getString(R.string.recognition_up_to_date)
             }}
             assertEquals(2,prepares.get());assertEquals(1,factories.get())
             withContext(Dispatchers.Main) {
-                assertFalse(dialog!!.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled)
-                dialog!!.getButton(AlertDialog.BUTTON_NEGATIVE).performClick()
+                assertFalse(page.findViewWithTag<View>("recognitionRetry").isEnabled)
             }
-            waitUntil {withContext(Dispatchers.Main) {!dialog!!.isShowing}}
+            SharedSettingsTestUi.close()
             assertEquals(ReaderRecognitionPhase.UP_TO_DATE,worker.status.value.phase)
             assertSame(worker,library.enableRecognition {error("Must not create another worker")})
             scenario.recreate()

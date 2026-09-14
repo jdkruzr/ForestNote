@@ -31,6 +31,7 @@ class ToolBar(
 ) {
     /** Fired when a settings PopupWindow opens (true) / dismisses (false). */
     var onPopupVisibilityChanged: ((Boolean) -> Unit)? = null
+    var onOpenSettings:(()->Unit)?=null
 
     /**
      * Screen-space bounds of the showing popup, or null once dismissed. Geometry is
@@ -418,6 +419,7 @@ class ToolBar(
         }
         actions.add(MenuAction(ctx.getString(R.string.writer_template)) {btnTemplate.performClick()})
         actions.add(MenuAction(ctx.getString(R.string.writer_recognized),ocrEnabled) {btnOcr.performClick()})
+        onOpenSettings?.let {actions.add(MenuAction(ctx.getString(R.string.settings_title),pick=it))}
         showActionMenu(btnMore,R.string.writer_more,actions)
     }
 

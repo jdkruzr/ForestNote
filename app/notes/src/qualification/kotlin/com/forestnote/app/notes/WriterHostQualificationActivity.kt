@@ -12,10 +12,11 @@ class WriterHostQualificationActivity : MainActivity() {
         intent.getStringExtra(CREATION)?.let { id ->
             val creation = store.readerLibraryForQualification(applicationContext.cacheDir).libraryUi.notebookCreation
                 ?.takeIf { it.id == id } ?: return null
-            return WriterAttachment(store, creation = creation)
+            return WriterAttachment(store, creation = creation,openSettings=::openSharedSettings)
         }
         val notebook = intent.getStringExtra(NOTEBOOK)?.takeIf { it.isNotBlank() } ?: return null
-        return WriterAttachment(store, notebook)
+        return WriterAttachment(store, notebook,openSettings=::openSharedSettings)
     }
+    private fun openSharedSettings() {startActivity(android.content.Intent(this,SettingsQualificationActivity::class.java))}
     companion object { const val NOTEBOOK = "notebook"; const val CREATION = "creation" }
 }

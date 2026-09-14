@@ -41,7 +41,7 @@ dialog{border-radius:var(--menu-corner-radius)}
 .settingsGrid label{display:flex;justify-content:space-between;gap:12px;min-height:42px;padding:3px 8px}
 .settingsGrid input,.settingsGrid select{flex-shrink:0;max-width:150px}
 .menuItems>button.actionButton{border:var(--menu-border-strong);border-radius:var(--menu-control-radius);text-align:center;font-weight:600;margin:8px 2px 2px;min-height:var(--menu-action-min-height)}
-#editing svg,#editControls svg{width:var(--menu-icon-size);height:var(--menu-icon-size);vertical-align:middle;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+#editing svg,#editControls svg,#appSettings svg{width:var(--menu-icon-size);height:var(--menu-icon-size);vertical-align:middle;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
 .iconButton .moreIcon,#editing .moreIcon,.annotationActions .moreIcon{display:block;width:var(--menu-icon-size);height:var(--menu-icon-size);fill:currentColor;stroke:none;pointer-events:none}
 #editing [aria-pressed=true],#editControls [aria-pressed=true]{background:var(--menu-ink);color:var(--menu-surface);border:var(--menu-border-strong)}
 body.editingInk .menuLabel{display:none}body.editingInk #menu{width:var(--menu-icon-target)}

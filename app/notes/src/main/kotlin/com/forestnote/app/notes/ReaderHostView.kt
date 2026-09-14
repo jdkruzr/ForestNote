@@ -24,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap
 internal class ReaderHostView(context:Context,private val library:ReaderLibraryAccess,
     private val importBook:()->Unit,private val refresh:(android.view.View)->Unit,
     private val rendered:(String)->Unit={},private val inkBackend:com.forestnote.core.ink.InkBackend?=null,
-    private val openLibrary:(()->Unit)?=null):FrameLayout(context) {
+    private val openLibrary:(()->Unit)?=null,private val openSettings:(()->Unit)?=null):FrameLayout(context) {
     val web=WebView(context)
     // TouchHelper is bound to a SurfaceView identity. Reuse that same capture surface when
     // moving between annotation slices; only its parent/rectangle and StrokeSink change.
@@ -94,6 +94,10 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
     private suspend fun handle(request:JSONObject):Any {
         return when(request.getString("action")) {
             "libraryConfig" -> openLibrary!=null
+            "settingsConfig" -> JSONObject().put("enabled",openSettings!=null).put("label",context.getString(R.string.settings_title))
+            "settings" -> {
+                check(!editing);withContext(Dispatchers.Main) {if(!disposed) openSettings?.invoke()};JSONObject.NULL
+            }
             "library" -> {
                 check(!editing);withContext(Dispatchers.Main) {if(!disposed) openLibrary?.invoke()};JSONObject.NULL
             }
