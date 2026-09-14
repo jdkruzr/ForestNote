@@ -9,6 +9,7 @@ import com.forestnote.core.ink.Stroke
 import com.forestnote.core.reader.*
 import io.rhizome.core.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import org.junit.Test
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
@@ -65,6 +66,29 @@ class MixedSyncStoreTest {
             return SyncOutcome.Ok(SyncResponse(acceptedThrough=request.ops.maxOfOrNull {it.opSeq} ?: 0,cursor=42,ops=incoming))
         }
     }
+    @Test fun openingStatusDoesNotEnrollActivateOrWriteAndTracksTheSameOwner()=runBlocking<Unit> {
+        val file=File(temp.root,"status.db");val s=open(file);val t=Transport()
+        try {
+            val identity=s.readerIdentity()
+            val credentials=backend.values.toMap()
+            val before=sql(file,"SELECT * FROM rhizome_outbox")
+            repeat(3) {
+                assertEquals(ForegroundSyncStatus.NotConfigured,s.sharedSyncControls.status.first())
+                assertFalse(s.sharedSyncControls.retry())
+            }
+            val coordinator=s.mixedSyncForQualification({_,_->t})
+            assertEquals(ForegroundSyncStatus.NotConfigured,s.sharedSyncControls.status.first())
+            val driver=coordinator.foregroundFor(server,"author")
+            assertSame(driver,s.foregroundSyncForQualification(server,"author"))
+            assertEquals(ForegroundSyncStatus.Paused,s.sharedSyncControls.status.first())
+            assertFalse(s.sharedSyncControls.retry())
+            assertTrue(t.requests.isEmpty());assertEquals(credentials,backend.values)
+            assertEquals(identity,s.readerIdentity());assertEquals(before,sql(file,"SELECT * FROM rhizome_outbox"))
+            assertEquals(listOf(listOf(null,"0")),sql(file,"SELECT site_id,cursor FROM rhizome_sync_state"))
+        } finally {s.shutdown()}
+        assertEquals(ForegroundSyncStatus.Closed,s.sharedSyncControls.status.first());assertFalse(s.sharedSyncControls.retry())
+    }
+
     @Test fun privateAndCapabilityRefusalsDoNotActivateOrTouchHistory()=runBlocking<Unit> {
         val file=File(temp.root,"gate.db");val s=open(file);val t=Transport()
         try {

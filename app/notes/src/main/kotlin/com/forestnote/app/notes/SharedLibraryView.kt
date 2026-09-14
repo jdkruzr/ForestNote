@@ -27,6 +27,7 @@ internal class SharedLibraryView(
     private val onOpenNotebook:((String)->Unit)?=null,
     private val onCreateNotebook:((String,String?)->Unit)?=null,
     private val onExportNotebooks:((Set<String>,ExportFormat)->Unit)?=null,
+    private val onLibraryRecovery:(()->Unit)?=null,
 ):LinearLayout(context) {
     private val state=books.libraryUi
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
@@ -277,10 +278,20 @@ internal class SharedLibraryView(
     }
     private fun openSettings() {
         dismissNotebookPrompt();hideKeyboard()
-        menu(chrome,listOf(
+        menu(chrome,buildList {
+            add(context.getString(R.string.shared_sync_title) to {openSyncSettings()})
+            onLibraryRecovery?.let {action -> add(context.getString(R.string.shared_sync_recovery) to action)}
+            addAll(listOf(
             context.getString(R.string.settings_notebook_defaults) to {openNotebookDefaults()},
             context.getString(R.string.recognition_settings_title) to {openRecognitionSettings()}
-        ),R.string.settings_title)
+            ))
+        },R.string.settings_title)
+    }
+    private fun openSyncSettings() {
+        dismissNotebookPrompt();popup?.dismiss();hideKeyboard()
+        var opened:AlertDialog?=null
+        opened=SharedSyncDialog.show(context,store.sharedSyncControls,onLibraryRecovery) {if(prompt===opened) prompt=null}
+        prompt=opened
     }
     private fun openNotebookDefaults() {
         dismissNotebookPrompt();popup?.dismiss();hideKeyboard()

@@ -217,6 +217,10 @@ class NotebookStore(
         readerForeground=false; readerRuntime?.pause();readerLibrary?.pauseRecognition()
         mixedSync?.foregroundChanged(false)
     }
+    /** Observation is inert, including when no mixed coordinator exists yet. */
+    private val sharedSyncObservation=SharedSyncAccess()
+    internal val sharedSyncControls:SharedSyncControls get()=sharedSyncObservation
+
     /** Wake only a driver already configured by the owner. Never discover creds or enroll here. */
     internal fun wakeExistingSharedSync() = synchronized(lifecycleLock) {
         if (!closing) mixedSync?.localChanged()
@@ -276,7 +280,7 @@ class NotebookStore(
             MixedSyncCoordinator({readerIdentity()},requireNotNull(secureCredentials).replicas,local,
                 {actor -> val request=currentCoroutineContext();onDb {request.ensureActive();it.prepareMixedSync(actor,hash)}},hash,
                 {val request=currentCoroutineContext();onDb {request.ensureActive();it.finishMixedJoin()}},
-                {withReader {it}},transport,limits,assetTransport,policy).also {mixedSync=it}
+                {withReader {it}},transport,limits,assetTransport,policy,sharedSyncObservation).also {mixedSync=it}
         }
     }
 
@@ -1156,6 +1160,7 @@ class NotebookStore(
         val runtime=synchronized(lifecycleLock) {
             if (closing) return closeResult.thenApply { it }
             closing=true
+            sharedSyncObservation.close()
             readerRuntime
         }
         CoroutineScope(Dispatchers.Default).launch {

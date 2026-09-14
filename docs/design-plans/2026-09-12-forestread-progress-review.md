@@ -343,6 +343,11 @@ the headless result does not activate production integration.
    applies the same treatment to Text without changing font/size persistence or page
    geometry. Continue the owner-managed sync/status/recovery boundary described in D61;
    neither this styling slice nor opening Settings activates mixed-library transport.
+   **D66 shared sync observation:** [status and recovery navigation](2026-09-14-forestread-shared-sync-status.md)
+   adds inert observation and explicit retry of the existing owner-configured driver,
+   plus a render-cleanup barrier before returning to the established setup/recovery
+   controller. Opening Settings does not configure sync or prepare recovery. Explicit
+   enrollment UI, policy/history and whole-library backup remain continuation work.
    **Queued internationalization:** [shared UI resource extraction](2026-09-14-forestread-internationalization.md)
    records the user's request to replace inline chrome strings with a standard resource
    scheme, including the HTML reader boundary, plurals, accessibility and pseudo-locale

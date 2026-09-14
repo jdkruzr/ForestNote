@@ -37,6 +37,7 @@ internal class MixedSyncCoordinator(
         HttpAssetTransport(target.server.trimEnd('/')+"/sync/assets/v1","Bearer $token")
     },
     private val policy: TransferPolicy = TransferPolicy(),
+    private val observation: SharedSyncAccess = SharedSyncAccess(),
 ) {
     private val lifetime=SupervisorJob()
     private val scope=CoroutineScope(lifetime+Dispatchers.Default)
@@ -52,7 +53,7 @@ internal class MixedSyncCoordinator(
         val target=server to account
         check(foregroundTarget==null || foregroundTarget==target) {"Foreground sync target changed; close the owner first"}
         return foregroundDriver ?: ForegroundSyncDriver({signals -> request(server,account,true,signals)}).also {
-            foregroundTarget=target;foregroundDriver=it
+            foregroundTarget=target;foregroundDriver=it;observation.attach(it)
         }
     }
     fun foregroundChanged(active:Boolean) {foregroundDriver?.foreground(active)}
@@ -123,6 +124,7 @@ internal class MixedSyncCoordinator(
 
     suspend fun close() {
         val foreground=synchronized(this) {closing=true;foregroundDriver}
+        observation.close()
         foreground?.close();lifetime.cancelAndJoin()
     }
 }

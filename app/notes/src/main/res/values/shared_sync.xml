@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shared_sync_title">Sync Status</string>
+    <string name="shared_sync_close">Close Sync Status</string>
+    <string name="shared_sync_description">Books and notebooks use the same library and sync owner. Opening this panel does not enable sync.</string>
+    <string name="shared_sync_unconfigured">Automatic Sync Not Configured</string>
+    <string name="shared_sync_unconfigured_detail">No automatic sync session is configured for this open library. Your changes remain saved on this device. This does not confirm whether the library has previously synced.</string>
+    <string name="shared_sync_paused">Sync Paused</string>
+    <string name="shared_sync_offline">Waiting For A Connection</string>
+    <string name="shared_sync_running">Sync In Progress</string>
+    <string name="shared_sync_waiting">Waiting For The Next Sync</string>
+    <string name="shared_sync_idle">Waiting For Changes</string>
+    <string name="shared_sync_blocked">Sync Needs Attention</string>
+    <string name="shared_sync_binding">Private Device Binding Required</string>
+    <string name="shared_sync_admission">Server Compatibility Or Authorization Needs Attention</string>
+    <string name="shared_sync_closed">Library Closed</string>
+    <string name="shared_sync_closed_detail">This library owner is no longer active. Return to Library Setup before continuing.</string>
+    <string name="shared_sync_opening_setup">Opening Library Setup…</string>
+    <string name="shared_sync_active_detail">Sync runs while this library is active and a connection is available. Waiting does not guarantee every file is present on every device.</string>
+    <string name="shared_sync_retry">Retry Now</string>
+    <string name="shared_sync_retry_detail">Retry uses the existing session. It does not enroll this device, change the server, or replace saved data.</string>
+    <string name="shared_sync_recovery">Library Setup And Recovery</string>
+    <string name="shared_sync_recovery_detail">Return to the library owner’s setup screen. Preparing recovery and switching libraries still require separate confirmation.</string>
+</resources>

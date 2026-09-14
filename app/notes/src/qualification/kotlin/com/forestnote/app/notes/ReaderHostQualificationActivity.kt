@@ -19,6 +19,7 @@ class ReaderHostQualificationActivity:ComponentActivity() {
     private var backend:InkBackend?=null
     private var resumed=false
     private var launchingWriter=false
+    private var leavingForSetup=false
     private var libraryView:SharedLibraryView?=null
     private var exports:NotebookExportSession?=null
     private var exportToken:String?=null
@@ -93,13 +94,34 @@ class ReaderHostQualificationActivity:ComponentActivity() {
                 }
             }) else null,onExportNotebooks={ids,format ->
                 if(exports?.start(ids,format)!=true) exportNotice(R.string.library_export_busy)
-            }).also {content.addView(it)}
+            },onLibraryRecovery=if(ReaderHostQualificationSession.store==null) ({returnToSetup()}) else null).also {content.addView(it)}
         }
         libraryView?.visibility=android.view.View.VISIBLE
         libraryView?.post {libraryView?.takeIf {it.visibility==android.view.View.VISIBLE}?.let {backend?.refreshUiFrame(it)}}
     }
     private fun closeLibrary() {
         libraryView?.remember();libraryView?.visibility=android.view.View.GONE;host?.libraryClosed()
+    }
+    private fun returnToSetup() {
+        if(leavingForSetup || launchingWriter || host?.editing==true) return
+        leavingForSetup=true
+        libraryView?.close();libraryView=null
+        host?.pause();store?.pauseReaderWork()
+        val cleanup=host?.dispose()
+        ReaderHostQualificationSession.cleanup=cleanup
+        host=null;ReaderHostQualificationSession.view=null
+        content.removeAllViews()
+        content.addView(TextView(this).apply {
+            setText(R.string.shared_sync_opening_setup);EinkUiStyle.text(this,R.dimen.eink_ui_body_text)
+            setBackgroundColor(android.graphics.Color.WHITE)
+        })
+        ui.launch {
+            // Finish render/cache users before setup can prepare or replace the owner's library.
+            cleanup?.join()
+            startActivity(Intent(this@ReaderHostQualificationActivity,SetupQualificationActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            finish()
+        }
     }
     @Deprecated("Qualification uses the platform picker callback")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {

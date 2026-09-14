@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 internal data class SyncWake(val metadata:Boolean=false,val references:Boolean=false,val retry:Boolean=false)
 internal sealed interface ForegroundSyncStatus {
+    data object NotConfigured:ForegroundSyncStatus
     data object Paused:ForegroundSyncStatus
     data object Offline:ForegroundSyncStatus
     data object Running:ForegroundSyncStatus
