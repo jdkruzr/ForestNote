@@ -17,14 +17,10 @@ class ReaderEditRepository internal constructor(private val s: ReaderStorage) {
         val snapshot=s.projections.snapshot(annotation)
         val projection=withContext(kotlinx.coroutines.Dispatchers.Default) {snapshot?.let(ReaderProjection::reduce)}
         return s.command(command,"reattach_anchor",listOf(annotation,book,session,expected.raw,hash,anchor.raw)) {
-            fun versions(rows:AnnotationRows?) = rows?.let {r -> listOf(
-                r.annotation.id to r.annotation.version,r.bookPresent,r.bookDeleted,r.annotationDeleted,
-                r.sessions.map {it.id to it.version},r.strokes.map {it.id to it.version},
-                r.claims.map {it.id to it.version},r.values.map {it.id to it.version})}
             if(snapshot?.annotation?.columns?.get("book_id")!=book || projection?.visible!=true ||
                 projection.status!=ProjectionStatus.READY || projection.inputHash!=hash ||
                 projection.anchor?.let {Json.parseToJsonElement(it.raw)}!=Json.parseToJsonElement(expected.raw) ||
-                versions(snapshot)!=versions(s.projections.snapshotOnWriter(annotation))) throw ReaderAnchorChangedException()
+                snapshot.versionStamp()!=s.projections.snapshotOnWriter(annotation).versionStamp()) throw ReaderAnchorChangedException()
             require(s.row("reader_edit_session",session)==null) {"Anchor session identity already used"}
             s.put("reader_edit_session",session,mapOf("annotation_id" to annotation,"owner_site" to s.actor,
                 "kind" to "interactive","state" to "finished"),immutable=true)

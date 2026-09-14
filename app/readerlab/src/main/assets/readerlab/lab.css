@@ -77,7 +77,7 @@ body.editingInk header{gap:var(--menu-gap)}
 .listTop .menuHeading{position:static;padding:0 var(--menu-heading-inset)}.listTop .menuHeading strong{flex:1}
 .listSearchRow{display:flex;flex-wrap:wrap;align-items:center;gap:var(--menu-gap);padding:5px 8px}
 #listSearch,#annotationSearch{width:100%;min-width:0;padding:4px 7px;min-height:var(--menu-control-min-height)}
-#listCount,#annotationCount,#annotationBook{font-size:var(--menu-font-meta)}
+#listCount,#annotationCount,#annotationBook,#recognitionPanel{font-size:var(--menu-font-meta)}
 #annotationBook{white-space:nowrap;text-overflow:ellipsis;overflow:hidden;max-width:100%}
 #annotationFilters{display:flex;gap:5px;padding:0 var(--menu-heading-inset) 6px}
 #annotationFilters select{flex:1;min-width:0;max-width:60%;font-size:12px;min-height:var(--menu-choice-min-height);padding:3px}

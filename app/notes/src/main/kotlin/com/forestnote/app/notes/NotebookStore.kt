@@ -124,7 +124,7 @@ class NotebookStore(
     private val writerDispatcher = persistenceExecutor.asCoroutineDispatcher()
     @Volatile private var readerRuntime: ReaderRuntime? = null
     @Volatile private var mixedSync: MixedSyncCoordinator? = null
-    private var readerLibrary:ReaderLibraryAccess?=null
+    @Volatile private var readerLibrary:ReaderLibraryAccess?=null
     private var readerCachePath:String?=null
     private val lifecycleLock = Any()
     private var readerForeground = false
@@ -148,7 +148,7 @@ class NotebookStore(
                         val attached=opened.installStorageExtension(ReaderSchema.registry,listOf(ReaderIncomingPolicy()),recoveryIdentity,
                             allowEnabledShared=true) { db,adapter,actor,libraryId ->
                             val storage = ReaderStorage.attachOnWriter(db,writerDispatcher,actor,adapter,
-                                onLocalCommit={opened.afterWriterCommit {mixedSync?.localChanged(references=true)}})
+                                onLocalCommit={opened.afterWriterCommit {mixedSync?.localChanged(references=true);readerLibrary?.recognitionChanged()}})
                             // Private ownership must be durable before the new DB identity commits.
                             // Failure rolls the database transaction back; an orphan private receipt
                             // after process loss never licenses a copied/existing library identity.
@@ -206,10 +206,10 @@ class NotebookStore(
         }
     }
     fun resumeReaderWork() = synchronized(lifecycleLock) {
-        if (!closing) { readerForeground=true; readerRuntime?.resume();mixedSync?.foregroundChanged(true) }
+        if (!closing) { readerForeground=true; readerRuntime?.resume();readerLibrary?.resumeRecognition();mixedSync?.foregroundChanged(true) }
     }
     fun pauseReaderWork() = synchronized(lifecycleLock) {
-        readerForeground=false; readerRuntime?.pause()
+        readerForeground=false; readerRuntime?.pause();readerLibrary?.pauseRecognition()
         mixedSync?.foregroundChanged(false)
     }
     internal suspend fun readerWorkStatus(): String = onDb { requireNotNull(readerRuntime).status.value }

@@ -2,9 +2,35 @@ package com.forestnote.core.reader
 
 import io.rhizome.core.isAssetDigest
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 
 /** Storage primitives only: no navigation, typography application or synthesized OCR author. */
 class ReaderStateRepository internal constructor(private val s: ReaderStorage) {
+    private class RecognitionChanged:Exception()
+
+    /** Background-derived results must never overwrite a newer input or create redundant
+     * authoring after another device already supplied a current ready recognition.
+     */
+    suspend fun publishRecognitionIfCurrent(command:String,annotation:String,inputHash:String,
+        engine:String,model:String?,language:String?,text:String):Boolean {
+        require(isAssetDigest(inputHash) && engine.isNotBlank())
+        val snapshot=s.projections.snapshot(annotation)
+        val projection=withContext(Dispatchers.Default) {snapshot?.let(ReaderProjection::reduce)}
+        if(projection?.visible!=true || projection.status!=ProjectionStatus.READY || projection.inputHash!=inputHash) return false
+        return try {
+            s.command(command,"recognition_current",listOf(annotation,inputHash,engine,model,language,text)) {
+                if(snapshot.versionStamp()!=s.projections.snapshotOnWriter(annotation).versionStamp() ||
+                    s.db.query("SELECT 1 AS present FROM reader_recognition WHERE annotation_id=? AND input_hash=? AND status='ready' LIMIT 1",
+                        listOf(annotation,inputHash)) {true}.isNotEmpty()) throw RecognitionChanged()
+                val producer="client:${s.actor}"
+                s.put("reader_recognition",compositeId(annotation,producer),mapOf("annotation_id" to annotation,
+                    "producer_id" to producer,"input_hash" to inputHash,"engine" to engine,"model" to model,
+                    "language" to language,"status" to "ready","text" to text))
+                annotation
+            }
+            true
+        } catch(_:RecognitionChanged) {false}
+    }
     suspend fun setPreferences(book: String?, value: VersionedJson) = withContext(s.dispatcher) {
         if (book != null) require(isAssetDigest(book))
         s.db.execute("INSERT INTO reader_local_preferences VALUES(?,?) ON CONFLICT(id) DO UPDATE SET value_json=excluded.value_json",

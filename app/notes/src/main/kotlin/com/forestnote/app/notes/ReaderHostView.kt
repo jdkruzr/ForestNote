@@ -8,6 +8,7 @@ import androidx.webkit.*
 import com.forestnote.core.reader.VersionedJson
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.json.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -80,9 +81,23 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
             }
             web.loadUrl(ReaderResourcePolicy.ENTRY)
         } else web.loadData("Shared Reader Requires A WebView With Secure Messaging","text/plain","utf-8")
+        library.recognitionStatus()?.let {status -> scope.launch {
+            status.collect {value -> withContext(Dispatchers.Main) {
+                if(!disposed && resumed) web.evaluateJavascript("window.forestReadRecognitionChanged?.(${recognitionJson(value)})",null)
+            }}
+        }}
     }
+    private fun recognitionJson(value:ReaderRecognitionStatus)=JSONObject().put("message",value.message)
+        .put("revision",value.revision).put("retryable",value.retryable)
     private suspend fun handle(request:JSONObject):Any {
         return when(request.getString("action")) {
+            "recognitionState" -> {
+                checkNotNull(books[request.getString("token")])
+                library.recognitionStatus()?.value?.let(::recognitionJson) ?: JSONObject.NULL
+            }
+            "recognitionRetry" -> {
+                checkNotNull(books[request.getString("token")]);library.retryRecognition();JSONObject.NULL
+            }
             "list" -> {
                 val page=library.list(request.optString("after").takeIf {it.isNotEmpty() && it!="null"})
                 JSONObject().put("editing",library.documentEdit?.queue?.session?.book ?: JSONObject.NULL)

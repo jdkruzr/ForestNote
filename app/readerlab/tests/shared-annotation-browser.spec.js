@@ -85,3 +85,37 @@ test('bad cursors are retryable and compact annotation controls fit a narrow scr
   await expect(page.locator('#closeAnnotationBrowser')).toBeInViewport();
   await expect(page.locator('#annotationSearchScope')).toBeInViewport();
 });
+
+test('recognition updates preserve search, ignore older status and never reflow the book', async ({ page }) => {
+  await ready(page); await browse(page);
+  await page.evaluate(() => forestReadRecognitionChanged({ message: 'Checking Model', revision: 0 }));
+  await page.locator('#annotationKind').selectOption('notes');
+  await page.locator('#annotationSearchScope').selectOption('handwriting');
+  await page.locator('#annotationSearch').fill('needle');
+  await expect(page.locator('.annotationText')).toHaveText('needle');
+  const bounds = await page.locator('#reader').boundingBox();
+  const before = await page.evaluate(() => ({ search: calls.filter(c => c.action === 'browseAnnotations').length,
+    render: calls.filter(c => ['refresh', 'annotations', 'editBegin'].includes(c.action)).length }));
+  await page.evaluate(() => forestReadRecognitionChanged({ message: 'Up To Date', revision: 1 }));
+  await expect.poll(() => page.evaluate(() => calls.filter(c => c.action === 'browseAnnotations').length)).toBe(before.search+1);
+  expect(await page.evaluate(() => calls.filter(c => c.action === 'browseAnnotations').at(-1))).toMatchObject({ query: 'needle', kind: 'notes', scope: 'handwriting' });
+  await page.evaluate(() => forestReadRecognitionChanged({ message: 'Stale Reply', revision: 0 }));
+  await expect(page.locator('#recognitionStatus')).toHaveText('Up To Date');
+  expect(await page.locator('#reader').boundingBox()).toEqual(bounds);
+  expect(await page.evaluate(() => calls.filter(c => ['refresh', 'annotations', 'editBegin'].includes(c.action)).length)).toBe(before.render);
+  await page.evaluate(() => forestReadRecognitionChanged({ message: 'Model Unavailable', revision: 1, retryable: true }));
+  await page.locator('#retryRecognition').click();
+  expect(await page.evaluate(() => calls.filter(c => c.action === 'recognitionRetry'))).toHaveLength(1);
+  await page.locator('#closeAnnotationBrowser').click();
+  const searches = await page.evaluate(() => calls.filter(c => c.action === 'browseAnnotations').length);
+  await page.evaluate(() => forestReadRecognitionChanged({ message: 'Up To Date', revision: 2 }));
+  await page.waitForTimeout(350);
+  expect(await page.evaluate(() => calls.filter(c => c.action === 'browseAnnotations').length)).toBe(searches);
+});
+
+test('a first status arriving after recognition refreshes a potentially older open search', async ({ page }) => {
+  await ready(page); await browse(page);
+  const before = await page.evaluate(() => calls.filter(c => c.action === 'browseAnnotations').length);
+  await page.evaluate(() => forestReadRecognitionChanged({ message: 'Up To Date', revision: 1 }));
+  await expect.poll(() => page.evaluate(() => calls.filter(c => c.action === 'browseAnnotations').length)).toBe(before+1);
+});

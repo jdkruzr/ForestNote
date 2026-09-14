@@ -25,6 +25,8 @@ class ReaderHostQualificationActivity:Activity() {
                 store=owner
                 val cache=withContext(Dispatchers.IO) {applicationContext.cacheDir}
                 val library=owner.readerLibraryForQualification(cache)
+                // Explicit instrumentation owners inject their own deterministic recognition engine.
+                if(ReaderHostQualificationSession.store==null) library.enableRecognition {AndroidReaderRecognitionEngine()}
                 backend=BackendDetector.detect(this@ReaderHostQualificationActivity).backend.also {it.setInputSuspended(true)}
                 val view=ReaderHostView(this@ReaderHostQualificationActivity,library,{
                     startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {

@@ -24,6 +24,107 @@ import java.util.zip.ZipOutputStream
 import kotlin.test.*
 
 class ReaderLibraryAccessTest {
+    private class RecognitionEngine(
+        val ready:suspend ()->Unit={},val action:suspend (List<StoredRecord>)->String={"Recognized café"},
+    ):ReaderRecognitionEngine {
+        override val language="en-US";override val model="fixture"
+        override suspend fun prepare(downloading:()->Unit)=ready()
+        override suspend fun recognize(ink:List<StoredRecord>)=action(ink)
+    }
+    @Test fun recognitionBackfillsAllBooksAndRestartDoesNotReauthorCurrentResults()=runBlocking<Unit> {
+        val file=File(temp.root,"recognition.db");val s=open(file)
+        var worker:ReaderRecognitionWorker?=null
+        try {
+            val a=s.readerLibraryForQualification(temp.root);val books=(1..2).map {a.importBook("book-$it",{bytes("Book $it").inputStream()}).book.id}
+            for((i,book) in books.withIndex()) {
+                val edit=a.createAnnotation("create-$i","note-$i",book,"edit-$i",anchor,10000,1000)
+                a.appendAnnotationStroke("ink-$i",edit,ink("ink-$i"));a.finishAnnotation("finish-$i",edit)
+            }
+            val inkBefore=sql(file,"SELECT id,hex(points),hex(point_dynamics) FROM reader_stroke ORDER BY id")
+            val geometry=books.indices.map {a.annotation("note-$it")!!.let {p->p.inputHash to p.effectiveHeight}}
+            val calls=java.util.concurrent.atomic.AtomicInteger()
+            val engine=RecognitionEngine(action={calls.incrementAndGet();"Recognized café"})
+            worker=ReaderRecognitionWorker({s.withReader {it}},engine,{false})
+            worker.resume();withTimeout(5000) {while(worker.status.value.revision<2) delay(10)}
+            worker.close();assertEquals(2,calls.get())
+            assertEquals(geometry,books.indices.map {a.annotation("note-$it")!!.let {p->p.inputHash to p.effectiveHeight}})
+            assertEquals(inkBefore,sql(file,"SELECT id,hex(points),hex(point_dynamics) FROM reader_stroke ORDER BY id"))
+            for(book in books) assertEquals(1,a.browseAnnotations(book,query="cafe").getValue("entries").jsonArray.size)
+            val history=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            worker=ReaderRecognitionWorker({s.withReader {it}},engine,{false});worker.resume()
+            withTimeout(5000) {while(worker.status.value.message!="Handwriting Recognition Up To Date") delay(10)}
+            assertEquals(2,calls.get());assertEquals(history,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+        } finally {worker?.close();s.shutdown()}
+    }
+
+    @Test fun recognitionPublicationRejectsChangedDeletedAndAlreadyRecognizedInk()=runBlocking<Unit> {
+        val file=File(temp.root,"recognition-fence.db");val s=open(file)
+        try {
+            val a=s.readerLibraryForQualification(temp.root);val book=a.importBook("book",{bytes().inputStream()}).book.id
+            val edit=a.createAnnotation("note","note",book,"edit",anchor,10000,1000)
+            a.appendAnnotationStroke("first",edit,ink("first"));val old=checkNotNull(a.annotation("note")!!.inputHash)
+            a.appendAnnotationStroke("second",edit,ink("second"));val fresh=checkNotNull(a.annotation("note")!!.inputHash)
+            val before=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            suspend fun publish(command:String,hash:String,text:String)=s.withReader {it.state.publishRecognitionIfCurrent(command,"note",hash,"fixture",null,"en",text)}
+            assertFalse(publish("stale",old,"Wrong"));assertEquals(before,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            assertTrue(publish("ready",fresh,"")) // Empty ready results are real results, not perpetual jobs.
+            val ready=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            assertFalse(publish("redundant",fresh,"Must Not Replace"));assertTrue(publish("ready",fresh,""))
+            assertEquals(ready,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            s.withReader {it.setDeleted("deleted",LifecycleTarget.ANNOTATION,"note",true)}
+            assertFalse(publish("after-delete",fresh,"Wrong"))
+            assertEquals(listOf(listOf("")),sql(file,"SELECT text FROM reader_recognition"))
+        } finally {s.shutdown()}
+    }
+
+    @Test fun recognitionModelRetryWritingPauseAndOwnerCloseAreOrdered()=runBlocking<Unit> {
+        val file=File(temp.root,"recognition-lifetime.db");val s=open(file)
+        var worker:ReaderRecognitionWorker?=null
+        try {
+            val a=s.readerLibraryForQualification(temp.root);val book=a.importBook("book",{bytes().inputStream()}).book.id
+            val edit=a.createAnnotation("note","note",book,"edit",anchor,10000,1000)
+            a.appendAnnotationStroke("ink",edit,ink("ink"))
+            val writing=java.util.concurrent.atomic.AtomicBoolean(true)
+            val model=java.util.concurrent.atomic.AtomicBoolean(false)
+            val prepares=java.util.concurrent.atomic.AtomicInteger();val inFlight=java.util.concurrent.atomic.AtomicInteger();val attempts=java.util.concurrent.atomic.AtomicInteger()
+            val started=CompletableDeferred<Unit>()
+            val engine=RecognitionEngine(ready={prepares.incrementAndGet();check(model.get())},action={
+                assertEquals(1,inFlight.incrementAndGet())
+                try {if(attempts.incrementAndGet()==1) {started.complete(Unit);awaitCancellation()};"Ready"}
+                finally {inFlight.decrementAndGet()}
+            })
+            worker=ReaderRecognitionWorker({s.withReader {it}},engine,{writing.get()});worker.resume()
+            delay(80);assertEquals(0,prepares.get());writing.set(false)
+            withTimeout(5000) {while(!worker.status.value.retryable) delay(10)}
+            delay(80);assertEquals(1,prepares.get());model.set(true);worker.retry();withTimeout(5000) {started.await()}
+            worker.pause();withTimeout(5000) {while(inFlight.get()!=0) delay(10)}
+            assertTrue(sql(file,"SELECT * FROM reader_recognition").isEmpty())
+            worker.resume();withTimeout(5000) {while(worker.status.value.revision!=1L) delay(10)}
+            worker.close();assertEquals(0,inFlight.get());assertEquals("Closed",worker.status.value.message)
+        } finally {worker?.close();s.shutdown()}
+    }
+
+    @Test fun recognitionDiscardsInFlightOldInkAndOwnerRetainsOnlyOneWorker()=runBlocking<Unit> {
+        val file=File(temp.root,"recognition-race.db");val s=open(file)
+        try {
+            val a=s.readerLibraryForQualification(temp.root);val book=a.importBook("book",{bytes().inputStream()}).book.id
+            val edit=a.createAnnotation("note","note",book,"edit",anchor,10000,1000)
+            a.appendAnnotationStroke("first",edit,ink("first"))
+            val started=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>()
+            val calls=java.util.concurrent.atomic.AtomicInteger()
+            val worker=a.enableRecognition {RecognitionEngine(action={
+                if(calls.incrementAndGet()==1) {started.complete(Unit);release.await();"Stale"} else "Fresh"
+            })}
+            assertSame(worker,a.enableRecognition {error("Duplicate worker")})
+            s.resumeReaderWork();withTimeout(5000) {started.await()}
+            a.appendAnnotationStroke("second",edit,ink("second"));release.complete(Unit)
+            withTimeout(5000) {while(worker.status.value.revision<1) delay(10)}
+            assertEquals(listOf(listOf("Fresh")),sql(file,"SELECT text FROM reader_recognition"))
+            assertEquals(1L,worker.status.value.revision)
+            s.shutdown();assertEquals("Closed",worker.status.value.message)
+        } finally {s.shutdown()}
+    }
+
     @Test fun annotationBrowserSearchIsOfflineLiteralUnicodeAndReadOnly()=runBlocking<Unit> {
         val file=File(temp.root,"browse.db");val s=open(file)
         try {

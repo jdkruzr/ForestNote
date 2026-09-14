@@ -3,6 +3,12 @@ package com.forestnote.core.reader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** Provenance-only comparison for rechecking an off-writer projection inside a command. */
+internal fun AnnotationRows?.versionStamp():List<Any?>? = this?.let {r -> listOf(
+    r.annotation.id to r.annotation.version,r.bookPresent,r.bookDeleted,r.annotationDeleted,
+    r.sessions.map {it.id to it.version},r.strokes.map {it.id to it.version},
+    r.claims.map {it.id to it.version},r.values.map {it.id to it.version})}
+
 /** Snapshot one annotation atomically on the host writer; reduce/hash off that writer. */
 class ReaderProjectionRepository internal constructor(private val s: ReaderStorage) {
     /** IDs only, including hidden/pending annotations. Never load a book's ink to list it. */

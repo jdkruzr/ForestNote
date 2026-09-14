@@ -258,8 +258,12 @@ the headless result does not activate production integration.
    **D45 annotation browser:** [offline, shared-owner browsing/search](2026-09-13-forestread-shared-annotation-browser.md)
    adds a current-book entry inside Books, compact recognized-text/passage cards, type/scope
    filters and bounded cursor scans. Only current fingerprint-matched recognition participates;
-   result navigation re-reads saved metadata and never begins an edit. Automatic native
-   recognition/model backfill and integrated Viwoods acceptance remain to be attached.
+   result navigation re-reads saved metadata and never begins an edit.
+   **D46 recognition:** [native owner-retained backfill](2026-09-13-forestread-native-recognition.md)
+   attaches English model preparation and bounded all-book sweeps, current-input transactional
+   publication, lifecycle cancellation and live browser updates without reflow. Local regression
+   coverage is implemented; installation, real-model backfill and ink-preservation verification
+   on the Go are still pending device availability. Integrated Viwoods acceptance remains open.
    The [library navigation outline](2026-09-13-forestread-library-navigation.md) records a proposed
    top-level Notebooks/Books switch; its final UI is not approved or implemented yet.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,

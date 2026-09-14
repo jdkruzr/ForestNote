@@ -69,6 +69,16 @@ internal class ReaderLibraryAccess(
     @Volatile var cacheCleanupFailures:Int=0
         private set
     @Volatile private var closing=false
+    @Volatile private var recognition:ReaderRecognitionWorker?=null
+    @Synchronized fun enableRecognition(factory:()->ReaderRecognitionEngine):ReaderRecognitionWorker {
+        check(!closing)
+        return recognition ?: ReaderRecognitionWorker(storage,factory(),{documentEdit!=null}).also {recognition=it}
+    }
+    fun resumeRecognition() {recognition?.resume()}
+    fun pauseRecognition() {recognition?.pause()}
+    fun recognitionChanged() {recognition?.changed()}
+    fun recognitionStatus()=recognition?.status
+    fun retryRecognition() {recognition?.retry()}
 
     private suspend fun <T> request(block:suspend (ReaderStorage)->T):T {
         if(closing) throw CancellationException("Reader library owner is closing")
@@ -301,7 +311,8 @@ internal class ReaderLibraryAccess(
         }
     }
     suspend fun close() {
-        closing=true;lifetime.cancelAndJoin()
+        val worker=synchronized(this) {closing=true;recognition}
+        worker?.close();lifetime.cancelAndJoin()
         editGate.withLock {editor?.close()}
         withContext(NonCancellable+Dispatchers.IO) {
             cacheGate.withLock {

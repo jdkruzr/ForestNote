@@ -1,7 +1,17 @@
 // A transient view of the native owner's read-only search pages. No browser database.
 export function setupSharedAnnotationBrowser($, { rpc, current, blocked, popups, navigate, report }) {
   const dialog = $('annotationBrowser');
-  let generation = 0, timer, state;
+  let generation = 0, timer, state, recognitionRevision = -1;
+  function recognition(value) {
+    if (!value || typeof value.message !== 'string' || !Number.isSafeInteger(value.revision) || value.revision < recognitionRevision) return;
+    $('recognitionPanel').hidden = false; $('recognitionStatus').textContent = value.message;
+    $('retryRecognition').hidden = !value.retryable;
+    if ((recognitionRevision >= 0 || value.revision > 0) && recognitionRevision !== value.revision && dialog.open) {
+      generation++; clearTimeout(timer); timer = setTimeout(search, 250);
+    }
+    recognitionRevision = value.revision;
+  }
+  window.forestReadRecognitionChanged = recognition;
   const text = (tag, value, cls) => {
     const e = document.createElement(tag); e.textContent = value;
     if (cls) e.className = cls;
@@ -86,6 +96,14 @@ export function setupSharedAnnotationBrowser($, { rpc, current, blocked, popups,
     $('annotationBook').textContent = current().title;
     $('annotationSearch').value = ''; $('annotationKind').value = 'all'; $('annotationSearchScope').value = 'all';
     popups.open(dialog, { anchor: $('library'), trigger: $('browseAnnotations') }); search();
+    const token = current().token;
+    void rpc('recognitionState', { token }).then(value => { if(current()?.token === token) recognition(value); }).catch(() => {});
+  };
+  $('retryRecognition').onclick = async () => {
+    $('retryRecognition').disabled = true;
+    try { await rpc('recognitionRetry', { token: current().token }); }
+    catch(error) { report(error.message); }
+    finally { $('retryRecognition').disabled = false; }
   };
   $('annotationSearch').oninput = () => { generation++; clearTimeout(timer); timer = setTimeout(search, 180); };
   for (const id of ['annotationKind', 'annotationSearchScope']) $(id).onchange = search;

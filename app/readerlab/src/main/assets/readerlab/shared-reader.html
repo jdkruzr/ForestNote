@@ -31,6 +31,7 @@
   <div class="listTop"><div class="menuHeading"><strong>Annotations</strong><button id="closeAnnotationBrowser" class="iconButton" aria-label="Close Annotations" autofocus>×</button></div>
     <div class="listSearchRow"><span id="annotationBook" dir="auto"></span><input id="annotationSearch" type="search" maxlength="256" aria-label="Search Annotations" placeholder="Search Annotations…" autocomplete="off"><span id="annotationCount" aria-live="polite"></span></div>
     <div id="annotationFilters"><select id="annotationKind" aria-label="Annotation Type"><option value="all">All Annotations</option><option value="notes">Handwritten Notes</option><option value="highlights">Highlights</option></select><select id="annotationSearchScope" aria-label="Search In"><option value="all">All Text</option><option value="handwriting">Handwriting</option><option value="passage">Passages</option></select></div>
+    <div id="recognitionPanel" class="listSearchRow" hidden><span id="recognitionStatus" aria-live="polite"></span><button id="retryRecognition" hidden>Retry Handwriting Recognition</button></div>
   </div><div id="annotationRows"></div><button id="moreAnnotations" class="listMore" hidden>Show More</button>
 </dialog>
 <dialog id="chapters" class="anchoredPopup popupWide" aria-label="Contents"><div class="menuHeading"><strong>Contents</strong><button id="closeChapters" class="iconButton" aria-label="Close Contents">×</button></div><div id="chapterRows" class="penuBody"></div></dialog>
