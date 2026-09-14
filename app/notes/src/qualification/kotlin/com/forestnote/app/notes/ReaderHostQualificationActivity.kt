@@ -69,6 +69,16 @@ class ReaderHostQualificationActivity:Activity() {
                     startActivity(Intent(this,WriterHostQualificationActivity::class.java)
                         .putExtra(WriterHostQualificationActivity.NOTEBOOK,notebook))
                 }
+            }) else null,onCreateNotebook=if(ReaderHostQualificationSession.store==null || ReaderHostQualificationSession.writer) ({name,folder ->
+                if(!launchingWriter && host?.editing!=true) {
+                    val creation=PendingNotebookCreation {geometry,done ->
+                        owner.createNotebook(name,folder,geometry.longAxis,geometry.width,geometry.height,done)
+                    }
+                    library.libraryUi.notebookCreation=creation
+                    launchingWriter=true;libraryView?.remember();backend?.setInputSuspended(true)
+                    startActivity(Intent(this,WriterHostQualificationActivity::class.java)
+                        .putExtra(WriterHostQualificationActivity.CREATION,creation.id))
+                }
             }) else null).also {content.addView(it)}
         }
         libraryView?.visibility=android.view.View.VISIBLE

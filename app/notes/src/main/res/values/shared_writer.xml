@@ -1,4 +1,9 @@
 <resources>
+    <string name="shared_writer_new_notebook">New Notebook</string>
+    <string name="shared_writer_notebook_name">Notebook Name</string>
+    <string name="shared_writer_create">Create</string>
+    <string name="shared_writer_untitled">Untitled</string>
+    <string name="shared_writer_create_failed">Notebook Could Not Be Created</string>
     <string name="shared_writer_unavailable">Shared Writer Unavailable. Return To Library Setup.</string>
-    <string name="shared_writer_management_pending">Notebook Management In The Shared Library Comes Next.</string>
+    <string name="shared_writer_management_pending">Additional Notebook Controls Come Next.</string>
 </resources>

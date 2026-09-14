@@ -275,6 +275,11 @@ the headless result does not activate production integration.
    opens from the shared shelf, saves normal writer ink to the same database/outbox, and returns
    without shutting down the owner or starting legacy sync. Notebook-management callback extraction,
    writer Penu adoption and full shared navigation polish remain next; production stays gated.
+   The user confirmed physical fountain input. **D49/D50:**
+   [starter creator-canvas capture](2026-09-13-forestread-creator-canvas.md) eliminates the fallback
+   margin on newly created starters without resizing old ink; [shared notebook creation](2026-09-13-forestread-shared-notebook-creation.md)
+   reuses the naming dialog and measures the actual writer before creating, with owner-retained
+   recreation protection. Folder/property/bulk callbacks, writer Penu and Viwoods remain ahead.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

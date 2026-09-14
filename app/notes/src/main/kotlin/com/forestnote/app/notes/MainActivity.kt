@@ -517,8 +517,21 @@ open class MainActivity : Activity() {
             store.listNotebooks { notebooks, activeId ->
                 val startOnLibrary = settings.startView == StartView.LIBRARY
                 if (attachment != null) {
-                    val target = checkNotNull(attachment).notebookId
-                    if (notebooks.any { it.id == target }) goToNotebook(target) else finish()
+                    val binding = checkNotNull(attachment)
+                    val creation = binding.creation
+                    if (creation != null) {
+                        val token = ++editorLoadToken
+                        withCreatorCanvas(token) { geometry -> syncScope.launch {
+                            try {
+                                val target = creation.open(geometry)
+                                if (token == editorLoadToken && !isFinishing && !isDestroyed) goToNotebook(target)
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                            catch (_: Exception) {
+                                Toast.makeText(this@MainActivity,R.string.shared_writer_create_failed,Toast.LENGTH_LONG).show()
+                                finish()
+                            }
+                        } }
+                    } else if (notebooks.any { it.id == binding.notebookId }) goToNotebook(binding.notebookId) else finish()
                 } else if (deepLinkTarget != null) {
                     // Cold launch from a forestnote:// link: open the linked page directly,
                     // overriding the start-view preference.
@@ -2296,22 +2309,7 @@ open class MainActivity : Activity() {
         // loadSettings posts its callback to the main thread; we build the dialog there.
         // Cost is one DB read per New Notebook tap, which is negligible.
         store.loadSettings { s ->
-            val input = EditText(this).apply { hint = "Notebook name" }
-            if (s.prefillNotebookNameTimestamp) {
-                // YYYYMMDD_HHMMSS + trailing space — matches the convention parsed by
-                // NotebookNameParser, so the resulting names round-trip cleanly. UTC vs
-                // local: local time matches what the user just looked at on their watch
-                // (this is a human-facing convenience, not a sort key).
-                val ts = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
-                    .format(java.util.Date())
-                input.setText("$ts ")
-                input.setSelection(input.text.length)
-            }
-            AlertDialog.Builder(this)
-                .setTitle("New Notebook")
-                .setView(input)
-                .setPositiveButton("Create") { _, _ ->
-                    val name = input.text.toString().trim().ifEmpty { "Untitled" }
+            NewNotebookDialog.show(this, s) { name ->
                     // Created from the Library (or editor): open the new notebook, hiding the
                     // Library if it's showing (no-op when invoked from the editor). Aspect is captured
                     // LATER (create-dialog keyboard corrupts a measurement now) — create with NULL
@@ -2326,9 +2324,7 @@ open class MainActivity : Activity() {
                         pendingAspectCaptureId = if (creatorGeometry == null) newId else null
                         goToNotebook(newId)
                     }
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
+            }
         }
     }
 

@@ -27,10 +27,21 @@ class WriterHostQualificationTest {
         ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).singleOrNull()
     }
     private suspend fun awaitActivity(type:Class<out Activity>):Activity=withTimeout(15000) {
+        instrumentation.sendStatus(0,android.os.Bundle().apply {putString("writer_wait","Activity ${type.simpleName}")})
         while(true) {val a=resumed();if(a!=null && type.isInstance(a)) return@withTimeout a;delay(30)}
         error("unreachable")
     }
-    private suspend fun waitUntil(test:suspend ()->Boolean)=withTimeout(15000) {while(!test()) delay(30)}
+    private suspend fun waitUntil(label:String="Condition",test:suspend ()->Boolean)=withTimeout(15000) {
+        instrumentation.sendStatus(0,android.os.Bundle().apply {putString("writer_wait",label)})
+        while(!test()) delay(30)
+    }
+    private suspend fun clickLabel(label:String) {
+        waitUntil("Click $label") {
+            instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(label)
+                ?.firstOrNull {it.isClickable && it.text?.toString()?.equals(label,ignoreCase=true)==true}
+                ?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)==true
+        }
+    }
     private fun field(a:Activity,name:String)=MainActivity::class.java.getDeclaredField(name).apply {isAccessible=true}.get(a)
     private suspend fun writerReady():Activity {
         val a=awaitActivity(WriterHostQualificationActivity::class.java)
@@ -39,6 +50,9 @@ class WriterHostQualificationTest {
     }
 
     @Test fun sharedShelfOpensRealWriterWithoutAnotherOwnerAndSavesAcrossRecreation()=runBlocking<Unit> {
+        instrumentation.uiAutomation.serviceInfo=instrumentation.uiAutomation.serviceInfo.apply {
+            flags=flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+        }
         val id="writer-host-${UUID.randomUUID()}"
         val main=Handler(Looper.getMainLooper())
         val opens=java.util.concurrent.atomic.AtomicInteger()
@@ -109,6 +123,46 @@ class WriterHostQualificationTest {
             withContext(Dispatchers.Main) {@Suppress("DEPRECATION") writer.onBackPressed()}
             awaitActivity(ReaderHostQualificationActivity::class.java)
             assertEquals(identity,store.readerIdentity());assertEquals(before,readerRows())
+            // The native Create draft authors nothing until explicitly accepted.
+            val existingIds=store.syncNotebookIds()
+            withContext(Dispatchers.Main) {reader.findViewById<View>(android.R.id.content).findViewWithTag<View>("newSharedNotebook").performClick()}
+            clickLabel(context.getString(android.R.string.cancel))
+            waitUntil("Cancel Dismissed") {withContext(Dispatchers.Main) {reader.hasWindowFocus()}}
+            assertEquals(existingIds,store.syncNotebookIds())
+            withContext(Dispatchers.Main) {reader.findViewById<View>(android.R.id.content).findViewWithTag<View>("newSharedNotebook").performClick()}
+            // Focus the real name field too: the writer must measure after the keyboard leaves.
+            fun findInput(node:android.view.accessibility.AccessibilityNodeInfo?):android.view.accessibility.AccessibilityNodeInfo? {
+                if(node==null) return null
+                if(node.className?.toString()=="android.widget.EditText") return node
+                for(i in 0 until node.childCount) findInput(node.getChild(i))?.let {return it}
+                return null
+            }
+            waitUntil("Name Input") {
+                findInput(instrumentation.uiAutomation.rootInActiveWindow)?.let {input ->
+                        input.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+                        input.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,android.os.Bundle().apply {
+                            putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"Canvas Fit Check")
+                        })
+                    }==true
+            }
+            delay(300)
+            clickLabel(context.getString(R.string.shared_writer_create))
+            writer=writerReady()
+            val createdId=store.syncCurrentNotebookId()
+            assertFalse(existingIds.contains(createdId))
+            val created=CompletableDeferred<EditorPageSnapshot>();store.loadEditorPage {created.complete(it)}
+            val newNotebook=withTimeout(5000) {created.await()}.notebook!!
+            assertEquals("Canvas Fit Check",newNotebook.name)
+            assertEquals(creatorGeometry.width,newNotebook.pageWidth);assertEquals(creatorGeometry.height,newNotebook.pageHeight)
+            assertEquals(existingIds.size+1,store.syncNotebookIds().size)
+            withContext(Dispatchers.Main) {writer.recreate()}
+            waitUntil {resumed()?.let {it is WriterHostQualificationActivity && it!==writer}==true}
+            writer=writerReady()
+            assertEquals(createdId,store.syncCurrentNotebookId())
+            assertEquals(existingIds.size+1,store.syncNotebookIds().size)
+            assertEquals(before,readerRows());assertEquals(1,opens.get())
+            withContext(Dispatchers.Main) {writer.findViewById<View>(R.id.btn_notebooks).performClick()}
+            awaitActivity(ReaderHostQualificationActivity::class.java)
         } finally {
             withContext(Dispatchers.Main) {
                 ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<WriterHostQualificationActivity>().forEach {it.finish()}

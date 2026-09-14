@@ -7,6 +7,7 @@ import java.util.Locale
 
 /** UI state only. Switching shelves never changes the active notebook or reader position. */
 internal class SharedLibraryState {
+    var notebookCreation: PendingNotebookCreation? = null
     enum class Shelf { NOTEBOOKS, BOOKS }
     var shelf=Shelf.BOOKS
     var query=""

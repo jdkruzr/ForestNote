@@ -6,11 +6,16 @@ class WriterHostQualificationActivity : MainActivity() {
     internal override val requiresWriterAttachment = true
     internal override fun writerAttachment(): WriterAttachment? {
         check(packageName == "com.forestnote.qualification")
-        val notebook = intent.getStringExtra(NOTEBOOK)?.takeIf { it.isNotBlank() } ?: return null
         val store = ReaderHostQualificationSession.store
             ?: runCatching { SetupQualificationSession.host?.readerStore() }.getOrNull()
             ?: return null
+        intent.getStringExtra(CREATION)?.let { id ->
+            val creation = store.readerLibraryForQualification(applicationContext.cacheDir).libraryUi.notebookCreation
+                ?.takeIf { it.id == id } ?: return null
+            return WriterAttachment(store, creation = creation)
+        }
+        val notebook = intent.getStringExtra(NOTEBOOK)?.takeIf { it.isNotBlank() } ?: return null
         return WriterAttachment(store, notebook)
     }
-    companion object { const val NOTEBOOK = "notebook" }
+    companion object { const val NOTEBOOK = "notebook"; const val CREATION = "creation" }
 }
