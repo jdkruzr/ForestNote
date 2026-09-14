@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     id("forestnote.android.application")
     id("forestnote.android.compose")
@@ -55,6 +57,12 @@ android {
 }
 
 val libs = extensions.getByType<VersionCatalogsExtension>().named("libs")
+
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    val covers = providers.environmentVariable("FORESTREAD_COVER_BOOKS").orElse("")
+    inputs.property("coverBooks", covers)
+    inputs.files(covers.map { it.split(File.pathSeparator).filter(String::isNotBlank) })
+}
 
 val prepareSharedReaderAssets by tasks.registering(Sync::class) {
     dependsOn(":app:readerlab:prepareReaderAssets")

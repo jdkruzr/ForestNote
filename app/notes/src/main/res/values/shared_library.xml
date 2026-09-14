@@ -1,4 +1,8 @@
 <resources>
+    <string name="library_book_view_heading">Book View · This Device</string>
+    <string name="library_book_list">List</string>
+    <string name="library_book_tiles">Tiles</string>
+    <string name="library_book_view">Book View</string>
     <string name="library_density">Density</string>
     <string name="library_density_heading">UI Density · This Device</string>
     <string name="library_density_auto">Auto</string>

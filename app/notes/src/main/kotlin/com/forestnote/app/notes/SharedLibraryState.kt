@@ -13,6 +13,7 @@ internal class SharedLibraryState {
     var query=""
     var trash=false
     var bookScroll=0
+    var bookItem=0
     var bookRows=0
     var notebooks=LibraryBrowsePosition()
 }

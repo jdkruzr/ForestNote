@@ -41,6 +41,7 @@ internal class ReaderLibraryAccess(
     private val lifetime=SupervisorJob()
     private val scope=CoroutineScope(lifetime+Dispatchers.Default)
     private val cacheGate=Mutex()
+    private val coverGate=Mutex()
     private val editGate=Mutex()
     @Volatile private var editor:ReaderEditQueue?=null
     @Volatile var documentEdit:ReaderDocumentEdit?=null
@@ -97,6 +98,22 @@ internal class ReaderLibraryAccess(
         checkNotNull(s.books.open(book.id)) // Publication and sync wake already committed together.
     }
     suspend fun imports(after:String="",limit:Int=32):List<ReaderImportStatus> = request {it.imports.list(after,limit)}
+    /** Independent of the two active-renderer leases; one streamed cover source at a time. */
+    suspend fun coverBytes(book:String):ByteArray? = request {s -> coverGate.withLock {
+        require(isAssetDigest(book))
+        val snapshot=checkNotNull(s.books.open(book))
+        check(snapshot.contentReady) {"Cover source is not available locally"}
+        withContext(Dispatchers.IO) {
+            val file=File.createTempFile("forestread-cover-", ".source", cacheDirectory)
+            try {
+                val digest=MessageDigest.getInstance("SHA-256")
+                DigestOutputStream(file.outputStream(),digest).use {s.books.streamOriginal(book,it)}
+                check(file.length()==snapshot.book.byteLength && digest.digest().joinToString("") {"%02x".format(it)}==book)
+                currentCoroutineContext().ensureActive()
+                ReaderCoverExtractor.extract(file,snapshot.book.mediaType)
+            } finally {file.delete()}
+        }
+    }}
     suspend fun abortImport(command:String) = request {it.imports.abort(command)}
     suspend fun rename(command:String,book:String,title:String) = request {it.books.rename(command,book,title)}
     suspend fun setDeleted(command:String,book:String,deleted:Boolean) = request {s ->

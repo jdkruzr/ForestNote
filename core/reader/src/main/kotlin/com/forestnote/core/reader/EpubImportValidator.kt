@@ -151,7 +151,7 @@ internal object EpubImportValidator {
         }
     }
 
-    private fun resolve(base: String, href: String): String {
+    internal fun resolve(base: String, href: String): String {
         val uri = URI(href)
         require(!uri.isAbsolute && uri.rawAuthority == null && uri.rawQuery == null) { "External package path" }
         val path = uri.path ?: error("Missing package path")
@@ -167,7 +167,7 @@ internal object EpubImportValidator {
         return parts.joinToString("/")
     }
 
-    private fun read(zip: ZipFile, path: String, limit: Int): ByteArray {
+    internal fun read(zip: ZipFile, path: String, limit: Int): ByteArray {
         val entry = zip.getEntry(path) ?: error("Missing EPUB resource: $path")
         require(!entry.isDirectory && entry.size in 0..limit.toLong()) { "EPUB XML/metadata size budget exceeded" }
         val bytes = zip.getInputStream(entry).use { input ->
@@ -218,7 +218,7 @@ internal object EpubImportValidator {
         reader.parse(InputSource(ByteArrayInputStream(bytes)))
     }
 
-    private fun preflight(file: File) = RandomAccessFile(file, "r").use { input ->
+    internal fun preflight(file: File) = RandomAccessFile(file, "r").use { input ->
         require(input.length() >= 22) { "Truncated EPUB ZIP" }
         val size = minOf(input.length(), 65557).toInt()
         val tail = ByteArray(size)

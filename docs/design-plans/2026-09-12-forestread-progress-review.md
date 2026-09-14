@@ -298,6 +298,9 @@ the headless result does not activate production integration.
    introduces device-local sizing and compact rows on narrow hosts. The same document
    queues an independent Books List / Tiles switch with cached cover thumbnails next;
    cover extraction and that switch are not implemented in D55.
+   **D56 covers:** [Books List / Tiles and derived cover cache](2026-09-14-forestread-book-covers.md)
+   implements that follow-up with recycled tiles, background EPUB/MOBI cover extraction,
+   proportional thumbnails and a separate local view preference. No sync contract change.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

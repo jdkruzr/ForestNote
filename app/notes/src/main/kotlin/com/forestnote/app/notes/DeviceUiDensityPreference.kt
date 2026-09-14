@@ -27,6 +27,21 @@ internal class DeviceUiDensityPreference(context: Context) {
         }
     }
 
+    fun loadBookView(deliver: (BookShelfView) -> Unit) {
+        worker.execute {
+            val value = runCatching {app.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString("book-view", null)}.getOrNull()
+            val mode = BookShelfView.entries.firstOrNull {it.name == value} ?: BookShelfView.LIST
+            main.post {deliver(mode)}
+        }
+    }
+
+    fun saveBookView(mode: BookShelfView) {
+        worker.execute {
+            runCatching {check(app.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString("book-view", mode.name).commit())}
+                .onFailure {Log.w("BookShelfView", "Could not save book view", it)}
+        }
+    }
+
     companion object {
         private const val FILE = "device-ui"
         private const val KEY = "density"

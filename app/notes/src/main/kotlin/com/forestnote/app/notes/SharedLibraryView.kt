@@ -9,6 +9,8 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.widget.*
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.forestnote.core.reader.BookSnapshot
 import com.forestnote.core.format.FolderCard
 import com.forestnote.core.format.NotebookCard
@@ -31,16 +33,21 @@ internal class SharedLibraryView(
     private var densityMode=UiDensity.AUTO
     private var densityChoiceVersion=0
     private var compact=false
+    private var bookView=BookShelfView.LIST
+    private var bookViewChoiceVersion=0
     private val notebooks=LibraryView()
     private val notebookHost=FrameLayout(context)
     private val bookHost=LinearLayout(context).apply {orientation=VERTICAL}
-    private val rows=LinearLayout(context).apply {orientation=VERTICAL}
-    private val scroll=ScrollView(context).apply {addView(rows)}
+    private val covers=BookCoverLoader(context.cacheDir,books::coverBytes)
+    private val bookLayout=GridLayoutManager(context,1)
+    private val bookAdapter=BookShelfAdapter({bookRow(it)},{view -> view.findViewById<ImageView>(R.id.book_cover_thumbnail)?.let(covers::cancel)})
+    private val rows=RecyclerView(context).apply {layoutManager=bookLayout;adapter=bookAdapter;itemAnimator=null}
     private val status=TextView(context)
     private val query=EditText(context)
     private val chrome=LibraryChromeView(context,state.shelf,onCreateNotebook!=null && notebookCallbacks==null,
         {select(it)},onClose,{newNotebook()},{newFolder()},{densityMenu()})
     private val filter=button("") {}
+    private val viewChoice=button("") {bookViewMenu()}.apply {tag="bookView";contentDescription=context.getString(R.string.library_book_view)}
     private val importButton=button(context.getString(R.string.shared_library_import)) {onImport()}
     private val more=button(context.getString(R.string.shared_library_more)) {load(false)}
     private var fetch:Job?=null
@@ -75,14 +82,18 @@ internal class SharedLibraryView(
             context.getString(R.string.shared_library_books) to {state.trash=false;load(true)},
             context.getString(R.string.shared_library_trash) to {state.trash=true;load(true)}),R.string.library_filter_menu_heading)}
         actions.addView(filter)
+        updateBookViewLabel()
         bookHost.addView(HorizontalScrollView(context).apply {isHorizontalScrollBarEnabled=false;addView(actions)},LayoutParams(-1,-2))
         query.setSingleLine(true);EinkUiStyle.text(query,R.dimen.eink_ui_label_text);query.hint=context.getString(R.string.shared_library_search)
         query.filters=arrayOf(android.text.InputFilter.LengthFilter(256));query.tag="bookQuery";query.setText(state.query)
         LibrarySurfaceStyle.input(query,search=true)
         query.minimumHeight=controlHeight
-        bookHost.addView(query,LayoutParams(-1,-2).apply {topMargin=gap;bottomMargin=gap/2})
+        val searchRow=LinearLayout(context).apply {gravity=Gravity.CENTER_VERTICAL}
+        searchRow.addView(query,LayoutParams(0,-2,1f).apply {topMargin=gap;bottomMargin=gap/2;marginEnd=gap})
+        searchRow.addView(viewChoice,LayoutParams(-2,-2))
+        bookHost.addView(searchRow,LayoutParams(-1,-2))
         EinkUiStyle.text(status,R.dimen.eink_ui_meta_text);status.setPadding(pixels(8),pixels(3),pixels(8),pixels(3));status.tag="bookStatus"
-        bookHost.addView(status);bookHost.addView(scroll,LayoutParams(-1,0,1f))
+        bookHost.addView(status);bookHost.addView(rows,LayoutParams(-1,0,1f))
         // Pagination belongs with the results, not beside Import and filtering.
         bookHost.addView(more,LayoutParams(-1,-2).apply {topMargin=gap/2;bottomMargin=gap/2})
         query.addTextChangedListener(object:TextWatcher {
@@ -95,10 +106,35 @@ internal class SharedLibraryView(
         densityPreference.load {mode ->
             if(scope.isActive && version==densityChoiceVersion) {densityMode=mode;applyDensity()}
         }
+        val viewVersion=bookViewChoiceVersion
+        densityPreference.loadBookView {mode ->
+            if(scope.isActive && viewVersion==bookViewChoiceVersion) {bookView=mode;updateBookViewLabel();relayoutBooks()}
+        }
     }
     override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int) {
         super.onSizeChanged(w,h,oldw,oldh)
-        if(w!=oldw) post {if(scope.isActive) applyDensity()}
+        if(w!=oldw) post {if(scope.isActive) {applyDensity();relayoutBooks()}}
+    }
+
+    private fun bookViewMenu() {
+        fun label(mode:BookShelfView)=context.getString(if(mode==BookShelfView.LIST) R.string.library_book_list else R.string.library_book_tiles)
+        menu(viewChoice,BookShelfView.entries.map {mode -> label(mode) to {
+            bookViewChoiceVersion++;bookView=mode;densityPreference.saveBookView(mode);updateBookViewLabel();relayoutBooks()
+        }},R.string.library_book_view_heading,label(bookView))
+    }
+    private fun updateBookViewLabel() {
+        viewChoice.text=context.getString(R.string.shared_library_filter,context.getString(
+            if(bookView==BookShelfView.LIST) R.string.library_book_list else R.string.library_book_tiles))
+    }
+    private fun relayoutBooks() {
+        if(width<=0) return
+        val first=bookLayout.findFirstVisibleItemPosition().coerceAtLeast(0)
+        val offset=bookLayout.findViewByPosition(first)?.top ?: 0
+        val columns=if(bookView==BookShelfView.LIST) 1 else LibraryDensityPolicy.resolve(densityMode,
+            (width-2*inset)/dp,resources.configuration.fontScale).columns
+        bookLayout.spanCount=columns
+        bookAdapter.restyle()
+        bookLayout.scrollToPositionWithOffset(first,offset)
     }
 
     private fun densityMenu() {
@@ -118,22 +154,13 @@ internal class SharedLibraryView(
         bookHost.setPadding(inset,0,inset,0)
         LibrarySurfaceStyle.action(importButton,primary=true,icon=R.drawable.ic_add,compact=compact)
         LibrarySurfaceStyle.action(filter,compact=compact);LibrarySurfaceStyle.action(more,compact=compact)
+        LibrarySurfaceStyle.action(viewChoice,compact=compact)
         LibrarySurfaceStyle.input(query,search=true,compact=compact)
         EinkUiStyle.text(status,if(compact) R.dimen.library_compact_meta_text else R.dimen.eink_ui_meta_text)
         (query.layoutParams as LayoutParams).apply {topMargin=gap;bottomMargin=gap/2}
         query.requestLayout()
         // Resize already-loaded presentation only: no book query, renderer reload or sync.
-        for(i in 0 until rows.childCount) styleBookRow(rows.getChildAt(i) as LinearLayout)
-    }
-
-    private fun styleBookRow(row:LinearLayout) {
-        row.setPadding(inset,inset,inset,inset)
-        val details=row.getChildAt(1) as LinearLayout
-        val title=details.getChildAt(0) as Button
-        LibrarySurfaceStyle.action(title,outlined=false,compact=compact)
-        title.gravity=Gravity.START or Gravity.CENTER_VERTICAL;title.setPadding(0,0,0,0)
-        EinkUiStyle.text(details.getChildAt(1) as TextView,if(compact) R.dimen.library_compact_meta_text else R.dimen.eink_ui_meta_text)
-        LibrarySurfaceStyle.action(row.getChildAt(2) as Button,compact=compact)
+        relayoutBooks()
     }
     private fun select(shelf:SharedLibraryState.Shelf) {
         if(state.shelf!=shelf) dismissNotebookPrompt()
@@ -141,6 +168,7 @@ internal class SharedLibraryView(
         if(shelf==SharedLibraryState.Shelf.NOTEBOOKS) hideKeyboard()
         notebookHost.visibility=if(shelf==SharedLibraryState.Shelf.NOTEBOOKS) VISIBLE else GONE
         bookHost.visibility=if(shelf==SharedLibraryState.Shelf.BOOKS) VISIBLE else GONE
+        if(shelf==SharedLibraryState.Shelf.NOTEBOOKS) covers.pause() else bookAdapter.restyle()
         chrome.shelf=shelf
         if(shelf==SharedLibraryState.Shelf.BOOKS) restoreBookPosition(generation)
         if(shelf==SharedLibraryState.Shelf.NOTEBOOKS && !notebooks.isShowing) {
@@ -216,7 +244,7 @@ internal class SharedLibraryView(
     }
     private fun load(reset:Boolean,delayMillis:Long=0,preserveScroll:Boolean=false) {
         fetch?.cancel();val epoch=++generation
-        if(reset) {after=null;scanned=0;shown=0;rows.removeAllViews();if(!preserveScroll) {restoreScroll=false;state.bookScroll=0;scroll.scrollTo(0,0)}}
+        if(reset) {after=null;scanned=0;shown=0;bookAdapter.clear();if(!preserveScroll) {restoreScroll=false;state.bookScroll=0;state.bookItem=0;bookLayout.scrollToPositionWithOffset(0,0)}}
         filter.text=context.getString(R.string.shared_library_filter,context.getString(if(state.trash) R.string.shared_library_trash else R.string.shared_library_books))
         more.visibility=GONE;more.setText(R.string.shared_library_more);status.setText(R.string.shared_library_loading)
         val search=state.query;val trash=state.trash
@@ -229,7 +257,7 @@ internal class SharedLibraryView(
                     ensureActive();if(epoch!=generation) return@launch
                     scanned+=page.books.size
                     val matches=withContext(Dispatchers.Default) {page.books.filter {SharedBookPresentation.matches(it,search,trash)}}
-                    for(book in matches) {append(book);added++;shown++}
+                    for(book in matches) {bookAdapter.append(book);added++;shown++}
                     after=page.next
                     if(scanned>=4096 || shown>=256) {
                         status.text=context.getString(R.string.shared_library_limit,shown);more.visibility=GONE;return@launch
@@ -244,33 +272,49 @@ internal class SharedLibraryView(
         }
     }
     private fun restoreBookPosition(epoch:Long) {
-        if(restoreScroll && shown>0 && bookHost.visibility==VISIBLE) scroll.post {
-            if(epoch==generation && restoreScroll && bookHost.visibility==VISIBLE) {scroll.scrollTo(0,state.bookScroll);restoreScroll=false}
+        if(restoreScroll && shown>0 && bookHost.visibility==VISIBLE) rows.post {
+            if(epoch==generation && restoreScroll && bookHost.visibility==VISIBLE) {bookLayout.scrollToPositionWithOffset(state.bookItem,state.bookScroll);restoreScroll=false}
         }
     }
-    private fun append(book:BookSnapshot) {
-        val row=LinearLayout(context).apply {gravity=Gravity.CENTER_VERTICAL;background=frame();setPadding(inset,inset,inset,inset)}
-        row.addView(ImageView(context).apply {
+    private fun bookRow(book:BookSnapshot):View {
+        val tiles=bookView==BookShelfView.TILES
+        val row=LinearLayout(context).apply {
+            orientation=if(tiles) VERTICAL else HORIZONTAL
+            gravity=Gravity.CENTER_VERTICAL;background=frame();setPadding(inset,inset,inset,inset)
+            layoutParams=FrameLayout.LayoutParams(-1,-2).apply {
+                setMargins(if(tiles) gap/2 else 0,gap/2,if(tiles) gap/2 else 0,gap/2)
+            }
+        }
+        val artwork=ImageView(context).apply {
             setImageResource(R.drawable.ic_notebook);setColorFilter(Color.BLACK)
             importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        },LayoutParams(pixels(28),pixels(36)).apply {marginEnd=inset})
+            scaleType=ImageView.ScaleType.CENTER_INSIDE
+        }
+        if(tiles) {
+            artwork.id=R.id.book_cover_thumbnail
+            artwork.clearColorFilter()
+            artwork.isEnabled=book.contentReady && !book.deleted
+            artwork.setOnClickListener {if(artwork.isEnabled) onOpenBook(book.book.id,false)}
+            row.addView(artwork,LayoutParams(-1,pixels(if(compact) 128 else 200)))
+            if(book.contentReady) covers.load(book.book.id,artwork)
+        } else row.addView(artwork,LayoutParams(pixels(28),pixels(36)).apply {marginEnd=inset})
         val open=button(SharedBookPresentation.title(book)) {onOpenBook(book.book.id,false)}.apply {
             gravity=Gravity.START or Gravity.CENTER_VERTICAL;maxLines=3;ellipsize=TextUtils.TruncateAt.END
             isEnabled=book.contentReady && !book.deleted;tag="book:${book.book.id}"
-            LibrarySurfaceStyle.action(this,outlined=false)
+            LibrarySurfaceStyle.action(this,outlined=false,compact=compact)
             gravity=Gravity.START or Gravity.CENTER_VERTICAL
             setPadding(0,0,0,0)
             contentDescription=SharedBookPresentation.title(book)
         }
         val details=LinearLayout(context).apply {orientation=VERTICAL}
-        details.addView(open,LayoutParams(-1,-2))
-        details.addView(TextView(context).apply {
+        val metadata=TextView(context).apply {
             val format=if(book.book.mediaType=="application/epub+zip") "EPUB" else "MOBI"
             text=context.getString(if(book.deleted) R.string.shared_library_trashed else if(book.contentReady) R.string.shared_library_available else R.string.shared_library_pending,
                 format,android.text.format.Formatter.formatShortFileSize(context,book.book.byteLength))
-            EinkUiStyle.text(this,R.dimen.eink_ui_meta_text);setPadding(0,0,0,pixels(3))
-        })
-        row.addView(details,LayoutParams(0,-2,1f))
+            EinkUiStyle.text(this,if(compact) R.dimen.library_compact_meta_text else R.dimen.eink_ui_meta_text);setPadding(0,0,0,pixels(3))
+        }
+        if(tiles) row.addView(open,LayoutParams(-1,-2))
+        else {details.addView(open,LayoutParams(-1,-2));details.addView(metadata);row.addView(details,LayoutParams(0,-2,1f))}
         val options=button("⋯") {}.apply {contentDescription=context.getString(R.string.library_options_for,SharedBookPresentation.title(book));tag="actions:${book.book.id}"}
         options.setOnClickListener {
             val choices=mutableListOf<Pair<String,()->Unit>>()
@@ -287,9 +331,12 @@ internal class SharedLibraryView(
             }
             menu(options,choices)
         }
-        row.addView(options,LayoutParams(pixels(44),controlHeight).apply {marginStart=gap})
-        styleBookRow(row)
-        rows.addView(row,LayoutParams(-1,-2).apply {topMargin=gap/2;bottomMargin=gap/2})
+        if(tiles) {
+            val footer=LinearLayout(context).apply {gravity=Gravity.CENTER_VERTICAL}
+            footer.addView(metadata,LayoutParams(0,-2,1f));footer.addView(options,LayoutParams(pixels(44),controlHeight).apply {marginStart=gap})
+            row.addView(footer,LayoutParams(-1,-2))
+        } else row.addView(options,LayoutParams(pixels(44),controlHeight).apply {marginStart=gap})
+        return row
     }
     private fun menu(anchor:View,choices:List<Pair<String,()->Unit>>,heading:Int=R.string.library_book_menu_heading,selectedLabel:String?=null) {
         popup?.dismiss();val content=LinearLayout(context).apply {orientation=VERTICAL;setPadding(gap,gap,gap,gap)}
@@ -326,7 +373,10 @@ internal class SharedLibraryView(
     fun remember() {
         dismissNotebookPrompt()
         hideKeyboard()
-        if(!restoreScroll) {state.bookScroll=scroll.scrollY;state.bookRows=shown}
+        if(!restoreScroll) {
+            state.bookItem=bookLayout.findFirstVisibleItemPosition().coerceAtLeast(0)
+            state.bookScroll=bookLayout.findViewByPosition(state.bookItem)?.top ?: 0;state.bookRows=shown
+        }
         if(notebooks.isShowing) state.notebooks=notebooks.browsePosition()
         popup?.dismiss();prompt?.dismiss()
     }
@@ -335,5 +385,5 @@ internal class SharedLibraryView(
         (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
             ?.hideSoftInputFromWindow(windowToken,0)
     }
-    fun close() {remember();generation++;scope.cancel();notebooks.hide()}
+    fun close() {remember();generation++;scope.cancel();covers.close();notebooks.hide()}
 }
