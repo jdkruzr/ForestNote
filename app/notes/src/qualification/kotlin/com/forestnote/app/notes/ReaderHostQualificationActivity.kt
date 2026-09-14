@@ -1,6 +1,8 @@
 package com.forestnote.app.notes
 
 import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.content.Intent
 import android.os.Bundle
 import android.widget.TextView
@@ -18,9 +20,16 @@ class ReaderHostQualificationActivity:ComponentActivity() {
     private var resumed=false
     private var launchingWriter=false
     private var libraryView:SharedLibraryView?=null
+    private var exports:NotebookExportSession?=null
+    private var exportToken:String?=null
+    private var exportResult:ActivityResult?=null
+    private val exportPicker=registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {result ->
+        exportResult=result;deliverExportResult()
+    }
     private lateinit var content:android.widget.FrameLayout
     override fun onCreate(state:Bundle?) {
         super.onCreate(state);check(packageName=="com.forestnote.qualification")
+        exportToken=state?.getString("notebookExportToken")
         ui.launch {
             try {
                 ReaderHostQualificationSession.cleanup?.join()
@@ -28,6 +37,9 @@ class ReaderHostQualificationActivity:ComponentActivity() {
                 store=owner
                 val cache=withContext(Dispatchers.IO) {applicationContext.cacheDir}
                 val library=owner.readerLibraryForQualification(cache)
+                exports=owner.notebookExports(cache)
+                deliverExportResult()
+                ui.launch {exports!!.state.collect {if(resumed) presentExport(it)}}
                 // Explicit instrumentation owners inject their own deterministic recognition engine.
                 if(ReaderHostQualificationSession.store==null) library.enableRecognition {AndroidReaderRecognitionEngine(applicationContext)}
                 backend=BackendDetector.detect(this@ReaderHostQualificationActivity).backend.also {it.setInputSuspended(true)}
@@ -79,7 +91,9 @@ class ReaderHostQualificationActivity:ComponentActivity() {
                     startActivity(Intent(this,WriterHostQualificationActivity::class.java)
                         .putExtra(WriterHostQualificationActivity.CREATION,creation.id))
                 }
-            }) else null).also {content.addView(it)}
+            }) else null,onExportNotebooks={ids,format ->
+                if(exports?.start(ids,format)!=true) exportNotice(R.string.library_export_busy)
+            }).also {content.addView(it)}
         }
         libraryView?.visibility=android.view.View.VISIBLE
         libraryView?.post {libraryView?.takeIf {it.visibility==android.view.View.VISIBLE}?.let {backend?.refreshUiFrame(it)}}
@@ -108,6 +122,49 @@ class ReaderHostQualificationActivity:ComponentActivity() {
         super.onResume();resumed=true
         if(launchingWriter) libraryView?.notebookChanged()
         launchingWriter=false;store?.resumeReaderWork();host?.resume()
+        exports?.state?.value?.let {presentExport(it)}
+    }
+    override fun onSaveInstanceState(outState:Bundle) {
+        outState.putString("notebookExportToken",exportToken)
+        super.onSaveInstanceState(outState)
+    }
+    private fun exportNotice(message:Int) = android.widget.Toast.makeText(this,message,android.widget.Toast.LENGTH_LONG).show()
+    private fun presentExport(state:NotebookExportSession.State) {
+        val session=exports ?: return
+        when(state) {
+            is NotebookExportSession.State.Ready -> if(session.claim(state.ticket)) {
+                exportToken=state.ticket.id
+                try {exportPicker.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE);type=state.ticket.target.mimeType
+                    putExtra(Intent.EXTRA_TITLE,state.ticket.target.fileName)
+                })} catch(_:Exception) {
+                    exportToken=null;session.picked(state.ticket.id,null);exportNotice(R.string.library_export_failed)
+                }
+            }
+            is NotebookExportSession.State.Preparing -> exportNotice(R.string.library_export_preparing)
+            is NotebookExportSession.State.Writing -> exportNotice(R.string.library_export_writing)
+            is NotebookExportSession.State.Finished -> if(session.acknowledge(state)) {
+                libraryView?.notebooksExported()
+                android.widget.Toast.makeText(this,getString(R.string.library_export_finished,state.ticket.target.fileName),android.widget.Toast.LENGTH_LONG).show()
+            }
+            is NotebookExportSession.State.Failed -> if(session.acknowledge(state)) {
+                exportNotice(if(state.destinationMayBePartial) R.string.library_export_partial else R.string.library_export_failed)
+            }
+            else -> Unit
+        }
+    }
+    private fun deliverExportResult() {
+        val session=exports ?: return
+        val result=exportResult ?: return
+        val token=exportToken
+        exportToken=null;exportResult=null
+        if(token==null) return // Process/owner mismatch: never write a guessed or new export.
+        val uri=result.data?.data
+        val resolver=applicationContext.contentResolver
+        val output:(()->java.io.OutputStream)?=if(result.resultCode==RESULT_OK && uri?.scheme=="content") ({
+            checkNotNull(resolver.openOutputStream(uri,"wt")) {"Destination could not be opened"}
+        }) else null
+        session.picked(token,output)
     }
     override fun onPause() {resumed=false;libraryView?.remember();host?.pause();store?.pauseReaderWork();super.onPause()}
     @Deprecated("Qualification guards the active document edit")

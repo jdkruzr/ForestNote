@@ -10,6 +10,7 @@ internal class NotebookManagementUi(
     private val store: NotebookStore,
     private val shelf: LibraryView,
     private val menu: (View, List<Pair<String, () -> Unit>>, Int) -> Unit,
+    private val export: ((Set<String>,ExportFormat)->Unit)?=null,
 ) {
     private val context get() = host.context
     private var epoch = 0L
@@ -36,6 +37,9 @@ internal class NotebookManagementUi(
         val ids=shelf.selectedNotebookIds()
         val choices=mutableListOf<Pair<String,()->Unit>>()
         if(ids.isNotEmpty()) {
+            if(export!=null) choices+=text(R.string.library_export) to {
+                menu(anchor,ExportFormat.entries.map {format ->format.name to {export.invoke(ids,format)}},R.string.library_export)
+            }
             choices+=text(R.string.library_manage_move) to {move(anchor,ids)}
             choices+=text(R.string.library_manage_trash) to {trash(ids)}
         }

@@ -205,6 +205,11 @@ class NotebookStore(
             readerLibrary=it;readerCachePath=cacheDirectory.absolutePath
         }
     }
+    private var notebookExport:NotebookExportSession?=null
+    internal fun notebookExports(cacheDirectory:File):NotebookExportSession = synchronized(lifecycleLock) {
+        check(!closing) {"Library is closing"}
+        notebookExport ?: NotebookExportSession(File(cacheDirectory,"notebook-exports"),::exportSnapshots).also {notebookExport=it}
+    }
     fun resumeReaderWork() = synchronized(lifecycleLock) {
         if (!closing) { readerForeground=true; readerRuntime?.resume();readerLibrary?.resumeRecognition();mixedSync?.foregroundChanged(true) }
     }
@@ -454,31 +459,26 @@ class NotebookStore(
 
     /** Immutable, arbitrary-notebook read used by SAF export; never changes editor context. */
     suspend fun exportSnapshots(notebookIds: Set<String>): List<ExportNotebookSnapshot> =
-        suspendCancellableCoroutine { continuation ->
-            executor.execute {
-                runCatching {
-                    val r = requireNotNull(repo) { "notebook store not ready" }
-                    val settings = r.settings()
-                    notebookIds.mapNotNull { id ->
-                        val notebook = r.notebook(id) ?: return@mapNotNull null
-                        val geometry = NotebookAspectPolicy.resolve(notebook)
-                        ExportNotebookSnapshot(
-                            notebook = notebook,
-                            pageWidth = geometry.width,
-                            pageHeight = geometry.height,
-                            pages = r.listPagesForNotebook(id).map { page ->
-                                ExportPageSnapshot(
-                                    page = page,
-                                    strokes = r.loadStrokesForPage(page.id),
-                                    textBoxes = r.loadTextBoxesForPage(page.id),
-                                    template = TemplateGeometry.effectiveTemplate(page.template, settings.defaultTemplate),
-                                    pitchMm = TemplateGeometry.effectivePitchMm(page.templatePitchMm, settings.defaultPitchMm),
-                                )
-                            },
+        onDb { r ->
+            requireLiveNotebooks(r,notebookIds.toList())
+            val settings = r.settings()
+            notebookIds.map { id ->
+                val notebook = checkNotNull(r.notebook(id))
+                val geometry = NotebookAspectPolicy.resolve(notebook)
+                ExportNotebookSnapshot(
+                    notebook = notebook,
+                    pageWidth = geometry.width,
+                    pageHeight = geometry.height,
+                    pages = r.listPagesForNotebook(id).map { page ->
+                        ExportPageSnapshot(
+                            page = page,
+                            strokes = r.loadStrokesForPage(page.id),
+                            textBoxes = r.loadTextBoxesForPage(page.id),
+                            template = TemplateGeometry.effectiveTemplate(page.template, settings.defaultTemplate),
+                            pitchMm = TemplateGeometry.effectivePitchMm(page.templatePitchMm, settings.defaultPitchMm),
                         )
-                    }
-                }.onSuccess { continuation.resume(it) }
-                    .onFailure { continuation.resumeWithException(it) }
+                    },
+                )
             }
         }
 
@@ -1150,6 +1150,7 @@ class NotebookStore(
         }
         CoroutineScope(Dispatchers.Default).launch {
             try {
+                notebookExport?.close()
                 readerLibrary?.close()
                 mixedSync?.close()
                 runtime?.close()

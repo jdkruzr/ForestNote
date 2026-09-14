@@ -1,4 +1,11 @@
 <resources>
+    <string name="library_export">Export…</string>
+    <string name="library_export_preparing">Preparing Export…</string>
+    <string name="library_export_writing">Writing Export…</string>
+    <string name="library_export_busy">An Export Is Already In Progress</string>
+    <string name="library_export_finished">Exported %1$s</string>
+    <string name="library_export_failed">Export Failed. Your Notebooks Are Unchanged.</string>
+    <string name="library_export_partial">Export Failed. The Destination May Contain An Incomplete File. Your Notebooks Are Unchanged.</string>
     <string name="library_management_failed">Could Not Complete This Action. Refresh The Library And Try Again.</string>
     <string name="library_manage_notebooks">Notebook Actions</string>
     <string name="library_manage_select">Select Notebooks</string>

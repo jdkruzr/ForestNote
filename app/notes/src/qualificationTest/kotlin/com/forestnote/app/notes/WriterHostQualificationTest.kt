@@ -109,7 +109,9 @@ class WriterHostQualificationTest {
             awaitActivity(ReaderHostQualificationActivity::class.java);ComposeChromeTest.click("shelf:NOTEBOOKS")
             selectNotebook();tag("notebookSelection");choose(R.string.library_manage_move);clickLabel("Destination")
             waitUntil("Moved") {result<List<com.forestnote.core.format.NotebookCard>> {store.listNotebookCardsInFolder(folder,it)}.any {it.id==notebook}}
-            waitUntil("Move Dismissed") {var focus=false;native {focus=it.hasWindowFocus()};focus}
+            waitUntil("Move UI Settled") {var settled=false;native {a ->
+                settled=a.hasWindowFocus() && !a.findViewById<View>(android.R.id.content).findViewWithTag<View>("notebookSelection").isShown
+            };settled}
             card("Destination");selectNotebook();tag("notebookSelection");choose(R.string.library_manage_trash)
             choose(android.R.string.cancel)
             assertTrue(bin().isEmpty());assertEquals(beforeOps+1,ops())

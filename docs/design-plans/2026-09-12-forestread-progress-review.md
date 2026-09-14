@@ -309,6 +309,10 @@ the headless result does not activate production integration.
    resumes that integration with top-aligned bulk actions, explicit trash/restore and
    failure-aware same-owner callbacks reused by the writer. Export, folder cascade
    deletion and permanent purge are not yet attached to the shared shelf.
+   **D59 shared export:** [owner-retained PDF/SVG picker handoff](2026-09-14-forestread-shared-export.md)
+   attaches selected-notebook export using the canonical renderer, frozen private staging
+   and failure-aware destination writes. No shared-storage activation. Continue with the
+   writer Penu/shared Settings extraction; folder cascade/purge remain separate follow-ups.
    **Queued internationalization:** [shared UI resource extraction](2026-09-14-forestread-internationalization.md)
    records the user's request to replace inline chrome strings with a standard resource
    scheme, including the HTML reader boundary, plurals, accessibility and pseudo-locale

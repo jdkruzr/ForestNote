@@ -26,6 +26,7 @@ internal class SharedLibraryView(
     private val onBookChanged:(String,Boolean,String?)->Unit={_,_,_->},
     private val onOpenNotebook:((String)->Unit)?=null,
     private val onCreateNotebook:((String,String?)->Unit)?=null,
+    private val onExportNotebooks:((Set<String>,ExportFormat)->Unit)?=null,
 ):LinearLayout(context) {
     private val state=books.libraryUi
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
@@ -40,7 +41,7 @@ internal class SharedLibraryView(
     private val notebooks=LibraryView()
     private val notebookPanel=LinearLayout(context).apply {orientation=VERTICAL}
     private val notebookHost=FrameLayout(context)
-    private val notebookManagement=NotebookManagementUi(notebookPanel,store,notebooks,{anchor,choices,heading->menu(anchor,choices,heading)})
+    private val notebookManagement=NotebookManagementUi(notebookPanel,store,notebooks,{anchor,choices,heading->menu(anchor,choices,heading)},onExportNotebooks)
     private val notebookActions=button(context.getString(R.string.shared_library_filter,context.getString(R.string.library_manage_notebooks))) {
         notebookManagement.actions(notebookActionsAnchor())
     }.apply {tag="notebookActions"}
@@ -262,6 +263,7 @@ internal class SharedLibraryView(
     }
     fun changed() {load(true)}
     fun notebookChanged() {if(notebooks.isShowing) notebooks.reload()}
+    fun notebooksExported() {notebooks.exitSelectMode()}
     private fun canPromptNotebook() = scope.isActive && isAttachedToWindow && visibility==VISIBLE &&
         state.shelf==SharedLibraryState.Shelf.NOTEBOOKS && !loadingNotebookPrompt && prompt==null
     private fun trackNotebookPrompt(dialog:AlertDialog) {
