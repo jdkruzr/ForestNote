@@ -34,8 +34,11 @@ internal class LibraryChromeView(
     private val onClose: () -> Unit,
     private val onNewNotebook: () -> Unit,
     private val onNewFolder: () -> Unit,
+    private val onDensity: () -> Unit,
 ) : AbstractComposeView(context) {
     var shelf by mutableStateOf(initialShelf)
+    var densityMode by mutableStateOf(UiDensity.AUTO)
+    var compact by mutableStateOf(false)
 
     init {
         tag = "sharedLibraryChrome"
@@ -45,17 +48,20 @@ internal class LibraryChromeView(
     @Composable
     @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
     override fun Content() {
-        val inset = dimensionResource(R.dimen.library_surface_inset)
-        val gap = dimensionResource(R.dimen.library_surface_gap)
+        val inset = dimensionResource(if (compact) R.dimen.library_compact_inset else R.dimen.library_surface_inset)
+        val gap = dimensionResource(if (compact) R.dimen.library_compact_gap else R.dimen.library_surface_gap)
         Column(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = inset)
             .semantics { testTagsAsResourceId = true }) {
             Row(Modifier.fillMaxWidth().heightIn(min = dimensionResource(R.dimen.eink_ui_header_height)),
                 verticalAlignment = Alignment.CenterVertically) {
                 BasicText(stringResource(R.string.shared_library_title), Modifier.weight(1f),
                     style = TextStyle(color = Color.Black, fontWeight = FontWeight.Medium,
-                        fontSize = with(LocalDensity.current) {resources.getDimension(R.dimen.eink_ui_title_text).toSp()}))
+                            fontSize = with(LocalDensity.current) {resources.getDimension(if (compact) R.dimen.eink_ui_label_text else R.dimen.eink_ui_title_text).toSp()}))
+                EinkButton(stringResource(R.string.library_density_choice, stringResource(densityLabel(densityMode))),
+                    onDensity, Modifier.padding(end = gap).testTag("libraryDensity"), compact = compact,
+                    description = stringResource(R.string.library_density))
                 EinkButton("×", onClose, Modifier.widthIn(min = 42.dp).testTag("closeSharedLibrary"),
-                    description = stringResource(R.string.shared_library_close))
+                    description = stringResource(R.string.shared_library_close), compact = compact)
             }
             BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = gap)) {
                 val hasActions = canCreate && shelf == SharedLibraryState.Shelf.NOTEBOOKS
@@ -71,6 +77,7 @@ internal class LibraryChromeView(
                                 R.string.shared_library_notebooks else R.string.shared_library_books),
                                 onClick = { onSelect(item) }, selected = shelf == item,
                                 outlined = false,
+                                compact = compact,
                                 modifier = Modifier.testTag("shelf:$item"))
                         }
                     }
@@ -78,9 +85,9 @@ internal class LibraryChromeView(
                 @Composable fun actions(modifier: Modifier = Modifier) {
                     Row(modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(gap)) {
                         EinkButton(stringResource(R.string.shared_writer_new_notebook), onNewNotebook,
-                            Modifier.testTag("newSharedNotebook"), primary = true, icon = R.drawable.ic_add)
+                            Modifier.testTag("newSharedNotebook"), primary = true, icon = R.drawable.ic_add, compact = compact)
                         EinkButton(stringResource(R.string.library_new_folder), onNewFolder,
-                            Modifier.testTag("newSharedFolder"), icon = R.drawable.ic_create_folder)
+                            Modifier.testTag("newSharedFolder"), icon = R.drawable.ic_create_folder, compact = compact)
                     }
                 }
                 if (stacked) Column(verticalArrangement = Arrangement.spacedBy(gap)) {
@@ -93,6 +100,14 @@ internal class LibraryChromeView(
                     if (hasActions) actions(Modifier.widthIn(max = actionWidth))
                 }
             }
+        }
+    }
+
+    companion object {
+        fun densityLabel(mode: UiDensity) = when (mode) {
+            UiDensity.AUTO -> R.string.library_density_auto
+            UiDensity.COMPACT -> R.string.library_density_compact
+            UiDensity.COMFORTABLE -> R.string.library_density_comfortable
         }
     }
 }

@@ -1,4 +1,10 @@
 <resources>
+    <string name="library_density">Density</string>
+    <string name="library_density_heading">UI Density · This Device</string>
+    <string name="library_density_auto">Auto</string>
+    <string name="library_density_compact">Compact</string>
+    <string name="library_density_comfortable">Comfortable</string>
+    <string name="library_density_choice">%1$s ▾</string>
     <string name="library_options_for">Options For %1$s</string>
     <string name="library_book_menu_heading">Book Actions</string>
     <string name="library_filter_menu_heading">Show</string>

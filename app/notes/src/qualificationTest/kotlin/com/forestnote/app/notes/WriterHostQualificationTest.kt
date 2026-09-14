@@ -271,6 +271,8 @@ class WriterHostQualificationTest {
                     child.findViewById<android.widget.ImageView>(R.id.card_thumb)?.let {
                         assertEquals(android.widget.ImageView.ScaleType.FIT_CENTER,it.scaleType)
                     }
+                    assertEquals(3,(child.findViewById<android.widget.TextView>(R.id.card_name)
+                        ?: child.findViewById(R.id.folder_name)).maxLines)
                     if(options) menu.performClick() else if(longPress) child.performLongClick() else child.performClick()
                 }}
             }

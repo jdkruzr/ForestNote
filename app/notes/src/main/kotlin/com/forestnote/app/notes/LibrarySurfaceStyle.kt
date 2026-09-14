@@ -18,11 +18,11 @@ internal object LibrarySurfaceStyle {
         cornerRadius = context.resources.getDimension(R.dimen.library_surface_radius)
     }
 
-    fun action(button: Button, primary: Boolean = false, outlined: Boolean = true, icon: Int? = null) {
+    fun action(button: Button, primary: Boolean = false, outlined: Boolean = true, icon: Int? = null, compact: Boolean = false) {
         val context = button.context
         button.isAllCaps = false
         button.letterSpacing = 0f
-        EinkUiStyle.text(button, R.dimen.eink_ui_label_text, medium = true)
+        EinkUiStyle.text(button, if (compact) R.dimen.library_compact_label_text else R.dimen.eink_ui_label_text, medium = true)
         val states = arrayOf(intArrayOf(android.R.attr.state_pressed), intArrayOf(android.R.attr.state_focused), intArrayOf())
         button.backgroundTintList = null
         button.stateListAnimator = null
@@ -35,7 +35,7 @@ internal object LibrarySurfaceStyle {
         button.setTextColor(colors)
         button.minWidth = 0; button.minimumWidth = 0
         button.minHeight = px(context, R.dimen.eink_ui_control_height); button.minimumHeight = button.minHeight
-        val inset = px(context, R.dimen.library_surface_inset)
+        val inset = px(context, if (compact) R.dimen.library_compact_inset else R.dimen.library_surface_inset)
         button.setPaddingRelative(inset, 0, inset, 0)
         button.gravity = Gravity.CENTER
         if (icon != null) {
@@ -48,12 +48,12 @@ internal object LibrarySurfaceStyle {
         }
     }
 
-    fun input(view: EditText, search: Boolean = false) {
-        EinkUiStyle.text(view, R.dimen.eink_ui_label_text)
+    fun input(view: EditText, search: Boolean = false, compact: Boolean = false) {
+        EinkUiStyle.text(view, if (compact) R.dimen.library_compact_label_text else R.dimen.eink_ui_label_text)
         view.setHintTextColor(Color.BLACK)
         view.backgroundTintList = null
         view.background = surface(view.context)
-        val inset = px(view.context, R.dimen.library_surface_inset)
+        val inset = px(view.context, if (compact) R.dimen.library_compact_inset else R.dimen.library_surface_inset)
         view.setPaddingRelative(inset, inset / 2, inset, inset / 2)
         if (search) {
             val icon = view.context.getDrawable(R.drawable.ic_search)!!.mutate()

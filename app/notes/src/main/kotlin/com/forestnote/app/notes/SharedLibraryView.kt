@@ -27,6 +27,10 @@ internal class SharedLibraryView(
 ):LinearLayout(context) {
     private val state=books.libraryUi
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
+    private val densityPreference=DeviceUiDensityPreference(context)
+    private var densityMode=UiDensity.AUTO
+    private var densityChoiceVersion=0
+    private var compact=false
     private val notebooks=LibraryView()
     private val notebookHost=FrameLayout(context)
     private val bookHost=LinearLayout(context).apply {orientation=VERTICAL}
@@ -35,8 +39,9 @@ internal class SharedLibraryView(
     private val status=TextView(context)
     private val query=EditText(context)
     private val chrome=LibraryChromeView(context,state.shelf,onCreateNotebook!=null && notebookCallbacks==null,
-        {select(it)},onClose,{newNotebook()},{newFolder()})
+        {select(it)},onClose,{newNotebook()},{newFolder()},{densityMenu()})
     private val filter=button("") {}
+    private val importButton=button(context.getString(R.string.shared_library_import)) {onImport()}
     private val more=button(context.getString(R.string.shared_library_more)) {load(false)}
     private var fetch:Job?=null
     private var generation=0L
@@ -51,11 +56,11 @@ internal class SharedLibraryView(
     private val dp get()=resources.displayMetrics.density
     private fun pixels(value:Int)=(value*dp).toInt()
     private fun frame()=LibrarySurfaceStyle.surface(context)
-    private val inset get()=LibrarySurfaceStyle.px(context,R.dimen.library_surface_inset)
-    private val gap get()=LibrarySurfaceStyle.px(context,R.dimen.library_surface_gap)
+    private val inset get()=LibrarySurfaceStyle.px(context,if(compact) R.dimen.library_compact_inset else R.dimen.library_surface_inset)
+    private val gap get()=LibrarySurfaceStyle.px(context,if(compact) R.dimen.library_compact_gap else R.dimen.library_surface_gap)
     private val controlHeight get()=resources.getDimensionPixelSize(R.dimen.eink_ui_control_height)
     private fun button(label:String,action:()->Unit)=Button(context).apply {
-        text=label;LibrarySurfaceStyle.action(this);setOnClickListener {action()}
+        text=label;LibrarySurfaceStyle.action(this,compact=compact);setOnClickListener {action()}
     }
     init {
         orientation=VERTICAL;setBackgroundColor(Color.WHITE);isClickable=true;isFocusable=true
@@ -63,7 +68,7 @@ internal class SharedLibraryView(
         addView(notebookHost,LayoutParams(-1,0,1f));addView(bookHost,LayoutParams(-1,0,1f))
         bookHost.setPadding(inset,0,inset,0)
         val actions=LinearLayout(context).apply {gravity=Gravity.CENTER_VERTICAL}
-        actions.addView(button(context.getString(R.string.shared_library_import)) {onImport()}.apply {
+        actions.addView(importButton.apply {
             LibrarySurfaceStyle.action(this,primary=true,icon=R.drawable.ic_add)
         },LayoutParams(-2,-2).apply {marginEnd=gap})
         filter.tag="bookFilter";filter.setOnClickListener {menu(filter,listOf(
@@ -86,6 +91,49 @@ internal class SharedLibraryView(
             override fun afterTextChanged(s:Editable?) {}
         })
         select(state.shelf);load(true,preserveScroll=true)
+        val version=densityChoiceVersion
+        densityPreference.load {mode ->
+            if(scope.isActive && version==densityChoiceVersion) {densityMode=mode;applyDensity()}
+        }
+    }
+    override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int) {
+        super.onSizeChanged(w,h,oldw,oldh)
+        if(w!=oldw) post {if(scope.isActive) applyDensity()}
+    }
+
+    private fun densityMenu() {
+        menu(chrome,UiDensity.entries.map {mode -> context.getString(LibraryChromeView.densityLabel(mode)) to {
+            densityChoiceVersion++;densityMode=mode;densityPreference.save(mode);applyDensity()
+        }},R.string.library_density_heading,context.getString(LibraryChromeView.densityLabel(densityMode)))
+    }
+
+    private fun applyDensity() {
+        chrome.densityMode=densityMode
+        notebooks.setDensityMode(densityMode)
+        if(width<=0) return
+        val next=LibraryDensityPolicy.resolve(densityMode,width/dp,resources.configuration.fontScale).compact
+        chrome.compact=next
+        if(next==compact) return
+        compact=next
+        bookHost.setPadding(inset,0,inset,0)
+        LibrarySurfaceStyle.action(importButton,primary=true,icon=R.drawable.ic_add,compact=compact)
+        LibrarySurfaceStyle.action(filter,compact=compact);LibrarySurfaceStyle.action(more,compact=compact)
+        LibrarySurfaceStyle.input(query,search=true,compact=compact)
+        EinkUiStyle.text(status,if(compact) R.dimen.library_compact_meta_text else R.dimen.eink_ui_meta_text)
+        (query.layoutParams as LayoutParams).apply {topMargin=gap;bottomMargin=gap/2}
+        query.requestLayout()
+        // Resize already-loaded presentation only: no book query, renderer reload or sync.
+        for(i in 0 until rows.childCount) styleBookRow(rows.getChildAt(i) as LinearLayout)
+    }
+
+    private fun styleBookRow(row:LinearLayout) {
+        row.setPadding(inset,inset,inset,inset)
+        val details=row.getChildAt(1) as LinearLayout
+        val title=details.getChildAt(0) as Button
+        LibrarySurfaceStyle.action(title,outlined=false,compact=compact)
+        title.gravity=Gravity.START or Gravity.CENTER_VERTICAL;title.setPadding(0,0,0,0)
+        EinkUiStyle.text(details.getChildAt(1) as TextView,if(compact) R.dimen.library_compact_meta_text else R.dimen.eink_ui_meta_text)
+        LibrarySurfaceStyle.action(row.getChildAt(2) as Button,compact=compact)
     }
     private fun select(shelf:SharedLibraryState.Shelf) {
         if(state.shelf!=shelf) dismissNotebookPrompt()
@@ -207,7 +255,7 @@ internal class SharedLibraryView(
             importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
         },LayoutParams(pixels(28),pixels(36)).apply {marginEnd=inset})
         val open=button(SharedBookPresentation.title(book)) {onOpenBook(book.book.id,false)}.apply {
-            gravity=Gravity.START or Gravity.CENTER_VERTICAL;maxLines=2;ellipsize=TextUtils.TruncateAt.END
+            gravity=Gravity.START or Gravity.CENTER_VERTICAL;maxLines=3;ellipsize=TextUtils.TruncateAt.END
             isEnabled=book.contentReady && !book.deleted;tag="book:${book.book.id}"
             LibrarySurfaceStyle.action(this,outlined=false)
             gravity=Gravity.START or Gravity.CENTER_VERTICAL
@@ -240,9 +288,10 @@ internal class SharedLibraryView(
             menu(options,choices)
         }
         row.addView(options,LayoutParams(pixels(44),controlHeight).apply {marginStart=gap})
+        styleBookRow(row)
         rows.addView(row,LayoutParams(-1,-2).apply {topMargin=gap/2;bottomMargin=gap/2})
     }
-    private fun menu(anchor:View,choices:List<Pair<String,()->Unit>>,heading:Int=R.string.library_book_menu_heading) {
+    private fun menu(anchor:View,choices:List<Pair<String,()->Unit>>,heading:Int=R.string.library_book_menu_heading,selectedLabel:String?=null) {
         popup?.dismiss();val content=LinearLayout(context).apply {orientation=VERTICAL;setPadding(gap,gap,gap,gap)}
         val panel=ScrollView(context).apply {addView(content)}
         val window=PopupWindow(panel,pixels(320).coerceAtMost(width-inset*2),-2,true).apply {
@@ -254,7 +303,9 @@ internal class SharedLibraryView(
         })
         content.addView(View(context).apply {setBackgroundColor(Color.BLACK)},LayoutParams(-1,EinkUiStyle.borderPixels(context)))
         for((label,action) in choices) content.addView(button(label) {window.dismiss();action()}.apply {
-            LibrarySurfaceStyle.action(this,outlined=false)
+            LibrarySurfaceStyle.action(this,outlined=false,compact=compact,
+                icon=if(label==selectedLabel) R.drawable.ic_check_circle else null)
+            isSelected=label==selectedLabel
             gravity=Gravity.START or Gravity.CENTER_VERTICAL
         },LayoutParams(-1,-2))
         popup=window;window.showAsDropDown(anchor,0,0,Gravity.END)

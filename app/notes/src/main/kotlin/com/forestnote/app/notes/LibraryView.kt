@@ -51,6 +51,25 @@ class LibraryView {
     private var backTarget: String? = null
     private var reloadGeneration=0L
     private var restorePosition:LibraryBrowsePosition?=null
+    private var densityMode = UiDensity.AUTO
+
+    internal fun setDensityMode(mode: UiDensity) {
+        densityMode = mode
+        root?.findViewById<RecyclerView>(R.id.library_grid)?.let { updateDensity(it) }
+    }
+
+    private fun updateDensity(grid: RecyclerView) {
+        if (grid.width <= 0) return
+        val profile = LibraryDensityPolicy.resolve(densityMode,
+            (grid.width - grid.paddingLeft - grid.paddingRight) / grid.resources.displayMetrics.density,
+            grid.resources.configuration.fontScale)
+        val layout = grid.layoutManager as GridLayoutManager
+        val first = layout.findFirstVisibleItemPosition().coerceAtLeast(0)
+        val offset = layout.findViewByPosition(first)?.top ?: 0
+        if (layout.spanCount != profile.columns) layout.spanCount = profile.columns
+        adapter?.setDensityProfile(profile)
+        layout.scrollToPositionWithOffset(first, offset)
+    }
 
     // Select mode (D1): a notebook tap toggles its checkbox instead of opening; folders stay
     // tap-to-enter. Selection is cleared whenever the user navigates between folders.
@@ -93,12 +112,8 @@ class LibraryView {
         if (sharedSurfaces) {
             grid.itemAnimator = null
             // Recalculate from the measured host, including split-screen and font scaling.
-            grid.addOnLayoutChangeListener { _, left, _, right, _, _, _, _, _ ->
-                val minWidth = LibrarySurfaceStyle.px(host.context, R.dimen.library_card_min_width) *
-                    host.resources.configuration.fontScale.coerceAtLeast(1f)
-                val columns = ((right - left - grid.paddingLeft - grid.paddingRight) / minWidth).toInt().coerceIn(1, 4)
-                val layout = grid.layoutManager as GridLayoutManager
-                if (layout.spanCount != columns) layout.spanCount = columns
+            grid.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+                if (right - left != oldRight - oldLeft) grid.post { if (root === view) updateDensity(grid) }
             }
         }
         val libraryAdapter = LibraryAdapter(

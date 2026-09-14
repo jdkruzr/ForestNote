@@ -14,6 +14,12 @@
     <dimen name="library_surface_radius">12dp</dimen>
     <dimen name="library_surface_inset">12dp</dimen>
     <dimen name="library_surface_gap">8dp</dimen>
-    <dimen name="library_card_min_width">240dp</dimen>
     <dimen name="library_preview_height">160dp</dimen>
+    <dimen name="library_compact_preview_height">100dp</dimen>
+    <dimen name="library_compact_inset">8dp</dimen>
+    <dimen name="library_compact_gap">6dp</dimen>
+    <dimen name="library_compact_label_text">18sp</dimen>
+    <dimen name="library_compact_meta_text">14sp</dimen>
+    <dimen name="library_list_preview_width">52dp</dimen>
+    <dimen name="library_list_preview_height">72dp</dimen>
 </resources>

@@ -70,6 +70,7 @@ internal fun EinkButton(
     primary: Boolean = false,
     outlined: Boolean = true,
     icon: Int? = null,
+    compact: Boolean = false,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
@@ -82,13 +83,13 @@ internal fun EinkButton(
     val borderWidth = dimensionResource(R.dimen.eink_ui_border)
     val semanticRole = if (selected == null) Role.Button else Role.Tab
     val fontSize = with(LocalDensity.current) {
-        LocalContext.current.resources.getDimension(R.dimen.eink_ui_label_text).toSp()
+        LocalContext.current.resources.getDimension(if (compact) R.dimen.library_compact_label_text else R.dimen.eink_ui_label_text).toSp()
     }
     UnstyledButton(
         onClick = onClick,
         enabled = enabled,
         role = semanticRole,
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 3.dp),
+        contentPadding = PaddingValues(horizontal = if (compact) 8.dp else 10.dp, vertical = 3.dp),
         modifier = modifier
             .heightIn(min = dimensionResource(R.dimen.eink_ui_control_height))
             .clip(shape)

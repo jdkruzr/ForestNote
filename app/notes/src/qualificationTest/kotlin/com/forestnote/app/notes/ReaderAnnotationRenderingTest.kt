@@ -26,6 +26,9 @@ class ReaderAnnotationRenderingTest {
     private val context get()=instrumentation.targetContext
 
     @Test fun sharedLibraryKeepsNotebookContextAndBookSearchAcrossTabsAndRecreation()=runBlocking<Unit> {
+        val preference=DeviceUiDensityPreference(context)
+        val savedDensity=CompletableDeferred<UiDensity>().also {result->preference.load {result.complete(it)}}.await()
+        preference.save(UiDensity.AUTO)
         val id="library-${UUID.randomUUID()}"
         val store=NotebookStore(repoProvider={NotebookRepository.openIsolatedQualification(context,id)},
             executor=Executors.newSingleThreadExecutor(),poster={it.run()},qualifyReaderStorage=true)
@@ -62,7 +65,8 @@ class ReaderAnnotationRenderingTest {
         }
         try {
             val access=store.readerLibraryForQualification(context.cacheDir);val book=access.importBook("book",{fixture().inputStream()}).book.id
-            val folder=CompletableDeferred<String>();store.createFolder("Library Folder",null) {folder.complete(it)};withTimeout(10000) {folder.await()}
+            val folderTitle="Library Folder With A Long Title That Needs Three Lines"
+            val folder=CompletableDeferred<String>();store.createFolder(folderTitle,null) {folder.complete(it)};withTimeout(10000) {folder.await()}
             val before=snapshot()
             ReaderHostQualificationSession.store=store;ReaderHostQualificationSession.sharedLibrary=true
             activity=ActivityScenario.launch(ReaderHostQualificationActivity::class.java)
@@ -70,7 +74,7 @@ class ReaderAnnotationRenderingTest {
             native {a ->
                 val root=a.findViewById<android.view.View>(android.R.id.content)
                 val title=root.findViewWithTag<android.widget.Button>("book:$book")
-                assertEquals(2,title.maxLines)
+                assertEquals(3,title.maxLines)
                 assertNull(title.backgroundTintList)
                 val search=root.findViewWithTag<android.widget.EditText>("bookQuery")
                 assertNotNull(search.compoundDrawablesRelative[0])
@@ -86,7 +90,7 @@ class ReaderAnnotationRenderingTest {
             ComposeChromeTest.node("shelf:BOOKS",selected=false)
             native {a->assertTrue(a.findViewById<android.view.View>(R.id.library_grid).isShown)
                 assertFalse(a.findViewById<android.view.View>(R.id.btn_library_add_notebook).isShown)}
-            waitNative {a->a.findViewById<android.widget.TextView>(R.id.folder_name)?.text=="Library Folder"}
+            waitNative {a->a.findViewById<android.widget.TextView>(R.id.folder_name)?.text==folderTitle}
             // Exercise narrow-host layout without changing the tablet's display settings.
             native {a ->
                 val chrome=a.findViewById<android.view.View>(android.R.id.content)
@@ -100,6 +104,29 @@ class ReaderAnnotationRenderingTest {
             }
             ComposeChromeTest.node("shelf:NOTEBOOKS",selected=true)
             ComposeChromeTest.node("shelf:BOOKS",selected=false)
+            waitNative {a ->
+                val grid=a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid)
+                (grid.getChildAt(0) as? android.widget.LinearLayout)?.orientation==android.widget.LinearLayout.HORIZONTAL
+            }
+            native {a ->
+                val name=a.findViewById<android.widget.TextView>(R.id.folder_name)
+                assertEquals(3,name.maxLines)
+                assertTrue("Long titles wrap before ellipsis",name.lineCount in 2..3)
+                val library=a.findViewById<android.view.View>(android.R.id.content)
+                    .findViewWithTag<android.view.View>("sharedLibraryChrome").parent as android.view.View
+                library.layoutParams=library.layoutParams.apply {width=(360*context.resources.displayMetrics.density).toInt()}
+            }
+            waitNative {a ->
+                val grid=a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid)
+                (grid.layoutManager as androidx.recyclerview.widget.GridLayoutManager).spanCount==2 &&
+                    (grid.getChildAt(0) as? android.widget.LinearLayout)?.orientation==android.widget.LinearLayout.VERTICAL
+            }
+            ComposeChromeTest.click("libraryDensity")
+            clickLabel(context.getString(R.string.library_density_comfortable))
+            waitNative {a ->
+                val grid=a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid)
+                (grid.layoutManager as androidx.recyclerview.widget.GridLayoutManager).spanCount==1
+            }
             native {a ->
                 val chrome=a.findViewById<android.view.View>(android.R.id.content)
                     .findViewWithTag<android.view.View>("sharedLibraryChrome")
@@ -111,6 +138,7 @@ class ReaderAnnotationRenderingTest {
             ComposeChromeTest.click("shelf:BOOKS")
             native {a->assertEquals("unfindable",a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.widget.EditText>("bookQuery").text.toString())}
             activity.recreate();visible("bookQuery")
+            assertTrue(ComposeChromeTest.labels("libraryDensity").any {it.contains(context.getString(R.string.library_density_comfortable))})
             ComposeChromeTest.click("shelf:NOTEBOOKS")
             waitNative {a->a.findViewById<android.view.View>(R.id.btn_library_back)?.isShown==true}
             ComposeChromeTest.click("shelf:BOOKS")
@@ -165,6 +193,8 @@ class ReaderAnnotationRenderingTest {
         } finally {
             activity?.close();ReaderHostQualificationSession.cleanup?.join();ReaderHostQualificationSession.store=null
             ReaderHostQualificationSession.sharedLibrary=false;store.shutdown()
+            preference.save(savedDensity)
+            withTimeout(10000) {CompletableDeferred<UiDensity>().also {result->preference.load {result.complete(it)}}.await()}
         }
     }
 

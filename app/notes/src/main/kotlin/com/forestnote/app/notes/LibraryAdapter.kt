@@ -31,6 +31,13 @@ class LibraryAdapter(
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     private val items = mutableListOf<LibraryItem>()
+    private var densityProfile = LibraryDensityProfile(false, 4, false)
+
+    internal fun setDensityProfile(profile: LibraryDensityProfile) {
+        if (densityProfile == profile) return
+        densityProfile = profile
+        notifyDataSetChanged()
+    }
 
     // Select-mode state (D1), pushed from LibraryView. In select mode a notebook tap toggles
     // its checkbox instead of opening it, and long-press is suppressed; folders are unaffected.
@@ -64,14 +71,14 @@ class LibraryAdapter(
         val meta: TextView = view.findViewById(R.id.card_meta)
     }
 
-    override fun getItemViewType(position: Int): Int = when (items[position]) {
+    override fun getItemViewType(position: Int): Int = (when (items[position]) {
         is LibraryItem.Folder -> TYPE_FOLDER
         is LibraryItem.Notebook -> TYPE_NOTEBOOK
-    }
+    }) + if (!sharedSurfaces) 0 else if (densityProfile.list) 4 else if (densityProfile.compact) 2 else 0
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
         val inflater = LayoutInflater.from(parent.context)
-        val holder = if (viewType == TYPE_FOLDER) {
+        val holder = if (viewType % 2 == TYPE_FOLDER) {
             FolderVH(inflater.inflate(R.layout.item_folder_card, parent, false))
         } else {
             NotebookVH(inflater.inflate(R.layout.item_notebook_card, parent, false))
@@ -79,37 +86,60 @@ class LibraryAdapter(
         if (sharedSurfaces) {
             val context = parent.context
             val card = holder.itemView as LinearLayout
-            val inset = LibrarySurfaceStyle.px(context, R.dimen.library_surface_inset)
-            val gap = LibrarySurfaceStyle.px(context, R.dimen.library_surface_gap)
+            val compact = viewType >= 2
+            val list = viewType >= 4
+            val inset = LibrarySurfaceStyle.px(context, if (compact) R.dimen.library_compact_inset else R.dimen.library_surface_inset)
+            val gap = LibrarySurfaceStyle.px(context, if (compact) R.dimen.library_compact_gap else R.dimen.library_surface_gap)
             card.background = LibrarySurfaceStyle.surface(context)
             card.setPadding(inset, inset, inset, inset)
             (card.layoutParams as android.view.ViewGroup.MarginLayoutParams).setMargins(gap / 2, gap / 2, gap / 2, gap / 2)
             val preview = card.getChildAt(0)
-            preview.layoutParams.height = LibrarySurfaceStyle.px(context, R.dimen.library_preview_height)
+            preview.layoutParams.height = LibrarySurfaceStyle.px(context, if (compact) R.dimen.library_compact_preview_height else R.dimen.library_preview_height)
             preview.background = LibrarySurfaceStyle.surface(context)
             preview.clipToOutline = true
             if (holder is NotebookVH) {
                 holder.thumb.scaleType = ImageView.ScaleType.FIT_CENTER
                 holder.thumb.setBackgroundColor(android.graphics.Color.WHITE)
-                holder.name.maxLines = 2
-                holder.name.minLines = 2
+                holder.name.maxLines = 3
+                holder.name.minLines = if (compact) 1 else 2
                 holder.name.setPadding(0, gap, 0, 0)
-                EinkUiStyle.text(holder.name, R.dimen.eink_ui_label_text, medium = true)
+                EinkUiStyle.text(holder.name, if (compact) R.dimen.library_compact_label_text else R.dimen.eink_ui_label_text, medium = true)
             } else if (holder is FolderVH) {
-                holder.name.maxLines = 2
-                holder.name.minLines = 2
+                holder.name.maxLines = 3
+                holder.name.minLines = if (compact) 1 else 2
                 holder.name.setPadding(0, gap, 0, 0)
-                EinkUiStyle.text(holder.name, R.dimen.eink_ui_label_text, medium = true)
+                EinkUiStyle.text(holder.name, if (compact) R.dimen.library_compact_label_text else R.dimen.eink_ui_label_text, medium = true)
             }
             val metadata = if (holder is NotebookVH) holder.meta else (holder as FolderVH).count
+            EinkUiStyle.text(metadata, if (compact) R.dimen.library_compact_meta_text else R.dimen.eink_ui_meta_text)
+            metadata.maxLines = if (compact) 2 else 1
             card.removeView(metadata)
             val footer = LinearLayout(context).apply {gravity = android.view.Gravity.CENTER_VERTICAL}
-            footer.addView(metadata, LinearLayout.LayoutParams(0, -2, 1f))
-            footer.addView(Button(context).apply {
+            val options = Button(context).apply {
                 text = "⋯"; tag = "cardOptions"
-                LibrarySurfaceStyle.action(this)
-            }, LinearLayout.LayoutParams(LibrarySurfaceStyle.px(context, R.dimen.eink_ui_control_height), -2))
-            card.addView(footer, LinearLayout.LayoutParams(-1, -2))
+                LibrarySurfaceStyle.action(this, compact = compact)
+            }
+            val optionSize = LibrarySurfaceStyle.px(context, R.dimen.eink_ui_control_height)
+            if (list) {
+                val labels = LinearLayout(context).apply {orientation = LinearLayout.VERTICAL}
+                while (card.childCount > 1) {
+                    val label = card.getChildAt(1)
+                    card.removeView(label); labels.addView(label, LinearLayout.LayoutParams(-1, -2))
+                }
+                labels.addView(metadata, LinearLayout.LayoutParams(-1, -2))
+                card.orientation = LinearLayout.HORIZONTAL
+                card.gravity = android.view.Gravity.CENTER_VERTICAL
+                preview.layoutParams = LinearLayout.LayoutParams(
+                    LibrarySurfaceStyle.px(context, R.dimen.library_list_preview_width),
+                    LibrarySurfaceStyle.px(context, R.dimen.library_list_preview_height)).apply {marginEnd = gap}
+                preview.setPadding(0, 0, 0, 0)
+                card.addView(labels, LinearLayout.LayoutParams(0, -2, 1f).apply {marginEnd = gap})
+                card.addView(options, LinearLayout.LayoutParams(optionSize, -2))
+            } else {
+                footer.addView(metadata, LinearLayout.LayoutParams(0, -2, 1f))
+                footer.addView(options, LinearLayout.LayoutParams(optionSize, -2))
+                card.addView(footer, LinearLayout.LayoutParams(-1, -2))
+            }
         }
         return holder
     }

@@ -294,6 +294,10 @@ the headless result does not activate production integration.
    applies the Composables-inspired appearance to both shelves, including visible card options,
    adaptive notebook columns, book search and single-panel menus. Existing View content and
    Compose chrome share named surface values; standalone writer screens remain unchanged.
+   **D55 device density:** [Auto / Compact / Comfortable and three-line titles](2026-09-14-forestread-library-density.md)
+   introduces device-local sizing and compact rows on narrow hosts. The same document
+   queues an independent Books List / Tiles switch with cached cover thumbnails next;
+   cover extraction and that switch are not implemented in D55.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 
