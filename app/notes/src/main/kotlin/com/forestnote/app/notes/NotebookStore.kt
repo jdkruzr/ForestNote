@@ -881,14 +881,41 @@ class NotebookStore(
         }
     }
 
-    /** Move [ids] to [destFolderId] (null = root) in one transaction (D2); callback posted when done. */
-    fun bulkMoveNotebooks(ids: List<String>, destFolderId: String?, onDone: () -> Unit) {
-        executor.execute {
-            runCatching { repo?.bulkMoveNotebooks(ids, destFolderId) }
-                .onFailure { android.util.Log.e(TAG, "failed to bulk move notebooks", it) }
-            poster { onDone() }
+    /** Same-owner management boundary: a failed read is not an empty library. */
+    internal fun managementFolders(onResult: (Result<List<FolderMeta>>) -> Unit) =
+        managementResult({ it.listAllFolders() }, onResult)
+
+    internal fun managementBin(onResult: (Result<List<BinEntry>>) -> Unit) =
+        managementResult({ it.recycleBinEntries() }, onResult)
+
+    private fun <T> managementResult(block: (NotebookRepository) -> T, onResult: (Result<T>) -> Unit) {
+        try {
+            executor.execute {
+                val result = runCatching { block(checkNotNull(repo) { "Library unavailable" }) }
+                    .onFailure { android.util.Log.e(TAG, "notebook management failed", it) }
+                poster { onResult(result) }
+            }
+        } catch (e: RejectedExecutionException) {
+            poster { onResult(Result.failure(e)) }
         }
     }
+
+    private fun requireLiveNotebooks(repository: NotebookRepository, ids: List<String>): List<String> {
+        val distinct = ids.distinct()
+        val live = repository.listNotebooks().map { it.id }.toSet()
+        require(distinct.all { it in live }) { "Selection changed; refresh the Library" }
+        return distinct
+    }
+
+    /** Move [ids] to [destFolderId] (null = root) in one transaction (D2); callback posted when done. */
+    fun bulkMoveNotebooks(ids: List<String>, destFolderId: String?, onDone: (Result<Unit>) -> Unit) =
+        managementResult({ repository ->
+            val selection = requireLiveNotebooks(repository, ids)
+            require(destFolderId == null || repository.listAllFolders().any { it.id == destFolderId }) {
+                "Destination changed; choose another folder"
+            }
+            repository.bulkMoveNotebooks(selection, destFolderId)
+        }, onDone)
 
     /** Delete a notebook (and everything under it); callback posted when done. */
     fun deleteNotebook(notebookId: String, onDone: () -> Unit) {
@@ -900,13 +927,10 @@ class NotebookStore(
     }
 
     /** Soft-delete [ids] as standalone Recycle Bin tombstones (D3 → E2); callback posted when done. */
-    fun bulkDeleteNotebooks(ids: List<String>, onDone: () -> Unit) {
-        executor.execute {
-            runCatching { repo?.bulkDeleteNotebooks(ids) }
-                .onFailure { android.util.Log.e(TAG, "failed to bulk delete notebooks", it) }
-            poster { onDone() }
-        }
-    }
+    fun bulkDeleteNotebooks(ids: List<String>, onDone: (Result<Unit>) -> Unit) =
+        managementResult({ repository ->
+            repository.bulkDeleteNotebooks(requireLiveNotebooks(repository, ids))
+        }, onDone)
 
     /**
      * Soft-delete a folder and its whole subtree as one Recycle Bin batch (E2); callback posted
@@ -941,13 +965,12 @@ class NotebookStore(
     }
 
     /** Restore a bin entry (notebook or folder batch); callback posted when done. */
-    fun restoreBinEntry(entry: BinEntry, onDone: () -> Unit) {
-        executor.execute {
-            runCatching { repo?.restoreEntry(entry) }
-                .onFailure { android.util.Log.e(TAG, "failed to restore bin entry", it) }
-            poster { onDone() }
-        }
-    }
+    fun restoreBinEntry(entry: BinEntry, onDone: (Result<Unit>) -> Unit) =
+        managementResult({ repository ->
+            val current = repository.recycleBinEntries().firstOrNull { it.id == entry.id && it.kind == entry.kind }
+            require(current == entry) { "Recycle Bin changed; refresh before restoring" }
+            repository.restoreEntry(entry)
+        }, onDone)
 
     /** Permanently delete a bin entry (and its batch); callback posted when done. */
     fun permanentlyDeleteBinEntry(entry: BinEntry, onDone: () -> Unit) {

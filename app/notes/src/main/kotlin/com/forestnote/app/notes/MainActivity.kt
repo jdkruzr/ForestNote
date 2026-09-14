@@ -2077,7 +2077,11 @@ open class MainActivity : Activity() {
             AlertDialog.Builder(this)
                 .setTitle("Move ${ids.size} to…")
                 .setItems(labels) { _, which ->
-                    store.bulkMoveNotebooks(ids.toList(), targets[which].folderId) {
+                    store.bulkMoveNotebooks(ids.toList(), targets[which].folderId) { result ->
+                        if (result.isFailure) {
+                            Toast.makeText(this, R.string.library_management_failed, Toast.LENGTH_LONG).show()
+                            return@bulkMoveNotebooks
+                        }
                         if (libraryView.isShowing) libraryView.reload()
                         libraryView.exitSelectMode()
                     }
@@ -2101,7 +2105,11 @@ open class MainActivity : Activity() {
             .setTitle("Delete $n $what")
             .setMessage("Move $n $what to the Recycle Bin?")
             .setPositiveButton("Delete") { _, _ ->
-                store.bulkDeleteNotebooks(ids.toList()) {
+                store.bulkDeleteNotebooks(ids.toList()) { result ->
+                    if (result.isFailure) {
+                        Toast.makeText(this, R.string.library_management_failed, Toast.LENGTH_LONG).show()
+                        return@bulkDeleteNotebooks
+                    }
                     // The repo may have reassigned the active notebook if any deleted id was
                     // active. Defer the editor reload — see deferEditorReloadIfOverlayShowing.
                     if (deferEditorReloadIfOverlayShowing()) {

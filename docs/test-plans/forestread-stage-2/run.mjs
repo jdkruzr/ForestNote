@@ -140,6 +140,7 @@ try {
       'app/notes/src/main/kotlin/com/forestnote/app/notes/PendingNotebookCreation.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/NewNotebookDialog.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/NotebookLibraryDialogs.kt',
+      'app/notes/src/main/kotlin/com/forestnote/app/notes/NotebookManagementUi.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/EinkUiStyle.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/LibraryChromeView.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/LibrarySurfaceStyle.kt',

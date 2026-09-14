@@ -1,4 +1,20 @@
 <resources>
+    <string name="library_management_failed">Could Not Complete This Action. Refresh The Library And Try Again.</string>
+    <string name="library_manage_notebooks">Notebook Actions</string>
+    <string name="library_manage_select">Select Notebooks</string>
+    <string name="library_manage_done">Done Selecting</string>
+    <string name="library_manage_selection">%1$d Selected ▾</string>
+    <string name="library_manage_move">Move To…</string>
+    <string name="library_manage_trash">Move To Recycle Bin</string>
+    <string name="library_manage_bin">Recycle Bin</string>
+    <string name="library_manage_empty">Recycle Bin Is Empty</string>
+    <string name="library_manage_restore">Restore</string>
+    <string name="library_manage_root">Library Root</string>
+    <plurals name="library_manage_confirm">
+        <item quantity="one">Move %1$d Notebook To The Recycle Bin? Ink Is Kept And Can Be Restored.</item>
+        <item quantity="other">Move %1$d Notebooks To The Recycle Bin? Ink Is Kept And Can Be Restored.</item>
+    </plurals>
+    <string name="library_manage_working">Working…</string>
     <string name="library_notebook_view_heading">Notebook View · This Device</string>
     <string name="library_notebook_view">Notebook View</string>
     <string name="library_search_folder_names">Search Names In This Folder…</string>

@@ -40,6 +40,11 @@ internal class SharedLibraryView(
     private val notebooks=LibraryView()
     private val notebookPanel=LinearLayout(context).apply {orientation=VERTICAL}
     private val notebookHost=FrameLayout(context)
+    private val notebookManagement=NotebookManagementUi(notebookPanel,store,notebooks,{anchor,choices,heading->menu(anchor,choices,heading)})
+    private val notebookActions=button(context.getString(R.string.shared_library_filter,context.getString(R.string.library_manage_notebooks))) {
+        notebookManagement.actions(notebookActionsAnchor())
+    }.apply {tag="notebookActions"}
+    private val notebookSelection=button("") {notebookManagement.selection(notebookSelectionAnchor())}.apply {tag="notebookSelection";visibility=GONE}
     private val bookHost=LinearLayout(context).apply {orientation=VERTICAL}
     private val covers=BookCoverLoader(context.cacheDir,books::coverBytes)
     private val bookLayout=GridLayoutManager(context,1)
@@ -92,6 +97,16 @@ internal class SharedLibraryView(
         configureQuery(query,"bookQuery",R.string.shared_library_search,state.query)
         bookHost.addView(searchRow(query,viewChoice),LayoutParams(-1,-2))
         configureQuery(notebookQuery,"notebookQuery",R.string.library_search_folder_names,state.notebookQuery)
+        if(onCreateNotebook!=null && notebookCallbacks==null) {
+            val actionsRow=LinearLayout(context).apply {
+                gravity=Gravity.CENTER_VERTICAL;setPadding(inset,0,inset,0)
+                addView(notebookActions,LayoutParams(-2,-2).apply {marginEnd=gap})
+                addView(notebookSelection,LayoutParams(-2,-2))
+            }
+            notebookPanel.addView(HorizontalScrollView(context).apply {
+                isHorizontalScrollBarEnabled=false;addView(actionsRow)
+            },LayoutParams(-1,-2))
+        }
         notebookPanel.addView(searchRow(notebookQuery,notebookViewChoice).apply {
             setPadding(inset,0,inset,0)
         },LayoutParams(-1,-2))
@@ -101,6 +116,7 @@ internal class SharedLibraryView(
         notebookQuery.addTextChangedListener(object:TextWatcher {
             override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
             override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) {
+                notebooks.exitSelectMode()
                 state.notebookQuery=s.toString();notebooks.setNameQuery(state.notebookQuery)
             }
             override fun afterTextChanged(s:Editable?) {}
@@ -130,6 +146,8 @@ internal class SharedLibraryView(
             }
         }
     }
+    private fun notebookActionsAnchor():View=notebookActions
+    private fun notebookSelectionAnchor():View=notebookSelection
     private fun configureQuery(field:EditText,fieldTag:String,hint:Int,value:String) {
         field.setSingleLine(true);field.hint=context.getString(hint);field.contentDescription=context.getString(hint)
         field.filters=arrayOf(android.text.InputFilter.LengthFilter(256));field.tag=fieldTag;field.setText(value)
@@ -199,6 +217,8 @@ internal class SharedLibraryView(
         LibrarySurfaceStyle.action(filter,compact=compact);LibrarySurfaceStyle.action(more,compact=compact)
         LibrarySurfaceStyle.action(viewChoice,compact=compact)
         LibrarySurfaceStyle.action(notebookViewChoice,compact=compact)
+        LibrarySurfaceStyle.action(notebookActions,compact=compact);LibrarySurfaceStyle.action(notebookSelection,compact=compact)
+        (notebookActions.parent as? View)?.setPadding(inset,0,inset,0)
         (notebookQuery.parent as View).setPadding(inset,0,inset,0)
         for(field in listOf(query,notebookQuery)) {
             LibrarySurfaceStyle.input(field,search=true,compact=compact)
@@ -210,7 +230,7 @@ internal class SharedLibraryView(
         relayoutBooks()
     }
     private fun select(shelf:SharedLibraryState.Shelf) {
-        if(state.shelf!=shelf) {dismissNotebookPrompt();hideKeyboard()}
+        if(state.shelf!=shelf) {dismissNotebookPrompt();notebooks.exitSelectMode();hideKeyboard()}
         state.shelf=shelf
         if(shelf==SharedLibraryState.Shelf.NOTEBOOKS) hideKeyboard()
         notebookPanel.visibility=if(shelf==SharedLibraryState.Shelf.NOTEBOOKS) VISIBLE else GONE
@@ -232,7 +252,11 @@ internal class SharedLibraryView(
                 val content=LinearLayout(context).apply {orientation=VERTICAL}
                 if(onOpenNotebook==null) content.addView(TextView(context).apply {text=context.getString(R.string.shared_library_writer_pending);EinkUiStyle.text(this,R.dimen.eink_ui_meta_text);setPadding(pixels(8),pixels(4),pixels(8),pixels(4))})
                 val shelfHost=FrameLayout(context);content.addView(shelfHost,LayoutParams(-1,0,1f));notebookHost.addView(content)
-                notebooks.show(shelfHost,store,callbacks,state.notebooks,readOnly=true,sharedSurfaces=true)
+                notebooks.show(shelfHost,store,callbacks,state.notebooks,readOnly=true,sharedSurfaces=true,
+                    onSelectionChanged={selecting,ids ->
+                        notebookSelection.visibility=if(selecting) VISIBLE else GONE
+                        notebookSelection.text=context.getString(R.string.library_manage_selection,ids.size)
+                    })
             } else notebooks.show(notebookHost,store,callbacks,state.notebooks,sharedSurfaces=true)
         }
     }
@@ -245,6 +269,7 @@ internal class SharedLibraryView(
         dialog.setOnDismissListener {if(prompt===dialog) prompt=null}
     }
     private fun dismissNotebookPrompt() {
+        notebookManagement.dismiss()
         notebookPromptGeneration++;loadingNotebookPrompt=false
         prompt?.dismiss();prompt=null
     }
@@ -252,6 +277,7 @@ internal class SharedLibraryView(
         if(scope.isActive && isAttachedToWindow) notebooks.reload()
     }}
     private fun newFolder() {
+        notebookManagement.dismiss()
         if(!canPromptNotebook()) return
         val parent=notebooks.currentFolderId
         trackNotebookPrompt(NotebookLibraryDialogs.newFolder(context) {name ->
@@ -264,12 +290,14 @@ internal class SharedLibraryView(
         })
     }
     private fun folderProperties(folder:FolderCard) {
+        notebookManagement.dismiss()
         if(!canPromptNotebook()) return
         trackNotebookPrompt(NotebookLibraryDialogs.folder(context,folder,onSave={name ->
             if(name!=folder.name) store.renameFolder(folder.id,name) {notebookMutationDone()}
         }))
     }
     private fun notebookProperties(card:NotebookCard) {
+        notebookManagement.dismiss()
         if(!canPromptNotebook()) return
         trackNotebookPrompt(NotebookLibraryDialogs.notebook(context,
             NotebookMeta(card.id,card.name,card.createdAt,card.modifiedAt),
@@ -278,6 +306,7 @@ internal class SharedLibraryView(
             }))
     }
     private fun newNotebook() {
+        notebookManagement.dismiss()
         if(loadingNotebookPrompt || prompt!=null || onCreateNotebook==null) return
         loadingNotebookPrompt=true
         val epoch=++notebookPromptGeneration

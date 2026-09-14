@@ -42,6 +42,109 @@ class WriterHostQualificationTest {
                 ?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)==true
         }
     }
+
+    @Test fun sharedSelectionMovesTrashesAndRestoresWithoutChangingInkOrOpeningAnotherOwner()=runBlocking<Unit> {
+        val id="shared-management-${UUID.randomUUID()}"
+        val main=Handler(Looper.getMainLooper())
+        val opens=java.util.concurrent.atomic.AtomicInteger()
+        val executor=Executors.newSingleThreadExecutor()
+        val store=NotebookStore(repoProvider={opens.incrementAndGet();NotebookRepository.openIsolatedQualification(context,id)},
+            executor=executor,poster={main.post(it)},qualifyReaderStorage=true)
+        var scenario:ActivityScenario<ReaderHostQualificationActivity>?=null
+        fun rows(sql:String)=SQLiteDatabase.openDatabase(context.getDatabasePath("reader-qualification-$id.db").path,null,SQLiteDatabase.OPEN_READONLY).use {db ->
+            db.rawQuery(sql,null).use {c ->buildList {while(c.moveToNext()) add((0 until c.columnCount).map {
+                if(c.getType(it)==android.database.Cursor.FIELD_TYPE_BLOB) android.util.Base64.encodeToString(c.getBlob(it),2) else c.getString(it)
+            })}}
+        }
+        suspend fun <T> result(enqueue:((T)->Unit)->Unit):T=withTimeout(10000) {
+            CompletableDeferred<T>().also {d->enqueue {d.complete(it)}}.await()
+        }
+        suspend fun bin()=result<Result<List<com.forestnote.core.format.BinEntry>>>(store::managementBin).getOrThrow()
+        suspend fun native(action:(Activity)->Unit) = withContext(Dispatchers.Main) {
+            scenario!!.onActivity {action(it)}
+        }
+        suspend fun tag(name:String) {
+            var target:View?=null
+            waitUntil("Control $name") {native {a->target=a.findViewById<View>(android.R.id.content).findViewWithTag<View>(name)};target?.isShown==true}
+            withContext(Dispatchers.Main) {target!!.performClick()}
+        }
+        suspend fun card(name:String) {
+            var target:View?=null
+            waitUntil("Card $name") {native {a ->
+                val grid=a.findViewById<RecyclerView>(R.id.library_grid)
+                target=(0 until grid.childCount).map {grid.getChildAt(it)}.firstOrNull {
+                    (it.findViewById<android.widget.TextView>(R.id.card_name)?.text ?: it.findViewById<android.widget.TextView>(R.id.folder_name)?.text)?.toString()==name
+                }
+            };target!=null}
+            withContext(Dispatchers.Main) {target!!.performClick()}
+        }
+        suspend fun choose(label:Int) = clickLabel(context.getString(label))
+        suspend fun selectNotebook() {
+            tag("notebookActions");choose(R.string.library_manage_select)
+            waitUntil("Selection Entered") {var selecting=false;native {a ->
+                selecting=a.findViewById<View>(android.R.id.content).findViewWithTag<View>("notebookSelection").isShown
+            };selecting}
+            card("Move Me")
+            native {a ->
+                assertFalse(a.findViewById<View>(R.id.select_action_bar).isShown)
+                assertTrue(a.findViewById<View>(android.R.id.content).findViewWithTag<android.widget.Button>("notebookSelection").text.startsWith("1 "))
+            }
+        }
+        val release=java.util.concurrent.CountDownLatch(1)
+        try {
+            val identity=store.readerIdentity()
+            val notebook=store.syncCurrentNotebookId()
+            result<Unit> {done ->store.renameNotebook(notebook,"Move Me") {done(Unit)}}
+            store.save(Stroke(id="management-ink",points=listOf(StrokePoint(1000,1000,500,0),StrokePoint(3000,2000,600,1)),penWidthMin=7,penWidthMax=35))
+            val keeper=result<String> {store.createNotebook("Keep Me",onCreated=it)}
+            result<EditorPageSnapshot> {store.switchNotebook(keeper,it)}
+            val folder=result<String> {store.createFolder("Destination",null,it)}
+            val tables=listOf("app_state","page","stroke","text_box","reader_book","reader_stroke")
+            val contentBefore=tables.associateWith {rows("SELECT * FROM $it ORDER BY 1")}
+            val geometryBefore=rows("SELECT id,aspect_long_axis,page_width,page_height FROM notebook ORDER BY id")
+            fun ops()=rows("SELECT COUNT(*) FROM rhizome_outbox").single().single()!!.toInt()
+            val beforeOps=ops()
+            ReaderHostQualificationSession.store=store;ReaderHostQualificationSession.sharedLibrary=true;ReaderHostQualificationSession.writer=true
+            scenario=ActivityScenario.launch(ReaderHostQualificationActivity::class.java)
+            awaitActivity(ReaderHostQualificationActivity::class.java);ComposeChromeTest.click("shelf:NOTEBOOKS")
+            selectNotebook();tag("notebookSelection");choose(R.string.library_manage_move);clickLabel("Destination")
+            waitUntil("Moved") {result<List<com.forestnote.core.format.NotebookCard>> {store.listNotebookCardsInFolder(folder,it)}.any {it.id==notebook}}
+            waitUntil("Move Dismissed") {var focus=false;native {focus=it.hasWindowFocus()};focus}
+            card("Destination");selectNotebook();tag("notebookSelection");choose(R.string.library_manage_trash)
+            choose(android.R.string.cancel)
+            assertTrue(bin().isEmpty());assertEquals(beforeOps+1,ops())
+            tag("notebookSelection");choose(R.string.library_manage_trash)
+            // Hold the owner queue, accept, then recreate before commit. The accepted command
+            // must finish exactly once, while a restored UI must not replay the dialog.
+            val blocked=java.util.concurrent.CountDownLatch(1)
+            executor.execute {blocked.countDown();release.await(10,java.util.concurrent.TimeUnit.SECONDS)}
+            assertTrue(blocked.await(5,java.util.concurrent.TimeUnit.SECONDS))
+            choose(R.string.library_manage_trash)
+            scenario.recreate();release.countDown()
+            awaitActivity(ReaderHostQualificationActivity::class.java)
+            waitUntil("Trashed") {bin().any {it.id==notebook}}
+            assertEquals(beforeOps+2,ops())
+            // A restore draft is dismissible and must not become a command after recreation.
+            tag("notebookActions");choose(R.string.library_manage_bin);clickLabel("Move Me")
+            scenario.recreate();awaitActivity(ReaderHostQualificationActivity::class.java)
+            assertEquals(1,bin().size);assertEquals(beforeOps+2,ops())
+            tag("notebookActions");choose(R.string.library_manage_bin);clickLabel("Move Me");choose(R.string.library_manage_restore)
+            waitUntil("Restored") {bin().isEmpty()}
+            assertEquals(beforeOps+3,ops())
+            assertEquals(contentBefore,tables.associateWith {rows("SELECT * FROM $it ORDER BY 1")})
+            assertEquals(geometryBefore,rows("SELECT id,aspect_long_axis,page_width,page_height FROM notebook ORDER BY id"))
+            assertEquals(identity,store.readerIdentity());assertEquals(keeper,store.syncCurrentNotebookId());assertEquals(1,opens.get())
+            assertTrue(result<List<com.forestnote.core.format.NotebookCard>> {store.listNotebookCardsInFolder(folder,it)}.any {it.id==notebook})
+        } finally {
+            release.countDown()
+            withContext(Dispatchers.Main) {
+                ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<WriterHostQualificationActivity>().forEach {it.finish()}
+            }
+            scenario?.close();ReaderHostQualificationSession.cleanup?.join()
+            ReaderHostQualificationSession.store=null;ReaderHostQualificationSession.sharedLibrary=false;ReaderHostQualificationSession.writer=false
+            store.shutdown()
+        }
+    }
     private fun field(a:Activity,name:String)=MainActivity::class.java.getDeclaredField(name).apply {isAccessible=true}.get(a)
     private suspend fun writerReady():Activity {
         val a=awaitActivity(WriterHostQualificationActivity::class.java)

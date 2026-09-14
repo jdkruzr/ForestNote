@@ -47,6 +47,7 @@ class LibraryView {
     private var adapter: LibraryAdapter? = null
     private var breadcrumbView: BreadcrumbView? = null
     private var callbacks: Callbacks? = null
+    private var selectionChanged: ((Boolean, Set<String>) -> Unit)? = null
     // The folder the back chevron walks up to (one level up), set from the last path resolution.
     private var backTarget: String? = null
     private var reloadGeneration=0L
@@ -114,10 +115,12 @@ class LibraryView {
     fun selectedNotebookIds(): Set<String> = selectedIds.toSet()
 
     fun show(host: ViewGroup, store: NotebookStore, callbacks: Callbacks,
-             position:LibraryBrowsePosition?=null,readOnly:Boolean=false,sharedSurfaces:Boolean=false) {
+             position:LibraryBrowsePosition?=null,readOnly:Boolean=false,sharedSurfaces:Boolean=false,
+             onSelectionChanged:((Boolean,Set<String>)->Unit)?=null) {
         if (isShowing) return
         this.host = host
         this.store = store
+        selectionChanged = onSelectionChanged
         currentFolderId = position?.folder
         restorePosition=position
         val view = LayoutInflater.from(host.context).inflate(R.layout.view_library, host, false)
@@ -145,9 +148,11 @@ class LibraryView {
             loader = thumbnailLoader,
             onOpenFolder = { folder -> enterFolder(folder.id) },
             onFolderProperties = callbacks.onFolderProperties,
-            onOpenNotebook = callbacks.onOpenNotebook,
-            onNotebookProperties = callbacks.onNotebookProperties,
-            onToggleNotebook = { card -> toggleSelection(card.id) },
+            // Selection is authoritative immediately, not after RecyclerView's next bind.
+            // A quick tap while switching modes must never open a writer behind the shelf.
+            onOpenNotebook = { card -> if(selectMode) toggleSelection(card.id) else callbacks.onOpenNotebook(card) },
+            onNotebookProperties = { card -> if(!selectMode) callbacks.onNotebookProperties(card) },
+            onToggleNotebook = { card -> if(selectMode) toggleSelection(card.id) else callbacks.onOpenNotebook(card) },
             sharedSurfaces = sharedSurfaces,
         )
         adapter = libraryAdapter
@@ -296,7 +301,7 @@ class LibraryView {
         reload()
     }
 
-    private fun enterSelectMode() {
+    internal fun enterSelectMode() {
         selectMode = true
         selectedIds.clear()
         renderSelectChrome()
@@ -323,7 +328,7 @@ class LibraryView {
         view.findViewById<TextView>(R.id.text_library_select_caption).text =
             SelectModeLogic.captionFor(selectMode)
 
-        val barVisibility = if (selectMode) View.VISIBLE else View.GONE
+        val barVisibility = if (selectMode && selectionChanged == null) View.VISIBLE else View.GONE
         view.findViewById<View>(R.id.select_bar_rule).visibility = barVisibility
         view.findViewById<View>(R.id.select_action_bar).visibility = barVisibility
 
@@ -339,6 +344,7 @@ class LibraryView {
         view.findViewById<View>(R.id.btn_select_delete).apply {
             isEnabled = actionsEnabled; alpha = if (actionsEnabled) 1f else 0.3f
         }
+        selectionChanged?.invoke(selectMode, selectedIds.toSet())
     }
 
     fun hide() {
@@ -353,6 +359,7 @@ class LibraryView {
         folderItems = emptyList()
         breadcrumbView = null
         callbacks = null
+        selectionChanged = null
         backTarget = null
         currentFolderId = null
         selectMode = false

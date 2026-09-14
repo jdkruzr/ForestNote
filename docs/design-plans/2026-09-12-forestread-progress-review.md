@@ -305,6 +305,14 @@ the headless result does not activate production integration.
    gives both shelves the same aligned row, independent local view choices and explicit
    current-folder name filtering. Resume notebook management integration next; shared
    Settings, writer Penu and integrated Viwoods remain open.
+   **D58 notebook actions:** [shared selection, move and recovery](2026-09-14-forestread-shared-notebook-actions.md)
+   resumes that integration with top-aligned bulk actions, explicit trash/restore and
+   failure-aware same-owner callbacks reused by the writer. Export, folder cascade
+   deletion and permanent purge are not yet attached to the shared shelf.
+   **Queued internationalization:** [shared UI resource extraction](2026-09-14-forestread-internationalization.md)
+   records the user's request to replace inline chrome strings with a standard resource
+   scheme, including the HTML reader boundary, plurals, accessibility and pseudo-locale
+   checks. Start at a suitable shared Settings/Penu checkpoint; no language packs chosen yet.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

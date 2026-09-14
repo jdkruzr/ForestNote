@@ -110,7 +110,11 @@ class RecycleBinView {
         row.addView(Button(ctx).apply {
             text = "Restore"
             setOnClickListener {
-                store?.restoreBinEntry(entry) { reload() }
+                store?.restoreBinEntry(entry) { result ->
+                    if (root != null && result.isFailure) android.widget.Toast.makeText(ctx,
+                        R.string.library_management_failed, android.widget.Toast.LENGTH_LONG).show()
+                    reload()
+                }
             }
         })
         row.addView(Button(ctx).apply {

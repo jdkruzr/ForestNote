@@ -12,6 +12,40 @@ import kotlin.test.assertTrue
 
 /** D2: NotebookStore bulk-move + listAllFolders wrappers post their results off-thread. */
 class NotebookStoreBulkTest {
+    @Test fun `management rejects stale destinations and selections without partial writes`() {
+        val store=freshStore()
+        try {
+            val a=await<String> {store.createNotebook("Kept",null,onCreated=it)}
+            val before=await<List<NotebookCard>> {store.listNotebookCardsInFolder(null,it)}
+            val badMove=await<Result<Unit>> {store.bulkMoveNotebooks(listOf(a),"missing-folder",it)}
+            assertTrue(badMove.isFailure)
+            val badDelete=await<Result<Unit>> {store.bulkDeleteNotebooks(listOf(a,"missing-notebook"),it)}
+            assertTrue(badDelete.isFailure)
+            assertEquals(before,await<List<NotebookCard>> {store.listNotebookCardsInFolder(null,it)})
+            assertTrue(await<Result<List<com.forestnote.core.format.BinEntry>>> {store.managementBin(it)}.getOrThrow().isEmpty())
+        } finally {store.shutdown()}
+    }
+
+    @Test fun `management result distinguishes failure from empty and survives closed executor`() {
+        val store=NotebookStore(repoProvider={error("Deliberate open failure")},
+            executor=Executors.newSingleThreadExecutor(),poster={it.run()})
+        assertTrue(await<Result<List<com.forestnote.core.format.FolderMeta>>> {store.managementFolders(it)}.isFailure)
+        assertTrue(await<Result<Unit>> {store.bulkDeleteNotebooks(listOf("missing"),it)}.isFailure)
+        store.shutdown()
+        assertTrue(await<Result<List<com.forestnote.core.format.BinEntry>>> {store.managementBin(it)}.isFailure)
+    }
+
+    @Test fun `restore revalidates the saved bin entry and never repeats a stale restore`() {
+        val store=freshStore()
+        try {
+            val a=await<String> {store.createNotebook("Restorable",null,onCreated=it)}
+            assertTrue(await<Result<Unit>> {store.bulkDeleteNotebooks(listOf(a,a),it)}.isSuccess)
+            val entry=await<Result<List<com.forestnote.core.format.BinEntry>>> {store.managementBin(it)}.getOrThrow().single()
+            assertTrue(await<Result<Unit>> {store.restoreBinEntry(entry,it)}.isSuccess)
+            assertTrue(await<Result<Unit>> {store.restoreBinEntry(entry,it)}.isFailure)
+            assertTrue(await<List<NotebookCard>> {store.listNotebookCardsInFolder(null,it)}.any {it.id==a})
+        } finally {store.shutdown()}
+    }
 
     private fun freshStore(): NotebookStore =
         NotebookStore(
