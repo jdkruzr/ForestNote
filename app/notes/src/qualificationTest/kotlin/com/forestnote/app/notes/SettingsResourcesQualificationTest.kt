@@ -18,7 +18,7 @@ class SettingsResourcesQualificationTest {
             val view=LayoutInflater.from(themed).inflate(R.layout.view_settings,null,false)
             assertEquals(context.getString(R.string.settings_save_credentials),view.findViewById<TextView>(R.id.btn_sync_save).text)
             assertEquals(context.getString(R.string.settings_download_model),view.findViewById<TextView>(R.id.btn_download_recognition_model).text)
-            assertEquals(context.getString(R.string.settings_blank),view.findViewById<TextView>(R.id.rb_template_blank).text)
+            assertEquals(context.getString(R.string.settings_notebook_defaults),view.findViewById<TextView>(R.id.btn_notebook_defaults).text)
         }
     }
 

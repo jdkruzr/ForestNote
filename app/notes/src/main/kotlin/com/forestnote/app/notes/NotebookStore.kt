@@ -990,7 +990,17 @@ class NotebookStore(
         }
     }
 
-    /** Load the global settings off-thread; posts the decoded value (defaults on failure). */
+    /** Failure-aware local defaults read; unavailable storage is never an editable fallback. */
+    internal fun notebookDefaults(onResult: (Result<NotebookDefaultsDraft>) -> Unit) =
+        managementResult({ NotebookDefaultsDraft.from(it.settings()) }, onResult)
+
+    internal fun saveNotebookDefaults(patch: NotebookDefaultsPatch, onResult: (Result<NotebookDefaultsDraft>) -> Unit) =
+        managementResult({ repository ->
+            val settings = if (patch.isEmpty) repository.settings() else repository.updateSettings(patch::apply)
+            NotebookDefaultsDraft.from(settings)
+        }, onResult)
+
+    /** Legacy settings reader; shared editors use the failure-aware boundary above. */
     fun loadSettings(onResult: (Settings) -> Unit) {
         executor.execute {
             val settings = runCatching { repo?.settings() ?: Settings() }

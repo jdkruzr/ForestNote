@@ -35,6 +35,7 @@ internal class LibraryChromeView(
     private val onNewNotebook: () -> Unit,
     private val onNewFolder: () -> Unit,
     private val onDensity: () -> Unit,
+    private val onSettings: () -> Unit,
 ) : AbstractComposeView(context) {
     var shelf by mutableStateOf(initialShelf)
     var densityMode by mutableStateOf(UiDensity.AUTO)
@@ -60,6 +61,8 @@ internal class LibraryChromeView(
                 EinkButton(stringResource(R.string.library_density_choice, stringResource(densityLabel(densityMode))),
                     onDensity, Modifier.padding(end = gap).testTag("libraryDensity"), compact = compact,
                     description = stringResource(R.string.library_density))
+                EinkButton("", onSettings, Modifier.padding(end = gap).testTag("sharedSettings"),
+                    icon = R.drawable.ic_settings, description = stringResource(R.string.settings_notebook_defaults), compact = compact)
                 EinkButton("×", onClose, Modifier.widthIn(min = 42.dp).testTag("closeSharedLibrary"),
                     description = stringResource(R.string.shared_library_close), compact = compact)
             }

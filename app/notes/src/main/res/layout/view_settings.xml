@@ -67,44 +67,12 @@
             android:paddingEnd="20dp"
             android:paddingBottom="32dp">
 
-            <!-- ===== Editor ===== -->
-            <TextView style="@style/SettingsSection" android:text="@string/settings_editor" />
-
-            <TextView style="@style/SettingsLabel" android:text="@string/settings_default_page_template" />
-
-            <RadioGroup
-                android:id="@+id/rg_template"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <RadioButton android:id="@+id/rb_template_blank" style="@style/SettingsRadio" android:text="@string/settings_blank" />
-                <RadioButton android:id="@+id/rb_template_dot" style="@style/SettingsRadio" android:text="@string/settings_dot" />
-                <RadioButton android:id="@+id/rb_template_ruled" style="@style/SettingsRadio" android:text="@string/settings_ruled" />
-                <RadioButton android:id="@+id/rb_template_grid" style="@style/SettingsRadio" android:text="@string/settings_grid" />
-            </RadioGroup>
-
-            <!-- Pitch row: shown only when template != Blank; buttons added in code. -->
-            <LinearLayout
-                android:id="@+id/row_pitch"
+            <!-- Shared defaults editor: also used by the integrated Library. -->
+            <Button
+                android:id="@+id/btn_notebook_defaults"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical">
-
-                <TextView style="@style/SettingsLabel" android:text="@string/settings_pitch" />
-
-                <HorizontalScrollView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:scrollbars="none">
-
-                    <RadioGroup
-                        android:id="@+id/rg_pitch"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal" />
-                </HorizontalScrollView>
-            </LinearLayout>
+                android:text="@string/settings_notebook_defaults" />
 
             <!-- ===== Startup ===== -->
             <TextView style="@style/SettingsSection" android:text="@string/settings_startup" />
@@ -121,14 +89,6 @@
                 <RadioButton android:id="@+id/rb_start_library" style="@style/SettingsRadio" android:text="@string/settings_library" />
             </RadioGroup>
 
-            <CheckBox
-                android:id="@+id/check_prefill_timestamp"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:minHeight="44dp"
-                android:textSize="15sp"
-                android:textColor="@color/black"
-                android:text="@string/settings_prefill_timestamp" />
 
             <!-- ===== Local data ===== -->
             <TextView style="@style/SettingsSection" android:text="@string/settings_local_data" />

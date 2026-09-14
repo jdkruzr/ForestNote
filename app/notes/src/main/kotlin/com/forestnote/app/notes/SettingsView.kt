@@ -9,7 +9,6 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
@@ -22,7 +21,6 @@ import com.forestnote.app.notes.transcription.TranscriptionConfig
 import com.forestnote.core.format.CalDavOutboxEntry
 import com.forestnote.core.format.CalDavOutboxStatus
 import com.forestnote.app.notes.recognize.RecognitionModelManager
-import com.forestnote.core.format.PageTemplate
 import com.forestnote.core.format.Settings
 import com.forestnote.core.format.StartView
 import com.forestnote.core.format.TranscriptionProvider
@@ -45,7 +43,7 @@ import java.util.concurrent.TimeUnit
  * (not a second Activity) so it reuses MainActivity's single [NotebookStore] — the
  * single-writer invariant forbids a second DB connection.
  *
- * Loads the current [Settings] once, then commits each field independently:
+ * Notebook defaults use the shared explicit-Save editor. Other fields load [Settings] once:
  * radios persist on change; text fields on blur or the IME Done action (AC8.2).
  * Pure mapping (pitch presets / visibility) lives in [SettingsFormLogic].
  */
@@ -60,6 +58,7 @@ class SettingsView {
     private var secureCreds: SecureCredentialsStore? = null
     private var caldavDrainer: CalDavOutboxDrainer? = null
     private var onViwoodsNativePreviewChanged: ((Boolean) -> Unit)? = null
+    private var defaultsDialog: AlertDialog? = null
 
     /** Whether the overlay is currently attached. */
     val isShowing: Boolean get() = root != null
@@ -102,6 +101,7 @@ class SettingsView {
 
     /** Detach the overlay. */
     fun hide() {
+        defaultsDialog?.dismiss(); defaultsDialog = null
         scope?.cancel()
         scope = null
         modelManager = null
@@ -115,29 +115,12 @@ class SettingsView {
 
     private fun bind(view: View, store: NotebookStore, showViwoodsNativePreview: Boolean) {
         this.store = store
-        val rgTemplate = view.findViewById<RadioGroup>(R.id.rg_template)
-        val rowPitch = view.findViewById<View>(R.id.row_pitch)
-        val rgPitch = view.findViewById<RadioGroup>(R.id.rg_pitch)
-
-        // Build the pitch radio from the preset list so it can't drift from the logic.
-        val pitchButtons = SettingsFormLogic.pitchPresetsMm.mapIndexed { i, mm ->
-            RadioButton(view.context).apply {
-                id = PITCH_ID_BASE + i
-                text = context.getString(R.string.settings_pitch_mm, mm)
-                textSize = 15f
-                minHeight = (44 * resources.displayMetrics.density).toInt()
-                setPadding(paddingLeft + 4, paddingTop, paddingRight + 32, paddingBottom)
+        view.findViewById<Button>(R.id.btn_notebook_defaults).apply {
+            LibrarySurfaceStyle.action(this)
+            setOnClickListener {
+                if(defaultsDialog?.isShowing != true) defaultsDialog=NotebookDefaultsDialog.show(context,store)
             }
         }
-        pitchButtons.forEach { rgPitch.addView(it) }
-
-        val templateIds = mapOf(
-            PageTemplate.BLANK to R.id.rb_template_blank,
-            PageTemplate.DOT to R.id.rb_template_dot,
-            PageTemplate.RULED to R.id.rb_template_ruled,
-            PageTemplate.GRID to R.id.rb_template_grid
-        )
-        val idToTemplate = templateIds.entries.associate { (k, v) -> v to k }
 
         val rgStartView = view.findViewById<RadioGroup>(R.id.rg_start_view)
 
@@ -160,7 +143,6 @@ class SettingsView {
         val caldavSaveBtn = view.findViewById<Button>(R.id.btn_caldav_save)
         val binRetentionInput = view.findViewById<EditText>(R.id.input_bin_retention_days)
         val debugLogsCheck = view.findViewById<CheckBox>(R.id.check_debug_logs)
-        val prefillTimestampCheck = view.findViewById<CheckBox>(R.id.check_prefill_timestamp)
         val syncOnCloseCheck = view.findViewById<CheckBox>(R.id.check_sync_on_close)
         val syncEnabledCheck = view.findViewById<CheckBox>(R.id.check_sync_enabled)
         val viwoodsNativePreviewCheck = view.findViewById<CheckBox>(R.id.check_viwoods_native_preview)
@@ -169,10 +151,6 @@ class SettingsView {
         // While populating from loaded values, suppress the change listeners so the
         // programmatic set doesn't immediately write back.
         var loading = true
-
-        fun applyPitchVisibility(template: PageTemplate) {
-            rowPitch.visibility = if (SettingsFormLogic.pitchRowVisible(template)) View.VISIBLE else View.GONE
-        }
 
         fun selectedTranscriptionProvider(): TranscriptionProvider = when (transcriptionProviderGroup.checkedRadioButtonId) {
             R.id.rb_transcription_openai -> TranscriptionProvider.OPENAI_COMPATIBLE
@@ -204,9 +182,6 @@ class SettingsView {
 
         store.loadSettings { s ->
             loading = true
-            rgTemplate.check(templateIds.getValue(s.defaultTemplate))
-            applyPitchVisibility(s.defaultTemplate)
-            pitchButtons[SettingsFormLogic.selectedPitchIndex(s.defaultPitchMm)].isChecked = true
             rgStartView.check(if (s.startView == StartView.LIBRARY) R.id.rb_start_library else R.id.rb_start_last)
             syncInput.setText(s.syncServerUrl)
             // Sync username/password are read from ESP (post-migration); the Settings fields
@@ -236,7 +211,6 @@ class SettingsView {
             caldavPassInput.setText(caldav?.password.orEmpty())
             binRetentionInput.setText(s.recycleBinRetentionDays.toString())
             debugLogsCheck.isChecked = s.debugLogging
-            prefillTimestampCheck.isChecked = s.prefillNotebookNameTimestamp
             syncOnCloseCheck.isChecked = s.syncOnClose
             viwoodsNativePreviewCheck.isChecked = s.viwoodsNativePreview
             loading = false
@@ -245,11 +219,6 @@ class SettingsView {
         debugLogsCheck.setOnCheckedChangeListener { _, checked ->
             if (loading) return@setOnCheckedChangeListener
             store.updateSettings({ it.copy(debugLogging = checked) })
-        }
-
-        prefillTimestampCheck.setOnCheckedChangeListener { _, checked ->
-            if (loading) return@setOnCheckedChangeListener
-            store.updateSettings({ it.copy(prefillNotebookNameTimestamp = checked) })
         }
 
         syncOnCloseCheck.setOnCheckedChangeListener { _, checked ->
@@ -273,19 +242,6 @@ class SettingsView {
             val provider = selectedTranscriptionProvider()
             applyTranscriptionVisibility(provider)
             store.updateSettings(transform = { it.copy(transcriptionProvider = provider) })
-        }
-
-        rgTemplate.setOnCheckedChangeListener { _, checkedId ->
-            if (loading) return@setOnCheckedChangeListener
-            val template = idToTemplate[checkedId] ?: PageTemplate.BLANK
-            applyPitchVisibility(template)
-            store.updateSettings({ it.copy(defaultTemplate = template) })
-        }
-
-        rgPitch.setOnCheckedChangeListener { _, checkedId ->
-            if (loading || checkedId == -1) return@setOnCheckedChangeListener
-            val mm = SettingsFormLogic.pitchForIndex(checkedId - PITCH_ID_BASE)
-            store.updateSettings({ it.copy(defaultPitchMm = mm) })
         }
 
         rgStartView.setOnCheckedChangeListener { _, checkedId ->
@@ -721,8 +677,6 @@ class SettingsView {
     }
 
     private companion object {
-        // Base for code-generated pitch RadioButton ids (must be > 0 and stable).
-        const val PITCH_ID_BASE = 0x70_00_01
 
         // Content-Type for the PROPFIND probe body in onTestCalDavConnection.
         val MEDIA_XML = "application/xml; charset=utf-8".toMediaType()

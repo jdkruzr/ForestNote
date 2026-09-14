@@ -145,6 +145,8 @@ try {
       'app/notes/src/main/kotlin/com/forestnote/app/notes/WriterPenuView.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/PenWidthSettings.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/SettingsView.kt',
+      'app/notes/src/main/kotlin/com/forestnote/app/notes/NotebookDefaultsDraft.kt',
+      'app/notes/src/main/kotlin/com/forestnote/app/notes/NotebookDefaultsDialog.kt',
       'app/notes/src/main/res/values/settings.xml',
       'app/notes/src/main/res/values/penu.xml',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/EinkUiStyle.kt',

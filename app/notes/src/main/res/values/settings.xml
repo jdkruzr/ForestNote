@@ -1,9 +1,14 @@
 <resources>
+    <string name="settings_notebook_defaults">Notebook Defaults</string>
+    <string name="settings_defaults_description">Used by pages without their own template override. Handwriting and page dimensions stay unchanged. Changes apply only when you tap Save.</string>
+    <string name="settings_defaults_load_failed">Could not load notebook defaults. Nothing has been changed.</string>
+    <string name="settings_defaults_save_failed">Could not save notebook defaults. Your choices are still here; you can retry Save.</string>
+    <string name="settings_defaults_saving">Saving Notebook Defaults…</string>
     <!-- Settings chrome only. Stored enum keys, credentials and user data are not translated. -->
     <string name="settings_back_library">←  Library</string>
     <string name="settings_title">Settings</string>
     <string name="settings_editor">Editor</string>
-    <string name="settings_default_page_template">Default page template</string>
+    <string name="settings_default_page_template">Default Page Template</string>
     <string name="settings_blank">Blank</string>
     <string name="settings_dot">Dot</string>
     <string name="settings_ruled">Ruled</string>

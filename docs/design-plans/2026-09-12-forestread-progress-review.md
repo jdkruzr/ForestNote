@@ -322,6 +322,11 @@ the headless result does not activate production integration.
    **D61 Settings resources:** [presentation extraction and ownership boundary](2026-09-14-forestread-settings-resources.md)
    moves the existing Settings layout/dynamic chrome into Android resources and adds
    plural/format guards. Shared Settings navigation/capability wiring remains next.
+   **D62 local defaults:** [shared editor and failure-aware owner boundary](2026-09-14-forestread-shared-defaults.md)
+   adds the same explicit-Save template/pitch/naming dialog to both shelves and legacy
+   Settings. Untouched fields survive concurrent updates; accepted saves survive host
+   recreation without replay. Model/service capabilities, sync/recovery navigation and
+   integrated Viwoods qualification remain open.
    **Queued internationalization:** [shared UI resource extraction](2026-09-14-forestread-internationalization.md)
    records the user's request to replace inline chrome strings with a standard resource
    scheme, including the HTML reader boundary, plurals, accessibility and pseudo-locale

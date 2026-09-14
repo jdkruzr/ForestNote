@@ -55,7 +55,7 @@ internal class SharedLibraryView(
     private val query=EditText(context)
     private val notebookQuery=EditText(context)
     private val chrome=LibraryChromeView(context,state.shelf,onCreateNotebook!=null && notebookCallbacks==null,
-        {select(it)},onClose,{newNotebook()},{newFolder()},{densityMenu()})
+        {select(it)},onClose,{newNotebook()},{newFolder()},{densityMenu()},{openSettings()})
     private val filter=button("") {}
     private val viewChoice=button("") {bookViewMenu()}.apply {tag="bookView";contentDescription=context.getString(R.string.library_book_view)}
     private val notebookViewChoice=button("") {notebookViewMenu()}.apply {tag="notebookView";contentDescription=context.getString(R.string.library_notebook_view)}
@@ -274,6 +274,12 @@ internal class SharedLibraryView(
         notebookManagement.dismiss()
         notebookPromptGeneration++;loadingNotebookPrompt=false
         prompt?.dismiss();prompt=null
+    }
+    private fun openSettings() {
+        dismissNotebookPrompt();popup?.dismiss();hideKeyboard()
+        var opened:AlertDialog?=null
+        opened=NotebookDefaultsDialog.show(context,store,onSaved={notebookChanged()},onDismiss={if(prompt===opened) prompt=null})
+        prompt=opened
     }
     private fun notebookMutationDone() {post {
         if(scope.isActive && isAttachedToWindow) notebooks.reload()
