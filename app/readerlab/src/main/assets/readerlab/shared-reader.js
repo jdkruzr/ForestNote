@@ -5,22 +5,23 @@ import { loadAnnotations, createInkSlices } from './shared-annotations.js';
 import { setupSharedSelection } from './shared-selection.js';
 import { moreIcon } from './icons.js';
 import { setupEditorTools } from './shared-tools.js';
+import { setupSharedAnnotationBrowser } from './shared-annotation-browser.js';
 const $ = id => document.getElementById(id);
 const reader = new Reader($('reader'));
 reader.savedHighlightActions = true;
 for (const button of document.querySelectorAll('[data-icon="more"]')) button.append(moreIcon());
 const defaults = { ...reader.prefs };
 const pending = new Map(); let sequence = 0, current, opening = false;
-let editing = null, toolsUI;
+let editing = null, toolsUI, annotationNavigation = false;
 const report = message => { $('status').textContent = message; };
 const run = fn => async () => { try { await fn(); } catch (error) { report(error.message); } };
 // During terminal readback the native surface remains visible. Intermediate page/tile
 // notifications must not request display-wide flashes; Finish publishes one settled frame.
-const refreshReading = () => editing || selectionUI.pending ? Promise.resolve() : rpc('refresh');
+const refreshReading = () => editing || selectionUI.pending || annotationNavigation ? Promise.resolve() : rpc('refresh');
 const inkSlices = createInkSlices(reader, rpc, () => current, report, refreshReading);
 let resizePending = false, resizeTimer, viewportSize = `${$('reader').clientWidth}:${$('reader').clientHeight}`;
 function reflowAfterResize() {
-  if (!resizePending || editing || opening || reader.opening || reader.busy || reader.navigationLocked || reader.turning || !reader.doc || selectionUI.pending) return;
+  if (!resizePending || editing || opening || reader.opening || reader.busy || reader.navigationLocked || reader.turning || !reader.doc || selectionUI.pending || annotationNavigation) return;
   resizePending = false; reader.reflow().catch(error => report(error.message));
 }
 new ResizeObserver(() => {
@@ -52,6 +53,7 @@ for (const [dialog, closeButton] of [['shelves', 'closeShelves'], ['chapters', '
 setupImageZoom(reader, { native: () => rpc('refresh').catch(() => {}), syncMenuInput: () => {} });
 const text = (tag, value) => { const element = document.createElement(tag); element.textContent = value; return element; };
 async function shelves(after = null) {
+  $('browseAnnotations').hidden = !current;
   const page = await rpc('list', { after });
   if (!after) $('bookRows').replaceChildren();
   if (!page.books.length && !after) $('bookRows').append(text('p', 'No Books Yet. Import An EPUB Or MOBI To Begin.'));
@@ -101,6 +103,31 @@ reader.addEventListener('page', ({ detail }) => { $('page').textContent = `${det
 reader.addEventListener('error', ({ detail }) => report(detail.message));
 const selectionUI = setupSharedSelection(reader, $, { rpc, current: () => current, editing: () => editing, beginEdit, report, popups, settled: () => inkSlices.settled() });
 toolsUI = setupEditorTools(reader, $, { rpc, current: () => current, getEdit: () => editing, attachEdit, report, popups });
+setupSharedAnnotationBrowser($, { rpc, current: () => current, popups, report,
+  blocked: () => !!editing || opening || !!reader.selection || selectionUI.pending || annotationNavigation,
+  navigate: async id => {
+    annotationNavigation = true;
+    popups.close($('annotationBrowser')); reader.highlightMenuOpen = true;
+    for (const key of ['library', 'contents', 'reading', 'prev', 'next']) $(key).disabled = true;
+    try {
+      const saved = await loadAnnotations(rpc, current.token);
+      const a = saved.annotations.find(a => a.id === id);
+      if (!a || !Number.isInteger(a.anchor?.section) || !reader.book.sections[a.anchor.section]) throw new Error('Annotation Unavailable · Stored Data Preserved');
+      reader.annotations = saved.annotations;
+      // Host-owned navigation holds the input lock across fresh readback, chapter load and tiles.
+      await reader.pageTurn;
+      await reader.renderer.goTo({ index: a.anchor.section, anchor: 0 });
+      await reader.reflow(a.height > 0 ? { section: a.anchor.section, annotation: a.id, canvasY: 0 }
+        : { section: a.anchor.section, offset: a.anchor.start });
+      await inkSlices.settled();
+      report(reader.anchorState(a).status === 'unresolved' ? 'Passage Could Not Be Located · Stored Annotation Preserved' : 'Annotation · Tap The Highlight Or Writing To Edit');
+    } finally {
+      reader.highlightMenuOpen = false; annotationNavigation = false;
+      for (const key of ['library', 'contents', 'reading', 'prev', 'next']) $(key).disabled = false;
+      await rpc('refresh').catch(() => report('Refresh Unavailable'));
+    }
+  },
+});
 reader.addEventListener('edit', ({detail}) => { void beginEdit(detail).catch(error => report(error.message)); });
 function editChrome(active) {
   document.body.toggleAttribute('data-native-edit', active); $('editControls').hidden = !active;

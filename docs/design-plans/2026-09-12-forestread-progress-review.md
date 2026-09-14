@@ -255,6 +255,11 @@ the headless result does not activate production integration.
    retryable atomic contribution; Cancel authors nothing and ink/box geometry stay intact.
    Physical follow-up fixed the word popup blocking visible handles; its nonmodal coexistence
    now has hit-tested finger/stylus regression coverage on the Go (see the D44 follow-up).
+   **D45 annotation browser:** [offline, shared-owner browsing/search](2026-09-13-forestread-shared-annotation-browser.md)
+   adds a current-book entry inside Books, compact recognized-text/passage cards, type/scope
+   filters and bounded cursor scans. Only current fingerprint-matched recognition participates;
+   result navigation re-reads saved metadata and never begins an edit. Automatic native
+   recognition/model backfill and integrated Viwoods acceptance remain to be attached.
    The [library navigation outline](2026-09-13-forestread-library-navigation.md) records a proposed
    top-level Notebooks/Books switch; its final UI is not approved or implemented yet.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,

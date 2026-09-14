@@ -76,15 +76,16 @@ body.editingInk header{gap:var(--menu-gap)}
 .listTop{position:sticky;top:0;z-index:2;background:var(--menu-surface);border-bottom:var(--menu-border-strong)}
 .listTop .menuHeading{position:static;padding:0 var(--menu-heading-inset)}.listTop .menuHeading strong{flex:1}
 .listSearchRow{display:flex;flex-wrap:wrap;align-items:center;gap:var(--menu-gap);padding:5px 8px}
-#listSearch{width:100%;min-width:0;padding:4px 7px;min-height:var(--menu-control-min-height)}
-#listCount{font-size:var(--menu-font-meta)}
+#listSearch,#annotationSearch{width:100%;min-width:0;padding:4px 7px;min-height:var(--menu-control-min-height)}
+#listCount,#annotationCount,#annotationBook{font-size:var(--menu-font-meta)}
+#annotationBook{white-space:nowrap;text-overflow:ellipsis;overflow:hidden;max-width:100%}
 #annotationFilters{display:flex;gap:5px;padding:0 var(--menu-heading-inset) 6px}
 #annotationFilters select{flex:1;min-width:0;max-width:60%;font-size:12px;min-height:var(--menu-choice-min-height);padding:3px}
-#listBody{padding:0 var(--menu-inset) var(--menu-gap)}
+#listBody,#annotationRows{padding:0 var(--menu-inset) var(--menu-gap)}
 .contentsEntry{display:block;width:100%;text-align:start;margin-bottom:3px;min-height:var(--menu-control-min-height);padding:5px 10px;font-size:var(--menu-font-choice);line-height:1.25;overflow-wrap:anywhere}
 .contentsEntry[aria-current=page]{background:var(--menu-ink);color:var(--menu-surface);font-weight:600}
 .contentsGroup{font-size:var(--menu-font-section);font-weight:700;background:var(--menu-section-fill);border-top:var(--menu-border-strong);margin:3px 0 0;padding:4px 10px}
-#listBody .annotationEntry{display:flex;align-items:flex-start;gap:var(--menu-gap);border:0;margin-bottom:4px;padding:0;position:relative}
+#listBody .annotationEntry,#annotationRows .annotationEntry{display:flex;align-items:flex-start;gap:var(--menu-gap);border:0;margin-bottom:4px;padding:0;position:relative}
 .annotationJump{flex:1;min-width:0;text-align:start;padding:8px 5px;display:flex;flex-direction:column;gap:var(--menu-gap)}
 .annotationText,.annotationQuote{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;-webkit-line-clamp:3;font-size:var(--menu-font-choice);line-height:1.25}
 .annotationQuote{font-size:12px;-webkit-line-clamp:2;font-weight:normal}

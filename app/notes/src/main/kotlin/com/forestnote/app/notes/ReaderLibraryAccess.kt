@@ -107,6 +107,8 @@ internal class ReaderLibraryAccess(
         page(s.projections.list(book,after,limit+1),limit)
     }
     suspend fun annotation(id:String):AnnotationProjection? = request {it.projections.read(id)}
+    suspend fun browseAnnotations(book:String,after:String="",query:String="",kind:String="all",scope:String="all",limit:Int=8):JsonObject =
+        request {ReaderAnnotationBrowser.page(it,book,after,query,kind,scope,limit)}
     /** Book-scoped read for a renderer lease. A foreign annotation ID grants no access. */
     suspend fun annotationForBook(book:String,id:String):AnnotationProjection? = request {s ->
         check(s.books.open(book)?.deleted==false) {"Book unavailable"}

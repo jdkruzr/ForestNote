@@ -25,6 +25,51 @@ class ReaderAnnotationRenderingTest {
     private val instrumentation=InstrumentationRegistry.getInstrumentation()
     private val context get()=instrumentation.targetContext
 
+    @Test fun annotationBrowserReadsCurrentRecognitionAndNavigatesWithoutAuthoring()=runBlocking<Unit> {
+        val id="browser-${UUID.randomUUID()}"
+        val store=NotebookStore(repoProvider={NotebookRepository.openIsolatedQualification(context,id)},
+            executor=Executors.newSingleThreadExecutor(),poster={it.run()},qualifyReaderStorage=true)
+        var activity:ActivityScenario<ReaderHostQualificationActivity>?=null
+        suspend fun js(expression:String):String=withContext(Dispatchers.Main) {
+            val result=CompletableDeferred<String>()
+            checkNotNull(ReaderHostQualificationSession.view).web.evaluateJavascript(expression) {result.complete(it)}
+            withTimeout(10000) {result.await()}
+        }
+        suspend fun waitFor(expression:String)=withTimeout(45000) {while(js(expression)!="true") delay(50)}
+        fun history()=SQLiteDatabase.openDatabase(context.getDatabasePath("reader-qualification-$id.db").path,null,SQLiteDatabase.OPEN_READONLY).use {db ->
+            db.rawQuery("SELECT count(*) FROM rhizome_outbox",null).use {c->c.moveToFirst();c.getLong(0)}
+        }
+        try {
+            val access=store.readerLibraryForQualification(context.cacheDir)
+            val book=access.importBook("book",{fixture().inputStream()}).book.id
+            val session=access.createAnnotation("create","note",book,"edit",
+                VersionedJson("""{"version":1,"section":0,"start":0,"end":5,"quote":"Write","prefix":"","suffix":" here."}"""),10000,1000)
+            access.appendAnnotationStroke("stroke",session,ReaderInkCodec.encode(Stroke(id="stroke",points=listOf(StrokePoint(100,100,500,0),StrokePoint(500,500,500,1)))))
+            access.finishAnnotation("finish",session)
+            store.withReader {it.state.saveRecognition("ocr","note",checkNotNull(access.annotation("note")!!.inputHash),"fixture",null,"en","ready","Electric Café Marmalade")}
+            val before=history()
+            ReaderHostQualificationSession.store=store;activity=ActivityScenario.launch(ReaderHostQualificationActivity::class.java)
+            withTimeout(15000) {while(ReaderHostQualificationSession.view==null) delay(50)}
+            waitFor("typeof forestReadOpen==='function'");js("forestReadOpen(${JSONObject.quote(book)});true")
+            waitFor("forestReadState().inkTiles>0 && !forestReadState().opening")
+            val bounds=js("JSON.stringify(document.getElementById('reader').getBoundingClientRect())")
+            js("document.getElementById('library').click();true");waitFor("document.getElementById('shelves').open")
+            js("document.getElementById('browseAnnotations').click();true")
+            waitFor("document.querySelector('#annotationRows .annotationText')?.textContent==='Electric Café Marmalade'")
+            assertEquals(bounds,js("JSON.stringify(document.getElementById('reader').getBoundingClientRect())"))
+            js("document.getElementById('annotationSearch').value='absent';document.getElementById('annotationSearch').dispatchEvent(new Event('input'));true")
+            waitFor("document.getElementById('annotationCount').textContent==='0 Results · 1 Checked'")
+            js("document.getElementById('annotationSearch').value='cafe';document.getElementById('annotationSearch').dispatchEvent(new Event('input'));true")
+            waitFor("document.getElementById('annotationCount').textContent==='1 Results · 1 Checked'")
+            js("document.querySelector('#annotationRows .annotationJump').click();true")
+            waitFor("document.getElementById('status').textContent==='Annotation · Tap The Highlight Or Writing To Edit'")
+            assertEquals("null",js("forestReadState().editing"));assertNull(access.documentEdit)
+            assertEquals(before,history())
+        } finally {
+            activity?.close();ReaderHostQualificationSession.cleanup?.join();ReaderHostQualificationSession.store=null;store.shutdown()
+        }
+    }
+
     @Test fun canonicalVisibleTilesMatchSharedSurfaceForEveryBrush() {
         check(Looper.myLooper()!=Looper.getMainLooper())
         for(kind in BrushKind.entries) {

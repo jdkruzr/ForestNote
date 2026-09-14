@@ -8,6 +8,7 @@ import com.forestnote.core.ink.BrushKind
 import com.forestnote.core.reader.*
 import io.rhizome.core.assetDigest
 import kotlinx.coroutines.*
+import kotlinx.serialization.json.*
 import org.junit.Test
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
@@ -23,6 +24,59 @@ import java.util.zip.ZipOutputStream
 import kotlin.test.*
 
 class ReaderLibraryAccessTest {
+    @Test fun annotationBrowserSearchIsOfflineLiteralUnicodeAndReadOnly()=runBlocking<Unit> {
+        val file=File(temp.root,"browse.db");val s=open(file)
+        try {
+            val a=s.readerLibraryForQualification(temp.root)
+            val book=a.importBook("book",{bytes().inputStream()}).book.id
+            val other=a.importBook("other",{bytes("Other Book").inputStream()}).book.id
+            val edit=a.createAnnotation("note","note",book,"ink",anchor,10000,1000)
+            a.appendAnnotationStroke("stroke",edit,ink("stroke"))
+            a.createAnnotation("highlight","highlight",book,"highlight",anchor,10000,0)
+            a.createAnnotation("foreign","foreign",other,"foreign",anchor,10000,1000)
+            val hash=checkNotNull(a.annotation("note")!!.inputHash)
+            s.withReader {it.state.saveRecognition("ocr","note",hash,"fixture",null,"en","ready","CAFÉ 50%_ 東京")}
+            val history=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            fun ids(page:JsonObject)=page.getValue("entries").jsonArray.map {it.jsonObject.getValue("annotation").jsonObject.getValue("id").jsonPrimitive.content}
+            assertEquals(listOf("note"),ids(a.browseAnnotations(book,query="cafe 東京",scope="handwriting")))
+            assertEquals(listOf("note"),ids(a.browseAnnotations(book,query="50%_")))
+            assertTrue(ids(a.browseAnnotations(book,query="50__")).isEmpty())
+            assertEquals(listOf("highlight"),ids(a.browseAnnotations(book,kind="highlights",query="pancakes",scope="passage")))
+            assertTrue(ids(a.browseAnnotations(book,query="cafe",scope="passage")).isEmpty())
+            val first=a.browseAnnotations(book,limit=1);assertEquals(listOf("highlight"),ids(first))
+            assertEquals(listOf("note"),ids(a.browseAnnotations(book,after=first.getValue("next").jsonPrimitive.content,limit=1)))
+            assertEquals(history,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+            a.appendAnnotationStroke("changed",edit,ink("changed"))
+            assertTrue(ids(a.browseAnnotations(book,query="cafe")).isEmpty(),"Old ink recognition must disappear")
+            val missing=a.browseAnnotations(book,kind="notes").getValue("entries").jsonArray.single().jsonObject
+            assertFalse(missing.getValue("recognitionAvailable").jsonPrimitive.boolean)
+            a.setDeleted("trash",book,true);assertFails {a.browseAnnotations(book)}
+        } finally {s.shutdown()}
+    }
+
+    @Test fun annotationBrowserSearchesBeyondPreviewAndReportsBudgetFailure()=runBlocking<Unit> {
+        val file=File(temp.root,"browse-budget.db");val s=open(file)
+        try {
+            val a=s.readerLibraryForQualification(temp.root);val book=a.importBook("book",{bytes().inputStream()}).book.id
+            a.createAnnotation("note","note",book,"ink",anchor,10000,1000)
+            val hash=checkNotNull(a.annotation("note")!!.inputHash)
+            s.withReader {it.state.saveRecognition("long","note",hash,"fixture",null,"en","ready","x".repeat(6000)+"needle")}
+            val hit=a.browseAnnotations(book,query="needle").getValue("entries").jsonArray.single().jsonObject
+            assertEquals(4096,hit.getValue("recognized").jsonPrimitive.content.length)
+            assertTrue(hit.getValue("recognitionTruncated").jsonPrimitive.boolean)
+            // A malformed externally modified library must not allocate an unbounded text
+            // value just to browse it. Normal authoring/ingress rejects this row already.
+            DriverManager.getConnection("jdbc:sqlite:${file.path}").use {c->
+                c.prepareStatement("UPDATE reader_recognition SET text=?").use {q->q.setString(1,"x".repeat(2*1024*1024+1));q.executeUpdate()}
+            }
+            val history=sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq")
+            val page=a.browseAnnotations(book)
+            assertEquals(1,page.getValue("unavailable").jsonPrimitive.int)
+            assertTrue(page.getValue("entries").jsonArray.isEmpty())
+            assertEquals(history,sql(file,"SELECT * FROM rhizome_outbox ORDER BY op_seq"))
+        } finally {s.shutdown()}
+    }
+
     private val anchor=VersionedJson("""{"version":1,"section":0,"start":0,"end":12,"quote":"No pancakes.","prefix":"","suffix":""}""")
     private fun ink(id:String,y:Int=100)=InkRecord(id,-16777216,1,3,"ballpoint",1,42,
         ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN).putInt(40).putInt(y).putInt(500).putInt(0).putInt(1).array())

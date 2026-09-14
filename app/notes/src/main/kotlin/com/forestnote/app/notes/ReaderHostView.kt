@@ -248,6 +248,12 @@ internal class ReaderHostView(context:Context,private val library:ReaderLibraryA
                 withContext(Dispatchers.Main) {documentInk?.release();documentInk?.let(::removeView);documentInk=null;editingToken=null;inkBackend?.attachHost(web)}
                 library.acknowledgeDocumentEdit(edit);JSONObject.NULL
             }
+            "browseAnnotations" -> {
+                check(!editing)
+                val book=checkNotNull(books[request.getString("token")]).snapshot.book.id
+                JSONObject(library.browseAnnotations(book,request.optString("after"),request.optString("query"),
+                    request.optString("kind","all"),request.optString("scope","all")).toString())
+            }
             "annotations" -> {
                 val book=checkNotNull(books[request.getString("token")]).snapshot.book.id
                 val page=library.annotations(book,request.optString("after"),limit=8)

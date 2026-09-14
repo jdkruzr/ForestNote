@@ -64,4 +64,20 @@ class ReaderStateRepository internal constructor(private val s: ReaderStorage) {
             it.getString("id")!!
         }.mapNotNull { s.row("reader_recognition", it) }
     }
+
+    /** Bounded read for offline browsing. Probe bytes before materializing recognition text;
+     * a caller must report an incomplete search rather than silently truncate a large result.
+     * Producer IDs are immutable and provide a stable cursor, not a new author priority.
+     */
+    suspend fun recognitionPage(annotation:String,inputHash:String,afterProducer:String="",limit:Int=8):List<StoredRecord> =
+        withContext(s.dispatcher) {s.db.transaction {
+            require(isAssetDigest(inputHash) && limit in 1..16)
+            val ids=s.db.query("""SELECT id,length(CAST(text AS BLOB)) AS bytes FROM reader_recognition
+                WHERE annotation_id=? AND input_hash=? AND status='ready' AND producer_id>?
+                ORDER BY producer_id LIMIT ?""",listOf(annotation,inputHash,afterProducer,limit.toLong())) {
+                it.getString("id")!! to it.getLong("bytes")!!
+            }
+            require(ids.sumOf {it.second}<=2*1024*1024) {"Recognition page exceeds search budget"}
+            ids.mapNotNull {s.row("reader_recognition",it.first)}
+        }}
 }
