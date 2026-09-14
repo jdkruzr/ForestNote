@@ -1,4 +1,7 @@
 <resources>
+    <string name="library_options_for">Options For %1$s</string>
+    <string name="library_book_menu_heading">Book Actions</string>
+    <string name="library_filter_menu_heading">Show</string>
     <string name="shared_library_title">Library</string>
     <string name="shared_library_notebooks">Notebooks</string>
     <string name="shared_library_books">Books</string>

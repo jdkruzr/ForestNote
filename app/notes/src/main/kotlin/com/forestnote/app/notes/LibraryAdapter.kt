@@ -5,6 +5,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
+import android.widget.Button
+import android.widget.LinearLayout
 import androidx.recyclerview.widget.RecyclerView
 import com.forestnote.core.format.FolderCard
 import com.forestnote.core.format.NotebookCard
@@ -24,7 +26,8 @@ class LibraryAdapter(
     private val onFolderProperties: (FolderCard) -> Unit,
     private val onOpenNotebook: (NotebookCard) -> Unit,
     private val onNotebookProperties: (NotebookCard) -> Unit,
-    private val onToggleNotebook: (NotebookCard) -> Unit
+    private val onToggleNotebook: (NotebookCard) -> Unit,
+    private val sharedSurfaces: Boolean = false,
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     private val items = mutableListOf<LibraryItem>()
@@ -68,11 +71,47 @@ class LibraryAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
         val inflater = LayoutInflater.from(parent.context)
-        return if (viewType == TYPE_FOLDER) {
+        val holder = if (viewType == TYPE_FOLDER) {
             FolderVH(inflater.inflate(R.layout.item_folder_card, parent, false))
         } else {
             NotebookVH(inflater.inflate(R.layout.item_notebook_card, parent, false))
         }
+        if (sharedSurfaces) {
+            val context = parent.context
+            val card = holder.itemView as LinearLayout
+            val inset = LibrarySurfaceStyle.px(context, R.dimen.library_surface_inset)
+            val gap = LibrarySurfaceStyle.px(context, R.dimen.library_surface_gap)
+            card.background = LibrarySurfaceStyle.surface(context)
+            card.setPadding(inset, inset, inset, inset)
+            (card.layoutParams as android.view.ViewGroup.MarginLayoutParams).setMargins(gap / 2, gap / 2, gap / 2, gap / 2)
+            val preview = card.getChildAt(0)
+            preview.layoutParams.height = LibrarySurfaceStyle.px(context, R.dimen.library_preview_height)
+            preview.background = LibrarySurfaceStyle.surface(context)
+            preview.clipToOutline = true
+            if (holder is NotebookVH) {
+                holder.thumb.scaleType = ImageView.ScaleType.FIT_CENTER
+                holder.thumb.setBackgroundColor(android.graphics.Color.WHITE)
+                holder.name.maxLines = 2
+                holder.name.minLines = 2
+                holder.name.setPadding(0, gap, 0, 0)
+                EinkUiStyle.text(holder.name, R.dimen.eink_ui_label_text, medium = true)
+            } else if (holder is FolderVH) {
+                holder.name.maxLines = 2
+                holder.name.minLines = 2
+                holder.name.setPadding(0, gap, 0, 0)
+                EinkUiStyle.text(holder.name, R.dimen.eink_ui_label_text, medium = true)
+            }
+            val metadata = if (holder is NotebookVH) holder.meta else (holder as FolderVH).count
+            card.removeView(metadata)
+            val footer = LinearLayout(context).apply {gravity = android.view.Gravity.CENTER_VERTICAL}
+            footer.addView(metadata, LinearLayout.LayoutParams(0, -2, 1f))
+            footer.addView(Button(context).apply {
+                text = "⋯"; tag = "cardOptions"
+                LibrarySurfaceStyle.action(this)
+            }, LinearLayout.LayoutParams(LibrarySurfaceStyle.px(context, R.dimen.eink_ui_control_height), -2))
+            card.addView(footer, LinearLayout.LayoutParams(-1, -2))
+        }
+        return holder
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
@@ -88,6 +127,10 @@ class LibraryAdapter(
         holder.count.text = if (n == 1L) "1 notebook" else "$n notebooks"
         holder.itemView.setOnClickListener { onOpenFolder(card) }
         holder.itemView.setOnLongClickListener { onFolderProperties(card); true }
+        holder.itemView.findViewWithTag<Button>("cardOptions")?.apply {
+            contentDescription = context.getString(R.string.library_options_for, card.name)
+            setOnClickListener { onFolderProperties(card) }
+        }
     }
 
     private fun bindNotebook(holder: NotebookVH, card: NotebookCard) {
@@ -103,6 +146,11 @@ class LibraryAdapter(
         holder.meta.text = "${card.pageCount}p · ${RelativeTime.format(card.modifiedAt, System.currentTimeMillis())}"
         // Async first-page thumbnail (placeholder first, swapped in when rendered; recycling-safe).
         loader.load(card.id, holder.thumb)
+        holder.itemView.findViewWithTag<Button>("cardOptions")?.apply {
+            visibility = if (selectMode) View.GONE else View.VISIBLE
+            contentDescription = context.getString(R.string.library_options_for, card.name)
+            setOnClickListener { onNotebookProperties(card) }
+        }
         if (selectMode) {
             // Tap toggles selection; long-press is suppressed so it can't open Properties.
             holder.check.visibility = if (card.id in selectedIds) View.VISIBLE else View.GONE

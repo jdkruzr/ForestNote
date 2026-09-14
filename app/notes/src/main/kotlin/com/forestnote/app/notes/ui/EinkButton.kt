@@ -22,18 +22,25 @@
 package com.forestnote.app.notes.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -60,12 +67,16 @@ internal fun EinkButton(
     enabled: Boolean = true,
     selected: Boolean? = null,
     description: String? = null,
+    primary: Boolean = false,
+    outlined: Boolean = true,
+    icon: Int? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val focused by interactionSource.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(dimensionResource(R.dimen.eink_ui_corner_radius))
-    val inverse = enabled && (selected == true || pressed || focused)
+    val shape = RoundedCornerShape(dimensionResource(if (selected == null)
+        R.dimen.library_surface_radius else R.dimen.eink_ui_corner_radius))
+    val inverse = enabled && (primary || selected == true || pressed || focused)
     val backgroundColor = if (inverse) Color.Black else Color.White
     val contentColor = if (inverse) Color.White else Color.Black
     val borderWidth = dimensionResource(R.dimen.eink_ui_border)
@@ -82,7 +93,7 @@ internal fun EinkButton(
             .heightIn(min = dimensionResource(R.dimen.eink_ui_control_height))
             .clip(shape)
             .background(backgroundColor, shape)
-            .border(borderWidth, Color.Black, shape)
+            .then(if (outlined) Modifier.border(borderWidth, Color.Black, shape) else Modifier)
             .semantics(mergeDescendants = true) {
                 role = semanticRole
                 if (selected != null) this.selected = selected
@@ -91,7 +102,11 @@ internal fun EinkButton(
         interactionSource = interactionSource,
         indication = null,
     ) {
-        BasicText(label, style = TextStyle(color = contentColor, fontSize = fontSize,
-            fontWeight = FontWeight.Medium, textAlign = TextAlign.Center))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (icon != null) Image(painterResource(icon), null,
+                Modifier.size(dimensionResource(R.dimen.eink_ui_small_icon)), colorFilter = ColorFilter.tint(contentColor))
+            BasicText(label, style = TextStyle(color = contentColor, fontSize = fontSize,
+                fontWeight = FontWeight.Medium, textAlign = TextAlign.Center))
+        }
     }
 }

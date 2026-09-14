@@ -10,4 +10,10 @@
     <dimen name="eink_ui_control_height">42dp</dimen>
     <dimen name="eink_ui_header_height">46dp</dimen>
     <dimen name="eink_ui_small_icon">20dp</dimen>
+    <!-- Shared Library surfaces: Composables-inspired grouping without shadows. -->
+    <dimen name="library_surface_radius">12dp</dimen>
+    <dimen name="library_surface_inset">12dp</dimen>
+    <dimen name="library_surface_gap">8dp</dimen>
+    <dimen name="library_card_min_width">240dp</dimen>
+    <dimen name="library_preview_height">160dp</dimen>
 </resources>

@@ -70,7 +70,7 @@ class LibraryView {
     fun selectedNotebookIds(): Set<String> = selectedIds.toSet()
 
     fun show(host: ViewGroup, store: NotebookStore, callbacks: Callbacks,
-             position:LibraryBrowsePosition?=null,readOnly:Boolean=false) {
+             position:LibraryBrowsePosition?=null,readOnly:Boolean=false,sharedSurfaces:Boolean=false) {
         if (isShowing) return
         this.host = host
         this.store = store
@@ -90,13 +90,25 @@ class LibraryView {
 
         val grid = view.findViewById<RecyclerView>(R.id.library_grid)
         grid.layoutManager = GridLayoutManager(host.context, COLUMNS)
+        if (sharedSurfaces) {
+            grid.itemAnimator = null
+            // Recalculate from the measured host, including split-screen and font scaling.
+            grid.addOnLayoutChangeListener { _, left, _, right, _, _, _, _, _ ->
+                val minWidth = LibrarySurfaceStyle.px(host.context, R.dimen.library_card_min_width) *
+                    host.resources.configuration.fontScale.coerceAtLeast(1f)
+                val columns = ((right - left - grid.paddingLeft - grid.paddingRight) / minWidth).toInt().coerceIn(1, 4)
+                val layout = grid.layoutManager as GridLayoutManager
+                if (layout.spanCount != columns) layout.spanCount = columns
+            }
+        }
         val libraryAdapter = LibraryAdapter(
             loader = thumbnailLoader,
             onOpenFolder = { folder -> enterFolder(folder.id) },
             onFolderProperties = callbacks.onFolderProperties,
             onOpenNotebook = callbacks.onOpenNotebook,
             onNotebookProperties = callbacks.onNotebookProperties,
-            onToggleNotebook = { card -> toggleSelection(card.id) }
+            onToggleNotebook = { card -> toggleSelection(card.id) },
+            sharedSurfaces = sharedSurfaces,
         )
         adapter = libraryAdapter
         grid.adapter = libraryAdapter

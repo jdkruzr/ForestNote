@@ -14,6 +14,9 @@ in `assets/licenses/composables.txt` as well as the source headers.
   composition over UnstyledButton; maps visuals to existing FN resources. Omits bounce,
   ripple, translucency, hover-only link variants, adaptive padding and the upstream 2.x
   theming APIs. Adds static pressed/focused states, e-ink label sizes and contrast.
+  D54 adds optional leading FN icons, explicit primary/outlined variants, unboxed
+  tabs inside a shared frame, and named Library surface radii. These remain local
+  adaptations, not additional upstream component imports.
 
 Pinned host: AndroidX Compose 1.7.8, Kotlin Compose compiler 2.0.21. This avoids silently
 upgrading all FN modules to the current upstream Kotlin 2.4/Compose toolchain. Before

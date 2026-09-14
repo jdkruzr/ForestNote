@@ -2,6 +2,8 @@ package com.forestnote.app.notes
 
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -43,33 +45,52 @@ internal class LibraryChromeView(
     @Composable
     @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
     override fun Content() {
-        Column(Modifier.fillMaxWidth().background(Color.White).semantics { testTagsAsResourceId = true }) {
+        val inset = dimensionResource(R.dimen.library_surface_inset)
+        val gap = dimensionResource(R.dimen.library_surface_gap)
+        Column(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = inset)
+            .semantics { testTagsAsResourceId = true }) {
             Row(Modifier.fillMaxWidth().heightIn(min = dimensionResource(R.dimen.eink_ui_header_height)),
                 verticalAlignment = Alignment.CenterVertically) {
-                // Overflow stays reachable at narrow widths or large accessibility font scales.
-                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
-                    BasicText(stringResource(R.string.shared_library_title),
-                        Modifier.padding(start = 8.dp, end = 8.dp),
-                        style = TextStyle(color = Color.Black, fontWeight = FontWeight.Medium,
-                            fontSize = with(LocalDensity.current) {resources.getDimension(R.dimen.eink_ui_title_text).toSp()}))
-                    for (item in SharedLibraryState.Shelf.entries) {
-                        EinkButton(stringResource(if (item == SharedLibraryState.Shelf.NOTEBOOKS)
-                            R.string.shared_library_notebooks else R.string.shared_library_books),
-                            onClick = { onSelect(item) }, selected = shelf == item,
-                            modifier = Modifier.testTag("shelf:$item"))
-                    }
-                }
-                EinkButton("×", onClose, Modifier.padding(start = 2.dp).widthIn(min = 40.dp).testTag("closeSharedLibrary"),
+                BasicText(stringResource(R.string.shared_library_title), Modifier.weight(1f),
+                    style = TextStyle(color = Color.Black, fontWeight = FontWeight.Medium,
+                        fontSize = with(LocalDensity.current) {resources.getDimension(R.dimen.eink_ui_title_text).toSp()}))
+                EinkButton("×", onClose, Modifier.widthIn(min = 42.dp).testTag("closeSharedLibrary"),
                     description = stringResource(R.string.shared_library_close))
             }
-            if (canCreate && shelf == SharedLibraryState.Shelf.NOTEBOOKS) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    EinkButton(stringResource(R.string.shared_writer_new_notebook), onNewNotebook,
-                        Modifier.testTag("newSharedNotebook"))
-                    EinkButton(stringResource(R.string.library_new_folder), onNewFolder,
-                        Modifier.testTag("newSharedFolder"))
+            BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = gap)) {
+                val hasActions = canCreate && shelf == SharedLibraryState.Shelf.NOTEBOOKS
+                val stacked = maxWidth < 640.dp
+                val actionWidth = maxWidth * 0.6f
+                @Composable fun tabs(modifier: Modifier = Modifier) {
+                    Row(modifier.horizontalScroll(rememberScrollState())
+                        .border(dimensionResource(R.dimen.eink_ui_border), Color.Black,
+                            RoundedCornerShape(dimensionResource(R.dimen.library_surface_radius)))
+                        .padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        for (item in SharedLibraryState.Shelf.entries) {
+                            EinkButton(stringResource(if (item == SharedLibraryState.Shelf.NOTEBOOKS)
+                                R.string.shared_library_notebooks else R.string.shared_library_books),
+                                onClick = { onSelect(item) }, selected = shelf == item,
+                                outlined = false,
+                                modifier = Modifier.testTag("shelf:$item"))
+                        }
+                    }
+                }
+                @Composable fun actions(modifier: Modifier = Modifier) {
+                    Row(modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                        EinkButton(stringResource(R.string.shared_writer_new_notebook), onNewNotebook,
+                            Modifier.testTag("newSharedNotebook"), primary = true, icon = R.drawable.ic_add)
+                        EinkButton(stringResource(R.string.library_new_folder), onNewFolder,
+                            Modifier.testTag("newSharedFolder"), icon = R.drawable.ic_create_folder)
+                    }
+                }
+                if (stacked) Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+                    tabs(Modifier.fillMaxWidth())
+                    if (hasActions) actions(Modifier.fillMaxWidth())
+                } else Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    tabs()
+                    Spacer(Modifier.weight(1f))
+                    if (hasActions) actions(Modifier.widthIn(max = actionWidth))
                 }
             }
         }

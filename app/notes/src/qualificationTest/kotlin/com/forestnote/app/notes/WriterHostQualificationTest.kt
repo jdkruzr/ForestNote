@@ -255,14 +255,23 @@ class WriterHostQualificationTest {
                 waitUntil("Dialog Dismissed") {withContext(Dispatchers.Main) {!d.isShowing && reader.hasWindowFocus()}}
                 barrier()
             }
-            suspend fun card(name:String,longPress:Boolean=false) {
+            suspend fun card(name:String,longPress:Boolean=false,options:Boolean=false) {
                 waitUntil("Card $name") {withContext(Dispatchers.Main) {
                     val grid=reader.findViewById<RecyclerView>(R.id.library_grid) ?: return@withContext false
                     val child=(0 until grid.childCount).map {grid.getChildAt(it)}.firstOrNull {
                         (it.findViewById<android.widget.TextView>(R.id.folder_name)
                             ?: it.findViewById(R.id.card_name))?.text?.toString()==name
                     } ?: return@withContext false
-                    if(longPress) child.performLongClick() else child.performClick()
+                    val menu=child.findViewWithTag<android.widget.Button>("cardOptions")
+                    assertNotNull("Shared cards expose a visible properties action",menu)
+                    assertTrue(menu.isShown)
+                    assertEquals(context.getString(R.string.library_options_for,name),menu.contentDescription)
+                    assertEquals(context.resources.getDimension(R.dimen.library_surface_radius),
+                        (child.background as android.graphics.drawable.GradientDrawable).cornerRadius,.1f)
+                    child.findViewById<android.widget.ImageView>(R.id.card_thumb)?.let {
+                        assertEquals(android.widget.ImageView.ScaleType.FIT_CENTER,it.scaleType)
+                    }
+                    if(options) menu.performClick() else if(longPress) child.performLongClick() else child.performClick()
                 }}
             }
             tagged("shelf:NOTEBOOKS")
@@ -275,7 +284,7 @@ class WriterHostQualificationTest {
             card("Research")
             tagged("newSharedFolder");accept("Sources")
             assertEquals(parent,rows("SELECT parent_folder_id FROM folder WHERE name='Sources'").single().single())
-            card("Sources",true);accept("Primary Sources")
+            card("Sources",options=true);accept("Primary Sources")
             assertEquals(parent,rows("SELECT parent_folder_id FROM folder WHERE name='Primary Sources'").single().single())
             val renamedOps=rows("SELECT * FROM rhizome_outbox ORDER BY op_seq")
             card("Primary Sources",true);accept(null)
@@ -290,7 +299,7 @@ class WriterHostQualificationTest {
                 reader.findViewById<View>(R.id.btn_library_back).performClick()
             }
             val notebookName=rows("SELECT name FROM notebook WHERE id='$notebookId'").single().single()!!
-            card(notebookName,true)
+            card(notebookName,options=true)
             val properties=dialog()
             waitUntil("Page Count") {withContext(Dispatchers.Main) {properties.findViewById<android.widget.TextView>(R.id.text_pages).text==context.getString(R.string.library_pages,1)}}
             accept("Profoundly Unserious")

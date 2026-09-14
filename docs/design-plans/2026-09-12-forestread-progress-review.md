@@ -290,6 +290,10 @@ the headless result does not activate production integration.
    starts with library tabs/Close and notebook/folder creation controls, preserving the current
    e-ink styling and ink/reader surfaces. Full current-toolkit adoption needs a separately
    qualified toolchain update; native dialogs and reader HTML chrome are not migrated yet.
+   **D54 visual adoption:** [shared Library cards and grouped controls](2026-09-14-forestread-library-visual-design.md)
+   applies the Composables-inspired appearance to both shelves, including visible card options,
+   adaptive notebook columns, book search and single-panel menus. Existing View content and
+   Compose chrome share named surface values; standalone writer screens remain unchanged.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
    then signed in-place FN builds and cross-device testing. The live service was not inspected here.
 

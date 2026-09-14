@@ -67,6 +67,16 @@ class ReaderAnnotationRenderingTest {
             ReaderHostQualificationSession.store=store;ReaderHostQualificationSession.sharedLibrary=true
             activity=ActivityScenario.launch(ReaderHostQualificationActivity::class.java)
             visible("book:$book")
+            native {a ->
+                val root=a.findViewById<android.view.View>(android.R.id.content)
+                val title=root.findViewWithTag<android.widget.Button>("book:$book")
+                assertEquals(2,title.maxLines)
+                assertNull(title.backgroundTintList)
+                val search=root.findViewWithTag<android.widget.EditText>("bookQuery")
+                assertNotNull(search.compoundDrawablesRelative[0])
+                assertEquals(context.resources.getDimension(R.dimen.library_surface_radius),
+                    (search.background as android.graphics.drawable.GradientDrawable).cornerRadius,.1f)
+            }
             native {a->a.findViewById<android.view.View>(android.R.id.content).findViewWithTag<android.widget.EditText>("bookQuery").setText("unfindable")}
             delay(250)
             ComposeChromeTest.node("shelf:BOOKS",selected=true)
@@ -77,6 +87,25 @@ class ReaderAnnotationRenderingTest {
             native {a->assertTrue(a.findViewById<android.view.View>(R.id.library_grid).isShown)
                 assertFalse(a.findViewById<android.view.View>(R.id.btn_library_add_notebook).isShown)}
             waitNative {a->a.findViewById<android.widget.TextView>(R.id.folder_name)?.text=="Library Folder"}
+            // Exercise narrow-host layout without changing the tablet's display settings.
+            native {a ->
+                val chrome=a.findViewById<android.view.View>(android.R.id.content)
+                    .findViewWithTag<android.view.View>("sharedLibraryChrome")
+                val library=chrome.parent as android.view.View
+                library.layoutParams=library.layoutParams.apply {width=(320*context.resources.displayMetrics.density).toInt()}
+            }
+            waitNative {a ->
+                val grid=a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid)
+                (grid.layoutManager as androidx.recyclerview.widget.GridLayoutManager).spanCount==1
+            }
+            ComposeChromeTest.node("shelf:NOTEBOOKS",selected=true)
+            ComposeChromeTest.node("shelf:BOOKS",selected=false)
+            native {a ->
+                val chrome=a.findViewById<android.view.View>(android.R.id.content)
+                    .findViewWithTag<android.view.View>("sharedLibraryChrome")
+                val library=chrome.parent as android.view.View
+                library.layoutParams=library.layoutParams.apply {width=android.view.ViewGroup.LayoutParams.MATCH_PARENT}
+            }
             native {a->a.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.library_grid).getChildAt(0).performClick()}
             waitNative {a->a.findViewById<android.view.View>(R.id.btn_library_back)?.isShown==true}
             ComposeChromeTest.click("shelf:BOOKS")
