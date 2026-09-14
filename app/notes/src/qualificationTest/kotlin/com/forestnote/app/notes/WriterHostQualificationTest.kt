@@ -229,11 +229,16 @@ class WriterHostQualificationTest {
             }
             suspend fun accept(name:String?,positive:Boolean=true) {
                 val d=dialog()
+                delay(300) // Inspect the settled window, after platform button styling/layout.
                 withContext(Dispatchers.Main) {
                     assertEquals(android.view.Gravity.TOP,d.window!!.attributes.gravity and android.view.Gravity.VERTICAL_GRAVITY_MASK)
                     assertNotNull(d.window!!.decorView.background)
                     val save=d.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
                     assertNull("Theme tint must not erase the e-ink button border",save.backgroundTintList)
+                    val painted=android.graphics.Bitmap.createBitmap(save.width,save.height,android.graphics.Bitmap.Config.ARGB_8888)
+                    save.draw(android.graphics.Canvas(painted))
+                    assertEquals("Visible button border ${save.javaClass.name}, ${save.background}, bounds=${save.background.bounds}, alpha=${save.background.alpha}, scroll=${save.scrollY}, clip=${save.clipToOutline}",android.graphics.Color.BLACK,painted.getPixel(save.width/2,0))
+                    painted.recycle()
                     assertEquals(save.text.toString(),(save.transformationMethod?.getTransformation(save.text,save) ?: save.text).toString())
                     if(name!=null) (d.findViewById<android.widget.EditText>(android.R.id.edit)
                         ?: d.findViewById(R.id.input_notebook_name)).setText(name)

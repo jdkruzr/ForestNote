@@ -71,14 +71,20 @@ internal object NotebookLibraryDialogs {
         val stroke = density.toInt().coerceAtLeast(1)
         fun frame() = GradientDrawable().apply {setColor(Color.WHITE); setStroke(stroke, Color.BLACK)}
         it.window?.apply {setGravity(Gravity.TOP); setBackgroundDrawable(frame())}
-        for (id in listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) {
+        fun styleButtons() { for (id in listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) {
             it.getButton(id)?.apply {
                 isAllCaps = false
                 setTextColor(Color.BLACK)
                 backgroundTintList = null
                 letterSpacing = 0f
                 background = frame()
+                // Some e-ink firmware replaces button backgrounds after layout. Keep the
+                // affordance in a transparent foreground too, above that platform styling.
+                foreground = GradientDrawable().apply {setColor(Color.TRANSPARENT); setStroke(stroke, Color.BLACK)}
             }
-        }
+        } }
+        styleButtons()
+        // AlertController also applies button backgrounds during its first layout.
+        it.window?.decorView?.post { if (dialog.isShowing) styleButtons() }
     }
 }

@@ -37,20 +37,27 @@ Evidence for this run lives in `/home/jtd/.cache/forestread-d51-ytHSRC/`. The fi
 used the full `/tmp` filesystem and failed with `SQLITE_FULL`; rerunning with a disk-backed
 temporary directory passes. That failed run is not qualification evidence.
 
-- `build-framed.log`: **456 Notes JVM tests pass**, no failures/errors/skips; ordinary debug,
-  qualification app and instrumentation APKs build. `test-framed.log` builds the final test APK.
+- `build-settled.log`: **456 Notes JVM tests pass**, no failures/errors/skips; ordinary debug,
+  qualification app and instrumentation APKs build.
 - `native-focused2.log`: **3 focused Go tests pass**; `native-full.log`: **37 Go tests pass**
   in 48 seconds, including reader annotation/rendering, native ink and shared shelf coverage.
-  After the visual framing fix, `native-final.log` repeats **37 passes** on the final installed
-  artifacts (48.137 seconds), including explicit Title Case checks.
-  The final theme-tint removal is verified by **37 passes** in `native-framed.log` (47.981
-  seconds); these are the installed artifacts below. Dialog button tint is explicitly checked
-  so the Android theme cannot hide the custom frame again.
+  `native-final.log` repeats **37 passes** (48.137 seconds), including Title Case checks;
+  `native-framed.log` repeats **37 passes** (47.981 seconds) after platform tint removal.
+  Those styling-property checks alone missed the Go runtime replacing the button background
+  with a `StateListDrawable`. `native-paint.log` captures a transparent border pixel despite
+  the cleared tints. The final fix adds a transparent foreground frame, independent of the
+  replaceable background. `native-foreground.log` passes **3 focused tests** (11.809 seconds),
+  but the interactive screenshot exposed a later initialization overwrite. Reapplying the
+  styling after initial window setup fixes the settled display. `native-settled.log` passes
+  **3 focused tests** (14.627 seconds), including rendered black-border pixels after a 300ms
+  settling interval. `properties-settled.png` visually confirms both outlined buttons in the
+  actual interactive notebook dialog. Earlier screenshots/tests are not evidence of settled
+  button borders. These are the final artifacts:
   The first focused attempt read before AlertController's posted acceptance callback. The test
   now waits for dismissal/window focus before its database fence; the earlier attempt is not a pass.
 - Final qualification app SHA-256:
-  `f119692b51d2c92347e6e0e868d0a21455a52c02b402aed7ad85cbd7e126a2a2`.
-  Final instrumentation APK: `92b2df20920b28a0bc373b08e959e4393765a6ec4bdd8c98e5ea597cf588b51c`.
+  `870f21759623bfcd02c1334b20be6d683c265b29684e32eb6361987a43314325`.
+  Final instrumentation APK: `3a68cacad0699d5f4ef93fa7399035c79c2f7eb009c57f6919b30ad2594fc01d`.
   Installed Go app matches; signer remains
   `e91d14f5065a1eb6cfbd42aee993b51c6cb16f7cc21d4879b0b4db1e136f9680`.
 - Interactive `before.db`, post-test `after.db` and final `after-final.db` match byte-for-byte: **7 original notebook
