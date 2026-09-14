@@ -391,9 +391,15 @@ class NotebookRepository private constructor(
         var notebooks = db.notebookQueries.listNotebooks().executeAsList()
         if (notebooks.isEmpty()) {
             val nid = Ulid.generate()
-            // Bootstrap notebook gets a NULL aspect → legacy 3:4 default; a real shape is captured
-            // only when the user creates a notebook from a device with a known canvas size.
-            db.notebookQueries.insertNotebook(nid, DEFAULT_NOTEBOOK_NAME, 0, now, now, null, null, null, null)
+            // The database does not know the creator canvas yet. Record local provenance atomically
+            // so a later process can measure this starter, without resizing imported legacy pages.
+            db.transaction {
+                db.notebookQueries.insertNotebook(nid, DEFAULT_NOTEBOOK_NAME, 0, now, now, null, null, null, null)
+                val pid = Ulid.generate()
+                db.notebookQueries.insertPage(pid, nid, 0, now)
+                db.notebookQueries.upsertAppState(nid, pid)
+                updateSettings { it.copy(unmeasuredBootstrapNotebookId = nid) }
+            }
             notebooks = db.notebookQueries.listNotebooks().executeAsList()
         }
         val state = db.notebookQueries.getAppState().executeAsOneOrNull()
@@ -611,6 +617,27 @@ class NotebookRepository private constructor(
                 longAxis.toLong(), width.toLong(), height.toLong(), notebookId,
             )
             enqueueOp("notebook", notebookId, clock())
+        }
+    }
+
+    /** Capture only our still-unpublished, never-written starter. The check and write share the
+     * writer transaction, so intervening ink/text/remote geometry can never be silently resized. */
+    fun captureBootstrapGeometry(notebookId: String, width: Int, height: Int): Boolean {
+        require(width > 0 && height > 0)
+        return db.transactionWithResult {
+            if (settings().unmeasuredBootstrapNotebookId != notebookId) return@transactionWithResult false
+            val nb = notebook(notebookId)
+            val pages = db.notebookQueries.listPagesForNotebook(notebookId).executeAsList()
+            val untouched = nb != null && nb.pageWidth == null && nb.pageHeight == null && nb.aspectLongAxis == null &&
+                pages.size == 1 && !hasRhizomeMeta("notebook", notebookId) &&
+                !hasRhizomeMeta("page", pages.single().id) &&
+                rawCount("SELECT count(*) AS c FROM page WHERE notebook_id = ?", notebookId) == 1L &&
+                rawCount("SELECT count(*) AS c FROM stroke WHERE page_id IN (SELECT id FROM page WHERE notebook_id = ?)", notebookId) == 0L &&
+                rawCount("SELECT count(*) AS c FROM text_box WHERE page_id IN (SELECT id FROM page WHERE notebook_id = ?)", notebookId) == 0L
+            // Retire a disqualified candidate too. Erasing its last stroke must never re-enable sizing.
+            updateSettings { it.copy(unmeasuredBootstrapNotebookId = null) }
+            if (untouched) setNotebookPageGeometry(notebookId, width, height)
+            untouched
         }
     }
 

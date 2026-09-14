@@ -407,7 +407,8 @@ class NotebookStoreTest {
 
         val settings = awaitResult<Settings> { cb -> store.loadSettings(cb) }
 
-        assertEquals(Settings(), settings)
+        assertTrue(!settings.unmeasuredBootstrapNotebookId.isNullOrBlank())
+        assertEquals(Settings(), settings.copy(unmeasuredBootstrapNotebookId = null))
         store.shutdown()
     }
 

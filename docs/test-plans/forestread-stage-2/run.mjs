@@ -137,6 +137,7 @@ try {
       'app/notes/src/main/kotlin/com/forestnote/app/notes/NotebookStore.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/MainActivity.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/WriterAttachment.kt',
+      'core/format/src/test/kotlin/com/forestnote/core/format/BootstrapGeometryTest.kt',
       'app/notes/src/main/res/values/shared_writer.xml',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/MixedSyncCoordinator.kt',
       'app/notes/src/main/kotlin/com/forestnote/app/notes/ForegroundSyncDriver.kt',

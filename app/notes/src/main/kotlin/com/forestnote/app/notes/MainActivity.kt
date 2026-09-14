@@ -1351,7 +1351,7 @@ open class MainActivity : Activity() {
         editorOpenedFromLibrary = true // navigated in from the Library → Back returns there (#29)
         editHistory.clear() // undo history is per-notebook — a fresh notebook starts empty
         refreshUndoRedoButtons()
-        store.switchNotebook(notebookId) { page ->
+        withCreatorCanvas(loadToken) { geometry -> store.switchNotebook(notebookId, geometry) { page ->
             if (loadToken != editorLoadToken) return@switchNotebook
             if (!attachedWriterMayPaint()) { deferredAttachedNotebook = notebookId; return@switchNotebook }
             if (attachment != null && page.notebook == null) { finish(); return@switchNotebook }
@@ -1363,8 +1363,7 @@ open class MainActivity : Activity() {
             revealEditorChrome()
             refreshEditorTransition()
             refreshPageIndicator() // chains refreshOcrButtonState
-        }
-        store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
+        } }
     }
 
     /**
@@ -1380,7 +1379,7 @@ open class MainActivity : Activity() {
         editorOpenedFromLibrary = true // navigated in from the Library → Back returns there (#29)
         editHistory.clear() // undo history is per-notebook — a fresh notebook starts empty
         refreshUndoRedoButtons()
-        store.switchNotebookToPage(notebookId, pageId) { page ->
+        withCreatorCanvas(loadToken) { geometry -> store.switchNotebookToPage(notebookId, pageId, geometry) { page ->
             if (loadToken != editorLoadToken) return@switchNotebookToPage
             applyNotebookGeometryBeforePaint(page.notebook)
             libraryView.hide()
@@ -1390,8 +1389,7 @@ open class MainActivity : Activity() {
             revealEditorChrome()
             refreshEditorTransition()
             refreshPageIndicator() // chains refreshOcrButtonState
-        }
-        store.loadTextBoxes { drawView.mergeLoadedTextBoxes(it) }
+        } }
     }
 
     /**
@@ -1402,7 +1400,7 @@ open class MainActivity : Activity() {
     private fun loadEditor() {
         val loadToken = ++editorLoadToken
         drawView.visibility = View.INVISIBLE
-        store.loadEditorPage { page ->
+        withCreatorCanvas(loadToken) { geometry -> store.loadEditorPage(geometry) { page ->
             if (loadToken != editorLoadToken) return@loadEditorPage
             applyNotebookGeometryBeforePaint(page.notebook)
             drawView.resetViewportForPage(recompose = false)
@@ -1411,7 +1409,24 @@ open class MainActivity : Activity() {
             revealEditorChrome()
             refreshEditorTransition(post = true)
             refreshPageIndicator() // chains refreshOcrButtonState
+        } }
+    }
+
+    /** Measure before the first writable frame. No SQLite or image work on this thread. */
+    private fun withCreatorCanvas(loadToken: Long, action: (NotebookAspectPolicy.Geometry) -> Unit) {
+        backend.setInputSuspended(true)
+        val measure = object : Runnable {
+            override fun run() {
+                if (loadToken != editorLoadToken || isFinishing || isDestroyed) return
+                if (drawView.width <= 0 || drawView.height <= 0 ||
+                    drawView.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true) {
+                    drawView.postDelayed(this, 50)
+                    return
+                }
+                action(NotebookAspectPolicy.geometryFor(drawView.width, drawView.height))
+            }
         }
+        drawView.post(measure)
     }
 
     /** Set the exact page transform without composing a visible legacy-aspect intermediate frame. */
@@ -2003,7 +2018,7 @@ open class MainActivity : Activity() {
         // MotionEvent swallowed) while Lasso (ordinary dispatch) still worked. Idempotent; no-op on
         // Viwoods/Generic. applyFirmwareEnableState then gates on the active tool, so a non-Pen tool
         // stays firmware-off regardless.
-        if (attachedWriterMayPaint() && backend.usesFirmwareInk()) backend.setInputSuspended(false)
+        if (attachedWriterMayPaint()) backend.setInputSuspended(false)
     }
 
     /**

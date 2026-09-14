@@ -289,10 +289,12 @@ class NotebookStore(
      * Load the active page together with its notebook geometry in one serialized DB hop. The UI
      * applies geometry before its first visible composite, avoiding a legacy-3:4 startup frame.
      */
-    fun loadEditorPage(onLoaded: (EditorPageSnapshot) -> Unit) {
+    fun loadEditorPage(onLoaded: (EditorPageSnapshot) -> Unit) = loadEditorPage(null, onLoaded)
+    fun loadEditorPage(creatorGeometry: NotebookAspectPolicy.Geometry?, onLoaded: (EditorPageSnapshot) -> Unit) {
         executor.execute {
             val result = runCatching {
                 val r = requireNotNull(repo) { "notebook store not ready" }
+                creatorGeometry?.let { r.captureBootstrapGeometry(r.currentNotebookId(), it.width, it.height) }
                 EditorPageSnapshot(
                     strokes = r.loadStrokes(),
                     textBoxes = r.loadTextBoxes(),
@@ -574,11 +576,13 @@ class NotebookStore(
     }
 
     /** Switch notebook, then load all content needed for its active page's first frame. */
-    fun switchNotebook(notebookId: String, onLoaded: (EditorPageSnapshot) -> Unit) {
+    fun switchNotebook(notebookId: String, onLoaded: (EditorPageSnapshot) -> Unit) = switchNotebook(notebookId, null, onLoaded)
+    fun switchNotebook(notebookId: String, creatorGeometry: NotebookAspectPolicy.Geometry?, onLoaded: (EditorPageSnapshot) -> Unit) {
         executor.execute {
             val result = runCatching {
                 val r = requireNotNull(repo) { "notebook store not ready" }
                 r.switchNotebook(notebookId)
+                creatorGeometry?.let { r.captureBootstrapGeometry(r.currentNotebookId(), it.width, it.height) }
                 EditorPageSnapshot(
                     strokes = r.loadStrokes(),
                     textBoxes = r.loadTextBoxes(),
@@ -601,6 +605,7 @@ class NotebookStore(
     fun switchNotebookToPage(
         notebookId: String,
         pageId: String,
+        creatorGeometry: NotebookAspectPolicy.Geometry? = null,
         onLoaded: (EditorPageSnapshot) -> Unit,
     ) {
         executor.execute {
@@ -608,6 +613,7 @@ class NotebookStore(
                 val r = requireNotNull(repo) { "notebook store not ready" }
                 r.switchNotebook(notebookId)
                 r.switchPage(pageId)
+                creatorGeometry?.let { r.captureBootstrapGeometry(r.currentNotebookId(), it.width, it.height) }
                 EditorPageSnapshot(
                     strokes = r.loadStrokes(),
                     textBoxes = r.loadTextBoxes(),

@@ -17,7 +17,7 @@ class SettingsStorageTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val repo = NotebookRepository.forTesting(driver)
 
-        assertEquals(Settings(), repo.settings())
+        assertEquals(Settings(unmeasuredBootstrapNotebookId = repo.currentNotebookId()), repo.settings())
     }
 
     @Test

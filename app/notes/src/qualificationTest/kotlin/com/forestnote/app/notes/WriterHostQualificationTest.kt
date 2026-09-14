@@ -69,6 +69,14 @@ class WriterHostQualificationTest {
             waitUntil {withContext(Dispatchers.Main) {(reader.findViewById<RecyclerView>(gridId)?.adapter?.itemCount ?: 0)>0 && reader.findViewById<RecyclerView>(gridId).getChildAt(0)!=null}}
             withContext(Dispatchers.Main) {reader.findViewById<RecyclerView>(gridId).getChildAt(0).performClick()}
             var writer=writerReady()
+            val creatorGeometry=withContext(Dispatchers.Main) {
+                val draw=writer.findViewById<DrawView>(R.id.draw_view)
+                NotebookAspectPolicy.geometryFor(draw.width,draw.height)
+            }
+            val measured=CompletableDeferred<EditorPageSnapshot>();store.loadEditorPage {measured.complete(it)}
+            val measuredNotebook=withTimeout(5000) {measured.await()}.notebook!!
+            assertEquals(creatorGeometry.width,measuredNotebook.pageWidth)
+            assertEquals(creatorGeometry.height,measuredNotebook.pageHeight)
             withContext(Dispatchers.Main) {
                 assertSame(store,field(writer,"store"));assertNull(field(writer,"syncController"))
                 assertEquals(false,field(writer,"promptedStorage"))

@@ -78,5 +78,8 @@ is part of this slice.
   `23c9904722e978eaac813ebef53f3a65f7e59785a53b73c9c7d4fa45a63bc691`.
   `/tmp/forestread-d48-writer.png` shows the actual writer opened from the shared shelf.
 
-Physical fountain-pen acceptance is pending. The interactive writer is left ready for the user;
-automated ink was added only in a disposable test database, never to their real annotations.
+Physical fountain-pen acceptance passed: the user reports immediate, intact ink. Screenshot
+`/tmp/forestread-d48-human-ink.png` shows a continuous squiggle and “Delightful!” with intact loops
+and pressure variation. Readback `/tmp/forestread-d48-human-ink.db` contains seven writer strokes
+and seven matching shared-outbox entries; all 51 reader strokes remain. Automated ink was added
+only in disposable test databases, never to their real annotations.

@@ -33,6 +33,8 @@ enum class TranscriptionProvider { OFF, OPENAI_COMPATIBLE, ANTHROPIC_COMPATIBLE 
  */
 @Serializable
 data class Settings(
+    /** Local-only bootstrap provenance; not a user preference or a synced page dimension. */
+    val unmeasuredBootstrapNotebookId: String? = null,
     /** Global default page template for new pages (per-page override wins). */
     val defaultTemplate: PageTemplate = PageTemplate.BLANK,
     /** Global default template pitch in millimetres (used when template != BLANK). */
