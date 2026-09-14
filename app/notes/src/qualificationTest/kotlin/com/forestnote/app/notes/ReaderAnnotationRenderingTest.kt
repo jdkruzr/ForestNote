@@ -25,6 +25,21 @@ class ReaderAnnotationRenderingTest {
     private val instrumentation=InstrumentationRegistry.getInstrumentation()
     private val context get()=instrumentation.targetContext
 
+    @Test fun recognitionRejectsMissingConnectivityPermissionBeforeStartingTheSdk()=runBlocking<Unit> {
+        for(missing in listOf(android.Manifest.permission.INTERNET,android.Manifest.permission.ACCESS_NETWORK_STATE)) {
+            val denied=object:android.content.ContextWrapper(context) {
+                override fun getApplicationContext():android.content.Context=this
+                override fun checkSelfPermission(permission:String)=if(permission==missing)
+                    android.content.pm.PackageManager.PERMISSION_DENIED else android.content.pm.PackageManager.PERMISSION_GRANTED
+            }
+            val error=runCatching {AndroidReaderRecognitionEngine(denied).prepare {error("Download must not start")}}.exceptionOrNull()
+            assertTrue("Missing $missing must fail safely before the SDK",error is IllegalStateException)
+            assertEquals("Recognition Requires The Network-Enabled Qualification Build",error?.message)
+        }
+        assertEquals(context.checkSelfPermission(android.Manifest.permission.INTERNET),
+            context.checkSelfPermission(android.Manifest.permission.ACCESS_NETWORK_STATE))
+    }
+
     @Test fun annotationBrowserReadsCurrentRecognitionAndNavigatesWithoutAuthoring()=runBlocking<Unit> {
         val id="browser-${UUID.randomUUID()}"
         val store=NotebookStore(repoProvider={NotebookRepository.openIsolatedQualification(context,id)},

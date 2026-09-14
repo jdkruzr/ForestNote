@@ -10,10 +10,11 @@ backed private record and shared SQLite owner against UB's enrollment-backed dis
 No injected enrollment response or test trust manager is used on the tablet. No production mixed
 transport activation, legacy adoption, ordinary pull or shared-storage routing is implied.
 
-The qualification package gains Internet permission **only** with the additional build property
+The qualification package gains Internet and connectivity-state permissions **only** with the additional build property
 `-PreaderQualificationNetwork=true`. The ordinary lab build remains offline. Both variants keep
 external-storage permissions absent, the real editor disabled and cleartext HTTP disallowed.
-A host test checks their manifests differ only in the Internet-permission directive. The setup
+A host test checks their manifests differ only in those two permission directives (connectivity
+state was added for D46's native model downloader). The setup
 launcher still sends no enrollment request; instrumentation explicitly drives these test phases.
 
 ## Disposable HTTPS boundary

@@ -13,7 +13,7 @@ android {
         }
     }
     // Manifest merger directives cannot contain placeholders. Keep the small network
-    // overlay separately; a host test checks it differs only by Internet permission.
+    // overlay separately; a host test pins Internet + connectivity-state permissions.
     if (providers.gradleProperty("readerQualificationNetwork").orNull == "true") {
         sourceSets.getByName("qualification").manifest.srcFile("src/qualificationNetwork/AndroidManifest.xml")
     }

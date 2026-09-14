@@ -6,11 +6,17 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 /** Existing local ML Kit transport; ink is never uploaded. Owned by the shared reader worker. */
-internal class AndroidReaderRecognitionEngine:ReaderRecognitionEngine {
+internal class AndroidReaderRecognitionEngine(context:android.content.Context):ReaderRecognitionEngine {
+    private val context=context.applicationContext
     override val language="en-US"
     override val model="mlkit-digital-ink:$language"
     private val models by lazy {RecognitionModelManager()}
     override suspend fun prepare(downloading:()->Unit) {
+        // ML Kit's downloader throws on its own executor if connectivity permission is
+        // missing: a coroutine catch cannot contain that process-fatal SDK exception.
+        check(listOf(android.Manifest.permission.INTERNET,android.Manifest.permission.ACCESS_NETWORK_STATE).all {
+            context.checkSelfPermission(it)==android.content.pm.PackageManager.PERMISSION_GRANTED
+        }) {"Recognition Requires The Network-Enabled Qualification Build"}
         if(!models.isDownloaded(language)) {
             currentCoroutineContext().ensureActive();downloading();models.download(language).getOrThrow()
         }

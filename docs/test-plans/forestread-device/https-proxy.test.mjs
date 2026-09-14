@@ -68,10 +68,10 @@ test('mixed route is opt-in, bounded and device-token-only; capabilities and row
     } finally {await close(p.server);await close(upstream);}
 });
 
-test('network opt-in changes only Internet permission; runner requires explicit ADB and UB repository',async()=>{
+test('network opt-in changes only Internet and connectivity-state permissions; runner requires explicit ADB and UB repository',async()=>{
     const read=part=>readFile(new URL(`../../../app/notes/src/${part}/AndroidManifest.xml`,import.meta.url),'utf8');
     const offline=await read('qualification');const network=await read('qualificationNetwork');
-    assert.equal(network,offline.replace('android.permission.INTERNET" tools:node="remove','android.permission.INTERNET" tools:node="merge'));
+    assert.equal(network,['INTERNET','ACCESS_NETWORK_STATE'].reduce((xml,p)=>xml.replace(`android.permission.${p}" tools:node="remove`,`android.permission.${p}" tools:node="merge`),offline));
     for(const args of [[],['--serial','a'],['--serial',';bad','--ub-repo','/tmp/ub']]) assert.throws(()=>options(args));
     assert.equal(options(['--serial','device','--ub-repo','/tmp/ub']).ub,'/tmp/ub');
     assert.equal(options(['--serial','device','--ub-repo','/tmp/ub','--route','adb-proxy']).route,'adb-proxy');

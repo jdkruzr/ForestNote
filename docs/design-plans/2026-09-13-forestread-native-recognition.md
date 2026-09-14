@@ -43,11 +43,8 @@ Browser tests cover live revision refresh with query/filters retained, late init
 status delivery, closed-popup updates, retry, and no document layout/full-refresh side effects.
 The new native instrumentation case injects a deterministic engine and checks off-main work,
 live card updates without reflow/flash, owner retention across activity recreation and unchanged
-ink fingerprints/geometry. It is built but has not yet run on a device.
-
-Go installation and real ML Kit model/backfill checks are pending renewed device availability.
-No D46 package has been installed and no real annotation recognition has been authored yet.
-Do not call this hardware-qualified or enable production from the local test results alone.
+ink fingerprints/geometry. It now passes on the Go along with the real-model check below.
+Production remains gated; this Go result does not stand in for integrated Viwoods acceptance.
 
 Local evidence (2026-09-13):
 
@@ -61,7 +58,44 @@ Local evidence (2026-09-13):
   13 independent HUFF vectors; Go race/parity checks. All native/core captured sources match.
   Of 225 captured source hashes, only the final browser first-status guard and its test changed
   after capture; those are covered by the final browser run and repackaged root build.
-- Uninstalled qualification APK SHA-256:
+- Original local candidate APK SHA-256 (superseded by the permission fix below):
   `93848b182001fa9fd75079df222f4638a978bbbefdc41948225f7d5e7e742c00`;
   instrumentation `85fc3c7e5d7cf492b9c29bf14cadd5fa23dbc95d4f0b5d7f9a689e2cf748201c`.
   App signer verifies as `e91d14f5065a1eb6cfbd42aee993b51c6cb16f7cc21d4879b0b4db1e136f9680`.
+
+## Go qualification and SDK permission fix
+
+The first real download failed on ML Kit's own executor with
+`IllegalStateException: Attempting to determine connectivity without the ACCESS_NETWORK_STATE permission.`
+The network qualification overlay had restored Internet alone. The ordinary app already had
+both permissions. The crashed interactive database matched the pre-test file byte-for-byte;
+no ink or recognition rows were changed by that attempt.
+
+The explicit network overlay now restores Internet **and** connectivity-state permission;
+the offline overlay still removes both. Before touching ML Kit, the real reader adapter checks
+both declarations so a restricted build fails through worker status/retry, not an uncaught SDK
+thread. No global exception handler, production storage change or expanded external-file access.
+
+Verified on Go 10.3 II `dfef8c1`, Android 15:
+
+- In-place app/test upgrades, installed APK hashes verified against the local artifacts.
+  App `57072d032c2c72bf376b52de6a8d308156a222b86b5476f56aa42a63e05e8e6b`;
+  final test `18eeed7f466356967f4f4ef31530210be87d252b3ac2c7d14625e85959934788`.
+- `/tmp/forestread-d46-native-fixed.log`: **33 device tests pass**. The final stronger missing-
+  permission message assertion also passes in `/tmp/forestread-d46-native-permission-final.log`.
+  `/tmp/forestread-d46-permission-build.log`: Notes JVM tests and normal/qualification builds pass;
+  `/tmp/forestread-d46-permission-contract.log`: six HTTPS/manifest guard tests pass.
+- Real English model readiness backfills all three existing annotations. Search for `much better`
+  returns the correct handwriting card. Recognition reads `much better. 8B not B!`; this verifies
+  the pipeline, not perfect OCR accuracy. Screenshot `/tmp/forestread-d46-recognized.png`.
+- Baseline `/tmp/forestread-d46-ink-before.db`, recognized `/tmp/forestread-d46-recognized.db`:
+  **51 strokes / 5,454 points unchanged**; all 16 other reader tables have identical SQL dumps,
+  and all preexisting row provenance is retained. Only recognition, command receipts, outbox,
+  row metadata and local sync counters change: three recognition rows, outbox **67 → 70**.
+- After process restart and completed worker scan, `/tmp/forestread-d46-restarted.db` matches
+  the recognized database byte-for-byte: no duplicate authoring or lost results.
+- Normal `/sdcard/ForestNote/default.forestnote` stays at SHA-256
+  `23c9904722e978eaac813ebef53f3a65f7e59785a53b73c9c7d4fa45a63bc691`.
+
+The headless evidence above predates this Android-only permission/adapter follow-up; no shared
+core/Rhizome/UB implementation changed. Final device and manifest tests cover the changed boundary.

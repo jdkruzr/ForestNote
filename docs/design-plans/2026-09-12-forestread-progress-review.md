@@ -261,9 +261,11 @@ the headless result does not activate production integration.
    result navigation re-reads saved metadata and never begins an edit.
    **D46 recognition:** [native owner-retained backfill](2026-09-13-forestread-native-recognition.md)
    attaches English model preparation and bounded all-book sweeps, current-input transactional
-   publication, lifecycle cancellation and live browser updates without reflow. Local regression
-   coverage is implemented; installation, real-model backfill and ink-preservation verification
-   on the Go are still pending device availability. Integrated Viwoods acceptance remains open.
+   publication, lifecycle cancellation and live browser updates without reflow. The Go now passes
+   native regressions and real-model backfill/search: three results, unchanged ink/geometry and
+   no reauthoring on process restart. A real download exposed the lab's stripped connectivity
+   permission; the explicit network overlay and pre-SDK guard now cover it. Integrated Viwoods
+   acceptance remains open.
    The [library navigation outline](2026-09-13-forestread-library-navigation.md) records a proposed
    top-level Notebooks/Books switch; its final UI is not approved or implemented yet.
 4. Deploy in the agreed order only after those gates: backed-up UB first, verify legacy notes,
